@@ -3,18 +3,28 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
 import type pg from "pg";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthEnv } from "../../src/auth/middleware.js";
 import type { AdminClientRunner } from "../../src/boxes/admin-client.js";
 import { seedSharedBox } from "../../src/boxes/shared.js";
 import { loadConfig } from "../../src/config.js";
-import { purgeExpiredProjects, softDeleteProject } from "../../src/projects/lifecycle.js";
+import {
+  purgeExpiredProjects,
+  purgeProject,
+  restoreProject,
+  softDeleteProject,
+} from "../../src/projects/lifecycle.js";
 import { projectRoutes } from "../../src/projects/routes.js";
 import type { LifecycleEvent, ProjectServiceDeps } from "../../src/projects/service.js";
 import { trashRoutes } from "../../src/projects/trash-routes.js";
-import { type Box, getSharedBox } from "../../src/registry/boxes.js";
+import { type Box, getSharedBox, insertBox } from "../../src/registry/boxes.js";
 import { openRegistry, type Registry } from "../../src/registry/db.js";
-import { getProjectByRef, insertProject, type Project } from "../../src/registry/projects.js";
+import {
+  getProjectByRef,
+  insertProject,
+  markProjectDeleted,
+  type Project,
+} from "../../src/registry/projects.js";
 import { deriveSecretKey, encryptSecret } from "../../src/registry/secrets.js";
 import { insertUser } from "../../src/registry/users.js";
 
@@ -27,6 +37,7 @@ let db: Registry;
 let box: Box;
 let sql: string[];
 let failOn: RegExp | undefined;
+let renamesInUse: number;
 let takenNames: string[];
 let foreignPlaces: string[];
 let events: { ref: string; event: LifecycleEvent }[];
@@ -38,6 +49,12 @@ const fakeAdmin: AdminClientRunner = async (_conn, run) => {
     query: async (text: string) => {
       sql.push(text);
       if (failOn?.test(text)) throw new Error(`boom (${ADMIN_PASSWORD})`);
+      if (text.includes(" RENAME TO ") && renamesInUse > 0) {
+        renamesInUse -= 1;
+        throw Object.assign(new Error("database is being accessed by other users"), {
+          code: "55006",
+        });
+      }
       if (text.startsWith("select datname from pg_database")) {
         return { rowCount: takenNames.length, rows: takenNames.map((datname) => ({ datname })) };
       }
@@ -66,6 +83,7 @@ beforeEach(() => {
   box = getSharedBox(db) as Box;
   sql = [];
   failOn = undefined;
+  renamesInUse = 0;
   takenNames = [];
   foreignPlaces = [];
   events = [];
@@ -113,6 +131,14 @@ function post(path: string, fields: Record<string, string> = {}): Promise<Respon
   return Promise.resolve(app.request(path, { method: "POST", body: new URLSearchParams(fields) }));
 }
 
+function renameAttempt(): unknown[] {
+  return [
+    expect.stringMatching(/^select pg_terminate_backend\(pid\) from pg_stat_activity/),
+    "select datname from pg_database where starts_with(datname, $1)",
+    expect.stringMatching(/^ALTER DATABASE "my_app" RENAME TO "my_app__deleted_\d{8}"$/),
+  ];
+}
+
 async function softDeleted(ref: string, at: Date): Promise<Project> {
   const result = await softDeleteProject(deps, project(ref) as Project, box, at);
   expect(result).toEqual({ ok: true });
@@ -129,18 +155,14 @@ describe("deleting a project", () => {
     expect(project()?.status).toBe("active");
   });
 
-  it("revokes, terminates and renames in one transaction, leaving the role able to log in", async () => {
+  it("commits the revoke before terminating and renaming, leaving the role able to log in", async () => {
     seed();
     const response = await post("/_hs/projects/my-app/delete", { confirm: "my-app" });
     expect(response.status).toBe(302);
     expect(response.headers.get("location")).toBe("/_hs/trash");
     expect(sql).toEqual([
-      "BEGIN",
       'REVOKE CONNECT ON DATABASE "my_app" FROM "hs_my_app_owner"',
-      expect.stringMatching(/^select pg_terminate_backend\(pid\) from pg_stat_activity/),
-      "select datname from pg_database where starts_with(datname, $1)",
-      expect.stringMatching(/^ALTER DATABASE "my_app" RENAME TO "my_app__deleted_\d{8}"$/),
-      "COMMIT",
+      ...renameAttempt(),
     ]);
     expect(project()).toMatchObject({ status: "deleted", deletedAt: expect.any(String) });
     expect(events).toEqual([{ ref: "my-app", event: "deleted" }]);
@@ -156,7 +178,7 @@ describe("deleting a project", () => {
     expect(sql).toContain('ALTER DATABASE "my_app" RENAME TO "my_app__deleted_20261020_2"');
   });
 
-  it("rolls back and keeps the project active when the box refuses", async () => {
+  it("grants CONNECT back and keeps the project active when the rename fails", async () => {
     seed();
     failOn = /RENAME/;
     const response = await post("/_hs/projects/my-app/delete", { confirm: "my-app" });
@@ -164,9 +186,46 @@ describe("deleting a project", () => {
     const html = await response.text();
     expect(html).toContain("Could not delete the project: boom");
     expect(html).not.toContain(ADMIN_PASSWORD);
-    expect(sql.at(-1)).toBe("ROLLBACK");
+    expect(sql.at(-1)).toBe('GRANT CONNECT ON DATABASE "my_app" TO "hs_my_app_owner"');
     expect(project()?.status).toBe("active");
     expect(events).toEqual([]);
+  });
+
+  it("terminates again and retries a rename that finds the database in use", async () => {
+    seed();
+    renamesInUse = 2;
+    await softDeleted("my-app", new Date("2026-10-20T08:00:00.000Z"));
+    expect(sql).toEqual([
+      'REVOKE CONNECT ON DATABASE "my_app" FROM "hs_my_app_owner"',
+      ...renameAttempt(),
+      ...renameAttempt(),
+      ...renameAttempt(),
+    ]);
+  });
+
+  it("gives up after three in-use renames and grants CONNECT back", async () => {
+    seed();
+    renamesInUse = 3;
+    const result = await softDeleteProject(deps, project() as Project, box);
+    expect(result).toEqual({
+      ok: false,
+      problem: "Could not delete the project: database is being accessed by other users",
+    });
+    expect(sql.filter((text) => text.includes(" RENAME TO "))).toHaveLength(3);
+    expect(sql.at(-1)).toBe('GRANT CONNECT ON DATABASE "my_app" TO "hs_my_app_owner"');
+    expect(project()?.status).toBe("active");
+  });
+
+  it("says so when CONNECT cannot be granted back either", async () => {
+    seed();
+    renamesInUse = 3;
+    failOn = /^GRANT/;
+    const result = await softDeleteProject(deps, project() as Project, box);
+    expect(result.ok).toBe(false);
+    const { problem } = result as { problem: string };
+    expect(problem).toContain("granting CONNECT back to hs_my_app_owner also failed");
+    expect(problem).not.toContain(ADMIN_PASSWORD);
+    expect(project()?.status).toBe("active");
   });
 });
 
@@ -301,5 +360,68 @@ describe("purgeExpiredProjects", () => {
     expect(project()?.status).toBe("deleted");
     await purgeExpiredProjects(deps, 0, new Date("2026-10-20T00:00:00.000Z"));
     expect(project()).toBeUndefined();
+  });
+});
+
+describe("a box whose admin password cannot be decrypted", () => {
+  function unreadableBox(): Box {
+    return insertBox(db, {
+      name: "broken",
+      kind: "registered",
+      devOnly: false,
+      host: "pg.internal",
+      port: 5432,
+      adminUser: "postgres",
+      adminPasswordEnc: encryptSecret("x", deriveSecretKey("q".repeat(32))),
+      sslmode: "require",
+      publicHost: "pg.example.test",
+      publicPort: 5432,
+      poolerTenant: null,
+      poolerSessionPort: null,
+      poolerTransactionPort: null,
+      containerName: null,
+    });
+  }
+
+  it("turns delete, restore and purge into inline problems instead of throwing", async () => {
+    const broken = unreadableBox();
+    const target = seed();
+    expect((await softDeleteProject(deps, target, broken)).ok).toBe(false);
+    markProjectDeleted(db, target.id, "my_app__deleted_20261020");
+    const deleted = project() as Project;
+    expect(await restoreProject(deps, deleted, broken)).toMatchObject({
+      ok: false,
+      problem: expect.stringMatching(/^Could not restore the project: /),
+    });
+    expect(await purgeProject(deps, deleted, broken)).toMatchObject({
+      ok: false,
+      problem: expect.stringMatching(/^Could not purge the project: /),
+    });
+    expect(sql).toEqual([]);
+  });
+
+  it("does not stop the hourly purge of other projects", async () => {
+    const errors: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((line: string) => {
+      errors.push(line);
+    });
+    const broken = unreadableBox();
+    const stuck = insertProject(db, {
+      ref: "stuck",
+      name: "stuck",
+      boxId: broken.id,
+      dbName: "stuck",
+      ownerRole: "hs_stuck_owner",
+      ownerPasswordEnc: encryptSecret("owner-pw", secretKey),
+    });
+    markProjectDeleted(db, stuck.id, "stuck__deleted_20261001", "2026-10-01T00:00:00.000Z");
+    seed();
+    await softDeleted("my-app", new Date("2026-10-02T00:00:00.000Z"));
+
+    await purgeExpiredProjects(deps, PURGE_AFTER_DAYS, new Date("2026-10-20T00:00:00.000Z"));
+    expect(project("stuck")?.status).toBe("deleted");
+    expect(project("my-app")).toBeUndefined();
+    expect(errors).toEqual([expect.stringMatching(/^hattisar: auto-purge of stuck failed: /)]);
+    vi.restoreAllMocks();
   });
 });

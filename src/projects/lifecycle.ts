@@ -1,5 +1,5 @@
 import pg from "pg";
-import { safeErrorMessage } from "../boxes/admin-client.js";
+import { type BoxConnection, safeErrorMessage } from "../boxes/admin-client.js";
 import { boxConnection } from "../boxes/service.js";
 import { type Box, getBoxById } from "../registry/boxes.js";
 import {
@@ -16,6 +16,9 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 export type LifecycleResult = { ok: true } | { ok: false; problem: string };
 
+const RENAME_ATTEMPTS = 3;
+const OBJECT_IN_USE = "55006";
+
 async function inTransaction(client: pg.Client, run: () => Promise<void>): Promise<void> {
   await client.query("BEGIN");
   try {
@@ -27,48 +30,95 @@ async function inTransaction(client: pg.Client, run: () => Promise<void>): Promi
   }
 }
 
-// One transaction, so a failed rename leaves the owner able to connect as before. The role keeps
-// LOGIN on purpose (§7): a NOLOGIN role fails Supavisor's auth, and its auth-failure breakers would
-// then refuse pooler logins for every project on the shared box.
+// Decrypting the box password can throw too, so it happens inside the same error handling as the SQL.
+async function onBox(
+  deps: ProjectServiceDeps,
+  box: Box,
+  action: string,
+  run: (conn: BoxConnection) => Promise<void>,
+): Promise<LifecycleResult> {
+  let password = "";
+  try {
+    const conn = boxConnection(box, deps.secretKey);
+    password = conn.password;
+    await run(conn);
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      problem: `Could not ${action} the project: ${safeErrorMessage(error, password)}`,
+    };
+  }
+}
+
+function isObjectInUse(error: unknown): boolean {
+  return (error as { code?: unknown } | null)?.code === OBJECT_IN_USE;
+}
+
+// Superusers (Studio's pg-meta) bypass the revoked CONNECT and may reconnect between the terminate
+// and the rename, which then fails as in use: terminate again and retry.
+async function renameAway(client: pg.Client, project: Project, now: Date): Promise<string> {
+  for (let attempt = 1; ; attempt++) {
+    await client.query(
+      "select pg_terminate_backend(pid) from pg_stat_activity where datname = $1 and pid <> pg_backend_pid()",
+      [project.dbName],
+    );
+    const taken = await client.query<{ datname: string }>(
+      "select datname from pg_database where starts_with(datname, $1)",
+      [`${project.dbName}__deleted_`],
+    );
+    const name = deletedDbNameFor(
+      project.dbName,
+      now,
+      taken.rows.map((row) => row.datname),
+    );
+    try {
+      await client.query(
+        `ALTER DATABASE ${pg.escapeIdentifier(project.dbName)} RENAME TO ${pg.escapeIdentifier(name)}`,
+      );
+      return name;
+    } catch (error) {
+      if (!isObjectInUse(error) || attempt >= RENAME_ATTEMPTS) throw error;
+    }
+  }
+}
+
+// The REVOKE commits on its own before the terminate: inside one transaction it stays invisible to
+// other sessions, so the owner's apps and pools would reconnect straight away and keep the database
+// in use. If the rename still fails, CONNECT is granted back so the project stays usable. The role
+// keeps LOGIN on purpose (§7): a NOLOGIN role fails Supavisor's auth, and its auth-failure breakers
+// would then refuse pooler logins for every project on the shared box.
 export async function softDeleteProject(
   deps: ProjectServiceDeps,
   project: Project,
   box: Box,
   now: Date = new Date(),
 ): Promise<LifecycleResult> {
-  const conn = boxConnection(box, deps.secretKey);
   const db = pg.escapeIdentifier(project.dbName);
   const role = pg.escapeIdentifier(project.ownerRole);
   let deletedDbName = "";
-  try {
-    await deps.admin(conn, (client) =>
-      inTransaction(client, async () => {
-        await client.query(`REVOKE CONNECT ON DATABASE ${db} FROM ${role}`);
-        await client.query(
-          "select pg_terminate_backend(pid) from pg_stat_activity where datname = $1 and pid <> pg_backend_pid()",
-          [project.dbName],
-        );
-        const taken = await client.query<{ datname: string }>(
-          "select datname from pg_database where starts_with(datname, $1)",
-          [`${project.dbName}__deleted_`],
-        );
-        deletedDbName = deletedDbNameFor(
-          project.dbName,
-          now,
-          taken.rows.map((row) => row.datname),
-        );
-        await client.query(`ALTER DATABASE ${db} RENAME TO ${pg.escapeIdentifier(deletedDbName)}`);
-      }),
-    );
-  } catch (error) {
-    return {
-      ok: false,
-      problem: `Could not delete the project: ${safeErrorMessage(error, conn.password)}`,
-    };
-  }
+  const result = await onBox(deps, box, "delete", (conn) =>
+    deps.admin(conn, async (client) => {
+      await client.query(`REVOKE CONNECT ON DATABASE ${db} FROM ${role}`);
+      try {
+        deletedDbName = await renameAway(client, project, now);
+      } catch (error) {
+        try {
+          await client.query(`GRANT CONNECT ON DATABASE ${db} TO ${role}`);
+        } catch (grantError) {
+          const reason = grantError instanceof Error ? grantError.message : String(grantError);
+          throw new Error(
+            `${error instanceof Error ? error.message : String(error)}; granting CONNECT back to ${project.ownerRole} also failed (${reason}), so the owner cannot connect until the project is deleted again or CONNECT is granted by hand`,
+          );
+        }
+        throw error;
+      }
+    }),
+  );
+  if (!result.ok) return result;
   markProjectDeleted(deps.db, project.id, deletedDbName, now.toISOString());
   await deps.onLifecycle?.(box, project, "deleted");
-  return { ok: true };
+  return result;
 }
 
 export async function restoreProject(
@@ -76,27 +126,21 @@ export async function restoreProject(
   project: Project,
   box: Box,
 ): Promise<LifecycleResult> {
-  if (project.deletedDbName === null) return { ok: false, problem: "Project is not deleted" };
-  const conn = boxConnection(box, deps.secretKey);
+  const { deletedDbName } = project;
+  if (deletedDbName === null) return { ok: false, problem: "Project is not deleted" };
   const db = pg.escapeIdentifier(project.dbName);
   const role = pg.escapeIdentifier(project.ownerRole);
-  const deletedDb = pg.escapeIdentifier(project.deletedDbName);
-  try {
+  const result = await onBox(deps, box, "restore", async (conn) => {
     await deps.onLifecycle?.(box, project, "restoring");
     await deps.admin(conn, (client) =>
       inTransaction(client, async () => {
-        await client.query(`ALTER DATABASE ${deletedDb} RENAME TO ${db}`);
+        await client.query(`ALTER DATABASE ${pg.escapeIdentifier(deletedDbName)} RENAME TO ${db}`);
         await client.query(`GRANT CONNECT ON DATABASE ${db} TO ${role}`);
       }),
     );
-  } catch (error) {
-    return {
-      ok: false,
-      problem: `Could not restore the project: ${safeErrorMessage(error, conn.password)}`,
-    };
-  }
-  markProjectRestored(deps.db, project.id);
-  return { ok: true };
+  });
+  if (result.ok) markProjectRestored(deps.db, project.id);
+  return result;
 }
 
 // Anything the owner role owns or holds a grant on outside the project's own database, which
@@ -119,11 +163,10 @@ export async function purgeProject(
   project: Project,
   box: Box,
 ): Promise<LifecycleResult> {
-  if (project.deletedDbName === null) return { ok: false, problem: "Project is not deleted" };
-  const deletedDbName = project.deletedDbName;
-  const conn = boxConnection(box, deps.secretKey);
-  try {
-    await deps.admin(conn, async (client) => {
+  const { deletedDbName } = project;
+  if (deletedDbName === null) return { ok: false, problem: "Project is not deleted" };
+  const result = await onBox(deps, box, "purge", (conn) =>
+    deps.admin(conn, async (client) => {
       const foreign = await client.query<{ place: string }>(FOREIGN_DEPENDENCIES, [
         project.ownerRole,
         deletedDbName,
@@ -138,18 +181,16 @@ export async function purgeProject(
         `DROP DATABASE IF EXISTS ${pg.escapeIdentifier(deletedDbName)} WITH (FORCE)`,
       );
       await client.query(`DROP ROLE IF EXISTS ${pg.escapeIdentifier(project.ownerRole)}`);
-    });
-  } catch (error) {
-    return {
-      ok: false,
-      problem: `Could not purge the project: ${safeErrorMessage(error, conn.password)}`,
-    };
-  }
+    }),
+  );
+  if (!result.ok) return result;
   deleteProject(deps.db, project.id);
   await deps.onLifecycle?.(box, project, "purged");
-  return { ok: true };
+  return result;
 }
 
+// One project's failure never stops the rest. An unexpected throw is logged by class only: its
+// message may carry a box credential.
 export async function purgeExpiredProjects(
   deps: ProjectServiceDeps,
   purgeAfterDays: number,
@@ -157,11 +198,16 @@ export async function purgeExpiredProjects(
 ): Promise<void> {
   const cutoff = new Date(now.getTime() - purgeAfterDays * DAY_MS).toISOString();
   for (const project of listProjectsDeletedBefore(deps.db, cutoff)) {
-    const box = getBoxById(deps.db, project.boxId);
-    if (box === undefined) continue;
-    const result = await purgeProject(deps, project, box);
-    if (!result.ok) {
-      console.error(`hattisar: auto-purge of ${project.ref} failed: ${result.problem}`);
+    try {
+      const box = getBoxById(deps.db, project.boxId);
+      if (box === undefined) continue;
+      const result = await purgeProject(deps, project, box);
+      if (!result.ok) {
+        console.error(`hattisar: auto-purge of ${project.ref} failed: ${result.problem}`);
+      }
+    } catch (error) {
+      const name = error instanceof Error ? error.name : "unknown error";
+      console.error(`hattisar: auto-purge of ${project.ref} failed: ${name}`);
     }
   }
 }
