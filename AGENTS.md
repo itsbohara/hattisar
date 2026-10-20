@@ -9,7 +9,6 @@ in front choosing the database per request.
 **Read first:**
 - [`docs/design.md`](./docs/design.md) — the spec. Binding.
 - [`GOAL.md`](./GOAL.md) and [`TASK.md`](./TASK.md) — v1 done-ness and progress.
-- [`docs/plans/v1.md`](./docs/plans/v1.md) — task-by-task plan.
 - Origin: `~/code/ideastorm/concepts/hattisar/README.md` (planning sandbox; do not edit from here).
 
 ## Architecture
@@ -51,6 +50,9 @@ vitest, Playwright, Biome.
 
 - Match surrounding code. Comments only for traps, load-bearing negatives, non-local reasons.
 - Commits split by layer (deps / config / lib / api / ui / tests / docs); no co-author footer.
+- Plans in `docs/plans/` exist only while their work is in flight. Delete a plan in the change that
+  lands it: `docs/design.md` must already describe the shipped behaviour, the PR description keeps
+  the rulings, and git history keeps the plan.
 
 ## Rules & References
 

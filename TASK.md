@@ -1,7 +1,7 @@
 # hattisar — v1 Task Breakdown
 
 > **Goal:** [`GOAL.md`](./GOAL.md) · **Spec:** [`docs/design.md`](./docs/design.md) ·
-> **Plan:** [`docs/plans/v1.md`](./docs/plans/v1.md)
+> **Rulings:** PR #1 (v1), #8 (follow-ups), #9 (Settings)
 >
 > **Source idea / locked decisions:**
 > - Concept doc: `~/code/ideastorm/concepts/hattisar/README.md`
