@@ -5,6 +5,7 @@ import { requireSameOrigin, requireSession } from "./auth/middleware.js";
 import { LoginRateLimiter } from "./auth/rate-limit.js";
 import { authRoutes } from "./auth/routes.js";
 import { backupRoutes } from "./backups/routes.js";
+import type { BackupDeps } from "./backups/service.js";
 import { withAdminClient } from "./boxes/admin-client.js";
 import { checkBox } from "./boxes/e1.js";
 import { boxRoutes } from "./boxes/routes.js";
@@ -41,6 +42,17 @@ export function projectServiceDeps(config: Config, registry: Registry): ProjectS
   };
 }
 
+// Shared by the HTTP routes and the scheduled-backups job in main.ts.
+export function backupDeps(config: Config, registry: Registry): BackupDeps {
+  return {
+    db: registry,
+    secretKey: deriveSecretKey(config.secretKey),
+    pgBinDir: config.pgBinDir,
+    dataDir: config.dataDir,
+    backupHourUtc: config.backupHourUtc,
+  };
+}
+
 export function createApp(config: Config, registry: Registry): Hono<AuthEnv> {
   const app = new Hono<AuthEnv>();
   const pgMetaLog = new PgMetaLog();
@@ -70,9 +82,9 @@ export function createApp(config: Config, registry: Registry): Hono<AuthEnv> {
   app.route("/", uiRoutes());
   app.route("/", boxRoutes({ db: registry, secretKey, check: checkBox }));
   const projectDeps = projectServiceDeps(config, registry);
-  app.route("/", projectRoutes(projectDeps));
+  app.route("/", projectRoutes({ ...projectDeps, backupHourUtc: config.backupHourUtc }));
   app.route("/", trashRoutes({ ...projectDeps, purgeAfterDays: config.purgeAfterDays }));
-  app.route("/", backupRoutes({ db: registry, secretKey, pgBinDir: config.pgBinDir }));
+  app.route("/", backupRoutes(backupDeps(config, registry), projectDeps));
   if (config.debug) {
     app.get("/_hs/debug/pg-meta-log", (c) => c.json(pgMetaLog.recent()));
   }

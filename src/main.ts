@@ -1,6 +1,7 @@
 import { serve } from "@hono/node-server";
-import { createApp, projectServiceDeps } from "./app.js";
+import { backupDeps, createApp, projectServiceDeps } from "./app.js";
 import { seedAdmin } from "./auth/seed.js";
+import { runScheduledBackups } from "./backups/scheduled.js";
 import { failInterruptedBackups } from "./backups/service.js";
 import { seedSharedBox } from "./boxes/shared.js";
 import { type Config, ConfigError, loadConfig } from "./config.js";
@@ -12,7 +13,8 @@ import { deleteExpiredSessions } from "./registry/sessions.js";
 
 // HATTISAR_PORT is the host-published port; compose maps it onto this fixed container port.
 const LISTEN_PORT = 8000;
-const HOUR_MS = 60 * 60 * 1000;
+const MINUTE_MS = 60 * 1000;
+const HOUR_MS = 60 * MINUTE_MS;
 
 function exitOnConfigError(error: unknown): never {
   if (!(error instanceof ConfigError)) throw error;
@@ -51,6 +53,10 @@ scheduler.register("purge-deleted-projects", HOUR_MS, (now) =>
 );
 scheduler.register("purge-expired-sessions", HOUR_MS, async (now) =>
   deleteExpiredSessions(registry, now.toISOString()),
+);
+const scheduledBackupDeps = backupDeps(config, registry);
+scheduler.register("scheduled-backups", MINUTE_MS, (now) =>
+  runScheduledBackups(scheduledBackupDeps, now),
 );
 scheduler.start();
 const server = serve({ fetch: app.fetch, port: LISTEN_PORT }, (info) => {
