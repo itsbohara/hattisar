@@ -10,7 +10,8 @@ export async function renderPage(
   page: HtmlEscapedString | Promise<HtmlEscapedString>,
   status: ContentfulStatusCode = 200,
 ): Promise<Response> {
-  return c.html(`<!doctype html>${await page}`, status);
+  // Back after logout must not show an authenticated page from the browser cache.
+  return c.html(`<!doctype html>${await page}`, status, { "cache-control": "no-store" });
 }
 
 export type Section = "projects" | "trash" | "boxes" | "settings";
