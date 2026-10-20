@@ -1,4 +1,6 @@
 import type { Context } from "hono";
+import { canAccess } from "../auth/access.js";
+import type { AuthEnv } from "../auth/middleware.js";
 import type { Config } from "../config.js";
 import { connectionHeaders, generateTypescriptTypes, type PgMetaLog, runQuery } from "./pg-meta.js";
 import {
@@ -21,9 +23,6 @@ export interface StudioDeps {
 const PROJECT_NOT_FOUND = { message: "Project not found" };
 
 export function createStudioHandler({ config, projects, pgMetaLog }: StudioDeps) {
-  // No auth yet: every request acts as the single admin.
-  const user = config.adminUsername;
-
   function trace(c: Context, project: Project): void {
     if (!config.debug) return;
     const entry = {
@@ -38,7 +37,8 @@ export function createStudioHandler({ config, projects, pgMetaLog }: StudioDeps)
     console.debug(`pg-meta ${entry.method} ${entry.path} -> ${entry.box}/${entry.db}`);
   }
 
-  return async (c: Context): Promise<Response> => {
+  return async (c: Context<AuthEnv>): Promise<Response> => {
+    const { user } = c.var.session;
     const route = classifyRequest(c.req.method, new URL(c.req.url).pathname);
     switch (route.kind) {
       case "hattisar-public":
@@ -53,13 +53,17 @@ export function createStudioHandler({ config, projects, pgMetaLog }: StudioDeps)
       case "not-available":
         return c.json(NOT_AVAILABLE_BODY, 404);
       case "platform-projects":
-        return c.json((await projects.list(user)).map(studioProject));
+        return c.json(
+          (await projects.list(user.username))
+            .filter((project) => canAccess(user, project))
+            .map(studioProject),
+        );
       case "pass":
         return proxyToStudio(config.studioUrl, c.req.raw);
     }
 
-    const project = await projects.get(user, route.ref);
-    if (project === undefined) {
+    const project = await projects.get(user.username, route.ref);
+    if (project === undefined || !canAccess(user, project)) {
       return route.kind === "studio-project"
         ? c.redirect("/_hs/projects", 302)
         : c.json(PROJECT_NOT_FOUND, 404);
