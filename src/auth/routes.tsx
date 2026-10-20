@@ -1,11 +1,10 @@
 import { Hono } from "hono";
-import { storedS3Form } from "../backups/s3-settings.js";
 import type { Registry } from "../registry/db.js";
 import { deleteOtherSessions } from "../registry/sessions.js";
 import { getUserByUsername, updateUserPasswordHash } from "../registry/users.js";
 import { renderPage } from "../ui/layout.js";
 import { LoginPage } from "../ui/pages/login.js";
-import { SettingsPage } from "../ui/pages/settings.js";
+import { ACCOUNT_SETTINGS, AccountSettingsPage, STORAGE_SETTINGS } from "../ui/pages/settings.js";
 import { type AuthEnv, LOGIN_PAGE } from "./middleware.js";
 import { hashPassword, verifyPassword } from "./password.js";
 import type { LoginRateLimiter } from "./rate-limit.js";
@@ -66,7 +65,11 @@ export function authRoutes({ db, limiter, cookieSecure }: AuthRoutesDeps): Hono<
     return c.redirect(LOGIN_PAGE, 302);
   });
 
-  app.get("/_hs/settings", (c) => renderPage(c, <SettingsPage s3={storedS3Form(db)} />));
+  app.get("/_hs/settings", (c) => c.redirect(STORAGE_SETTINGS, 302));
+
+  app.get(ACCOUNT_SETTINGS, (c) =>
+    renderPage(c, <AccountSettingsPage username={c.var.session.user.username} />),
+  );
 
   app.post("/_hs/settings/password", async (c) => {
     const { user, tokenHash } = c.var.session;
@@ -82,12 +85,19 @@ export function authRoutes({ db, limiter, cookieSecure }: AuthRoutesDeps): Hono<
       error = "New password and confirmation do not match.";
     }
     if (error) {
-      return renderPage(c, <SettingsPage password={{ error }} s3={storedS3Form(db)} />, 400);
+      return renderPage(
+        c,
+        <AccountSettingsPage username={user.username} password={{ error }} />,
+        400,
+      );
     }
 
     updateUserPasswordHash(db, user.id, await hashPassword(password));
     deleteOtherSessions(db, user.id, tokenHash);
-    return renderPage(c, <SettingsPage password={{ saved: true }} s3={storedS3Form(db)} />);
+    return renderPage(
+      c,
+      <AccountSettingsPage username={user.username} password={{ saved: true }} />,
+    );
   });
 
   return app;

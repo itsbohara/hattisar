@@ -347,7 +347,7 @@ function Backups({
           "Backups are pg_dump archives: a restore returns the database to when the dump was taken, not to any point in time."
         ) : (
           <>
-            Configure S3 storage in <a href="/_hs/settings">Settings</a> to keep backups.
+            Configure S3 storage in <a href="/_hs/settings/storage">Settings</a> to keep backups.
           </>
         )}
       </p>
