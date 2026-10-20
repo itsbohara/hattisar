@@ -18,7 +18,7 @@ export interface RunningDump {
 }
 
 // The child gets only libpq's variables: hattisar's own env holds the secret key and box passwords.
-function dumpEnv(conn: BoxConnection, database: string): NodeJS.ProcessEnv {
+export function libpqEnv(conn: BoxConnection, database: string): NodeJS.ProcessEnv {
   return {
     PATH: process.env.PATH,
     PGHOST: conn.host,
@@ -37,7 +37,7 @@ function dumpEnv(conn: BoxConnection, database: string): NodeJS.ProcessEnv {
 // mistakes a truncated archive for a complete one. Destroying the stream kills pg_dump.
 export function startDump(pgBinDir: string, conn: BoxConnection, database: string): RunningDump {
   const child = spawn(join(pgBinDir, "pg_dump"), ["-Fc", "--no-password"], {
-    env: dumpEnv(conn, database),
+    env: libpqEnv(conn, database),
     stdio: ["ignore", "pipe", "pipe"],
   });
   const stream = new PassThrough();

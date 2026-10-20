@@ -1,3 +1,4 @@
+import type { BoxConnection } from "../boxes/admin-client.js";
 import { boxConnection } from "../boxes/service.js";
 import {
   type Backup,
@@ -13,20 +14,47 @@ import type { Box } from "../registry/boxes.js";
 import type { Registry } from "../registry/db.js";
 import type { Project } from "../registry/projects.js";
 import { backupKey } from "./naming.js";
-import { DumpError, startDump } from "./pg-dump.js";
+import { DumpError, type RunningDump, startDump } from "./pg-dump.js";
 import { redact } from "./redact.js";
-import { deleteObject, s3ErrorMessage, uploadStream } from "./s3.js";
+import { deleteBackupObject, s3ErrorMessage, uploadStream } from "./s3.js";
 import { loadS3Settings } from "./s3-settings.js";
 
 export interface BackupDeps {
   db: Registry;
   secretKey: Buffer;
   pgBinDir: string;
+  dataDir: string;
+  backupHourUtc: number;
 }
 
 export type BackupOutcome = { ok: true } | { ok: false; problem: string };
 
-const NOT_CONFIGURED = "Configure S3 storage in Settings first.";
+export const NOT_CONFIGURED = "Configure S3 storage in Settings first.";
+
+// Projects whose database a restore is replacing; a backup taken meanwhile would dump a half-restored
+// database. In memory only: a restart kills the restore along with it.
+const restoring = new Set<number>();
+
+export function isRestoring(projectId: number): boolean {
+  return restoring.has(projectId);
+}
+
+export async function whileRestoring<T>(projectId: number, run: () => Promise<T>): Promise<T> {
+  restoring.add(projectId);
+  try {
+    return await run();
+  } finally {
+    restoring.delete(projectId);
+  }
+}
+
+export function boxCredentials(box: Box, secretKey: Buffer): BoxConnection | string {
+  try {
+    return boxConnection(box, secretKey);
+  } catch {
+    return `Could not read the credentials of box ${box.name}.`;
+  }
+}
 
 // Nothing survives a restart mid-backup: the pg_dump child and the multipart upload die with it.
 export function failInterruptedBackups(db: Registry): void {
@@ -49,18 +77,23 @@ export async function runBackup(
   if (existing.some((backup) => backup.status === "running")) {
     return { ok: false, problem: `A backup of ${project.ref} is already running.` };
   }
+  if (isRestoring(project.id)) {
+    return { ok: false, problem: `${project.ref} is being restored. Try again when it finishes.` };
+  }
   const key = backupKey(settings.prefix, project.ref, kind, now);
   if (existing.some((backup) => backup.s3Key === key)) {
     return { ok: false, problem: "A backup was taken this second. Try again in a moment." };
   }
+  const conn = boxCredentials(box, deps.secretKey);
+  if (typeof conn === "string") return { ok: false, problem: `Backup failed: ${conn}` };
   const backup = insertBackup(
     deps.db,
-    { projectId: project.id, kind, s3Key: key },
+    { projectId: project.id, kind, bucket: settings.bucket, s3Key: key },
     now.toISOString(),
   );
-  const conn = boxConnection(box, deps.secretKey);
-  const dump = startDump(deps.pgBinDir, conn, project.dbName);
+  let dump: RunningDump | undefined;
   try {
+    dump = startDump(deps.pgBinDir, conn, project.dbName);
     await uploadStream(settings, key, dump.stream);
     markBackupDone(deps.db, backup.id, dump.bytes());
     return { ok: true };
@@ -72,7 +105,7 @@ export async function runBackup(
     markBackupFailed(deps.db, backup.id, message);
     return { ok: false, problem: `Backup failed: ${message}` };
   } finally {
-    dump.stream.destroy();
+    dump?.stream.destroy();
   }
 }
 
@@ -83,7 +116,7 @@ export async function removeBackup(deps: BackupDeps, backup: Backup): Promise<Ba
   const settings = loadS3Settings(deps.db, deps.secretKey);
   if (settings !== undefined) {
     try {
-      await deleteObject(settings, backup.s3Key);
+      await deleteBackupObject(settings, backup);
     } catch (error) {
       return {
         ok: false,
