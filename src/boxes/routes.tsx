@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { AuthEnv } from "../auth/middleware.js";
-import { listBoxes } from "../registry/boxes.js";
+import type { ManagedBoxes } from "../managed/service.js";
+import { getBoxById, listBoxes } from "../registry/boxes.js";
 import type { Registry } from "../registry/db.js";
 import { listProjectsOnBox } from "../registry/projects.js";
 import { renderPage } from "../ui/layout.js";
@@ -11,6 +12,7 @@ import {
   editableBox,
   editBox,
   formValues,
+  type RemoveResult,
   registerBox,
   removeBox,
 } from "./service.js";
@@ -51,11 +53,14 @@ function boxId(param: string): number {
   return /^\d+$/.test(param) ? Number(param) : Number.NaN;
 }
 
-export function boxRoutes(deps: BoxServiceDeps): Hono<AuthEnv> {
-  const { db } = deps;
+export function boxRoutes(deps: BoxServiceDeps & { managed?: ManagedBoxes }): Hono<AuthEnv> {
+  const { db, managed } = deps;
   const app = new Hono<AuthEnv>();
+  const managedEnabled = managed !== undefined;
 
-  app.get(BOXES_PAGE, (c) => renderPage(c, <BoxesPage rows={boxRows(db)} />));
+  app.get(BOXES_PAGE, (c) =>
+    renderPage(c, <BoxesPage rows={boxRows(db)} managedEnabled={managedEnabled} />),
+  );
 
   app.get("/_hs/boxes/new", (c) => renderPage(c, <BoxFormPage />));
 
@@ -89,12 +94,18 @@ export function boxRoutes(deps: BoxServiceDeps): Hono<AuthEnv> {
     );
   });
 
-  app.post("/_hs/boxes/:id/remove", (c) => {
-    const box = editableBox(db, boxId(c.req.param("id")));
-    if (!box) return c.notFound();
-    const result = removeBox(db, box);
+  app.post("/_hs/boxes/:id/remove", async (c) => {
+    const box = getBoxById(db, boxId(c.req.param("id")));
+    let result: RemoveResult;
+    if (box?.kind === "registered") result = removeBox(db, box);
+    else if (box?.kind === "managed" && managed) result = await managed.remove(box);
+    else return c.notFound();
     if (result.ok) return c.redirect(BOXES_PAGE, 302);
-    return renderPage(c, <BoxesPage rows={boxRows(db)} error={result.problem} />, 409);
+    return renderPage(
+      c,
+      <BoxesPage rows={boxRows(db)} managedEnabled={managedEnabled} error={result.problem} />,
+      409,
+    );
   });
 
   return app;

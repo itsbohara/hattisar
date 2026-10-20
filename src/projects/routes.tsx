@@ -2,12 +2,15 @@ import { type Context, Hono } from "hono";
 import { canAccess } from "../auth/access.js";
 import type { AuthEnv } from "../auth/middleware.js";
 import { isS3Configured } from "../backups/s3-settings.js";
+import { createProjectOnNewBox } from "../managed/new-project.js";
+import type { ManagedBoxes } from "../managed/service.js";
 import { getBackupSchedule, listBackups } from "../registry/backups.js";
 import { type Box, getBoxById, getSharedBox, listBoxes } from "../registry/boxes.js";
 import type { Registry } from "../registry/db.js";
 import { getProjectByRef, listProjects, type Project } from "../registry/projects.js";
 import { renderPage } from "../ui/layout.js";
 import {
+  NEW_BOX_OPTION,
   NewProjectPage,
   type NewProjectValues,
   ProjectPage,
@@ -96,7 +99,7 @@ function queryNotice(c: Context<AuthEnv>): ProjectPageNotice | undefined {
 }
 
 export function projectRoutes(
-  deps: ProjectServiceDeps & Pick<ProjectPageDeps, "backupHourUtc">,
+  deps: ProjectServiceDeps & Pick<ProjectPageDeps, "backupHourUtc"> & { managed?: ManagedBoxes },
 ): Hono<AuthEnv> {
   const { db } = deps;
   const app = new Hono<AuthEnv>();
@@ -111,7 +114,12 @@ export function projectRoutes(
   function renderNew(c: Context<AuthEnv>, values: NewProjectValues, problems?: string[]) {
     return renderPage(
       c,
-      <NewProjectPage boxes={listBoxes(db)} values={values} problems={problems} />,
+      <NewProjectPage
+        boxes={listBoxes(db)}
+        values={values}
+        problems={problems}
+        offerNewBox={deps.managed !== undefined}
+      />,
       problems ? 400 : 200,
     );
   }
@@ -132,10 +140,13 @@ export function projectRoutes(
   app.post(PROJECTS_PAGE, async (c) => {
     const form = await c.req.parseBody();
     const values = { name: text(form, "name"), ref: text(form, "ref") };
+    const managed = text(form, "boxId") === NEW_BOX_OPTION ? deps.managed : undefined;
     const boxId = boxIdFrom(text(form, "boxId"));
-    const result = await createProject(deps, { ...values, boxId: boxId ?? Number.NaN });
+    const result = managed
+      ? await createProjectOnNewBox(deps, managed, values)
+      : await createProject(deps, { ...values, boxId: boxId ?? Number.NaN });
     if (result.ok) return c.redirect(`${PROJECTS_PAGE}/${result.project.ref}`, 302);
-    return renderNew(c, { ...values, boxId }, result.problems);
+    return renderNew(c, { ...values, boxId, newBox: managed !== undefined }, result.problems);
   });
 
   app.get(`${PROJECTS_PAGE}/:ref`, (c) => {

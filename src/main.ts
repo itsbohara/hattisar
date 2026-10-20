@@ -6,6 +6,7 @@ import { failInterruptedBackups } from "./backups/service.js";
 import { seedSharedBox } from "./boxes/shared.js";
 import { type Config, ConfigError, loadConfig } from "./config.js";
 import { Scheduler } from "./jobs.js";
+import { createManagedBoxes, type ManagedBoxes } from "./managed/service.js";
 import { purgeExpiredProjects } from "./projects/lifecycle.js";
 import { openRegistry, type Registry } from "./registry/db.js";
 import { deriveSecretKey } from "./registry/secrets.js";
@@ -43,11 +44,21 @@ async function seededRegistry(config: Config): Promise<Registry> {
   }
 }
 
+function managedBoxesOrExit(config: Config, registry: Registry): ManagedBoxes | undefined {
+  try {
+    return createManagedBoxes(config, registry, deriveSecretKey(config.secretKey));
+  } catch (error) {
+    registry.close();
+    exitOnConfigError(error);
+  }
+}
+
 const config = configOrExit();
 const registry = await seededRegistry(config);
-const app = createApp(config, registry);
+const managed = managedBoxesOrExit(config, registry);
+const app = createApp(config, registry, managed);
 const scheduler = new Scheduler();
-const projectDeps = projectServiceDeps(config, registry);
+const projectDeps = projectServiceDeps(config, registry, managed);
 scheduler.register("purge-deleted-projects", HOUR_MS, (now) =>
   purgeExpiredProjects(projectDeps, config.purgeAfterDays, now),
 );

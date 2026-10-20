@@ -10,6 +10,9 @@ import { withAdminClient } from "./boxes/admin-client.js";
 import { checkBox } from "./boxes/e1.js";
 import { boxRoutes } from "./boxes/routes.js";
 import type { Config } from "./config.js";
+import { managedLifecycle } from "./managed/lifecycle.js";
+import { managedBoxRoutes } from "./managed/routes.js";
+import type { ManagedBoxes } from "./managed/service.js";
 import { refreshSharedPooler } from "./projects/pooler.js";
 import { projectRoutes } from "./projects/routes.js";
 import type { ProjectServiceDeps } from "./projects/service.js";
@@ -33,12 +36,17 @@ function logUnexpected(method: string, path: string, error: Error): void {
 }
 
 // Shared by the HTTP routes and the hourly purge job in main.ts.
-export function projectServiceDeps(config: Config, registry: Registry): ProjectServiceDeps {
+export function projectServiceDeps(
+  config: Config,
+  registry: Registry,
+  managed?: ManagedBoxes,
+): ProjectServiceDeps {
   return {
     db: registry,
     secretKey: deriveSecretKey(config.secretKey),
     admin: withAdminClient,
     refreshPooler: refreshSharedPooler,
+    onLifecycle: managed && managedLifecycle(registry, managed),
   };
 }
 
@@ -53,7 +61,12 @@ export function backupDeps(config: Config, registry: Registry): BackupDeps {
   };
 }
 
-export function createApp(config: Config, registry: Registry): Hono<AuthEnv> {
+// `managed` is present only when HATTISAR_MANAGED_BOXES is on (see createManagedBoxes).
+export function createApp(
+  config: Config,
+  registry: Registry,
+  managed?: ManagedBoxes,
+): Hono<AuthEnv> {
   const app = new Hono<AuthEnv>();
   const pgMetaLog = new PgMetaLog();
   const secretKey = deriveSecretKey(config.secretKey);
@@ -80,9 +93,10 @@ export function createApp(config: Config, registry: Registry): Hono<AuthEnv> {
     }),
   );
   app.route("/", uiRoutes());
-  app.route("/", boxRoutes({ db: registry, secretKey, check: checkBox }));
-  const projectDeps = projectServiceDeps(config, registry);
-  app.route("/", projectRoutes({ ...projectDeps, backupHourUtc: config.backupHourUtc }));
+  app.route("/", boxRoutes({ db: registry, secretKey, check: checkBox, managed }));
+  if (managed) app.route("/", managedBoxRoutes(managed));
+  const projectDeps = projectServiceDeps(config, registry, managed);
+  app.route("/", projectRoutes({ ...projectDeps, backupHourUtc: config.backupHourUtc, managed }));
   app.route("/", trashRoutes({ ...projectDeps, purgeAfterDays: config.purgeAfterDays }));
   app.route("/", backupRoutes(backupDeps(config, registry), projectDeps));
   if (config.debug) {
