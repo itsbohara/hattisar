@@ -45,6 +45,40 @@ async function notes(url: string): Promise<string[]> {
   );
 }
 
+// An app that keeps reconnecting through the pooler while the delete runs. Short-lived sessions
+// rarely hold the database across RENAME's own wait for other backends, so this is a smoke check;
+// the revoke-before-terminate order is pinned by the unit tests.
+function reconnectLoop(url: string): { connected: Promise<void>; stop: () => Promise<string[]> } {
+  const refusals: string[] = [];
+  let running = true;
+  let markConnected: () => void = () => {};
+  const connected = new Promise<void>((resolve) => {
+    markConnected = resolve;
+  });
+  const loop = (async () => {
+    while (running) {
+      try {
+        await withClient(url, async (client) => {
+          await client.query("select pg_sleep(0.05)");
+          markConnected();
+        });
+      } catch (error) {
+        refusals.push(error instanceof Error ? error.message : String(error));
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    }
+  })();
+  return {
+    connected,
+    stop: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      running = false;
+      await loop;
+      return refusals;
+    },
+  };
+}
+
 async function poolerError(url: string): Promise<string> {
   try {
     await notes(url);
@@ -134,14 +168,23 @@ describe("soft delete, restore and purge on the shared box", () => {
     expect(databases()).toEqual([dbName]);
   });
 
-  it("soft-deletes: database renamed, owner locked out, hidden from Studio, ref reserved", async () => {
+  it("soft-deletes: database renamed, owner refused CONNECT, hidden from Studio, ref reserved", async () => {
+    const reconnecting = reconnectLoop(strings.session);
+    await reconnecting.connected;
     const response = await postForm(
       baseUrl,
       `/_hs/projects/${ref}/delete`,
       { confirm: ref },
       cookie,
     );
+    const refusals = await reconnecting.stop();
     expect(response.status).toBe(302);
+    expect(refusals.length).toBeGreaterThan(0);
+    for (const refusal of refusals) {
+      expect(refusal).toMatch(
+        /permission denied for database|does not exist|terminating connection/,
+      );
+    }
     expect(response.headers.get("location")).toBe("/_hs/trash");
 
     expect(databases()).toEqual([`${dbName}__deleted_${today()}`]);
