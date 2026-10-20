@@ -330,7 +330,12 @@ describe("projects", () => {
   it("purging removes the project's backups and schedule", () => {
     const alpha = insertProject(db, project(boxId));
     setBackupSchedule(db, { projectId: alpha.id, frequency: "daily", keepDaily: 7, keepWeekly: 4 });
-    const backup = insertBackup(db, { projectId: alpha.id, kind: "manual", s3Key: "k" });
+    const backup = insertBackup(db, {
+      projectId: alpha.id,
+      kind: "manual",
+      bucket: "b",
+      s3Key: "k",
+    });
     deleteProject(db, alpha.id);
     expect(getProjectById(db, alpha.id)).toBeUndefined();
     expect(getBackup(db, backup.id)).toBeUndefined();
@@ -376,11 +381,16 @@ describe("backups", () => {
   });
 
   it("records running, done and failed backups, newest first", () => {
-    const first = insertBackup(db, { projectId, kind: "scheduled", s3Key: "a.dump" }, T0);
+    const first = insertBackup(
+      db,
+      { projectId, kind: "scheduled", bucket: "b", s3Key: "a.dump" },
+      T0,
+    );
     expect(first).toEqual({
       id: expect.any(Number),
       projectId,
       kind: "scheduled",
+      bucket: "b",
       s3Key: "a.dump",
       sizeBytes: null,
       status: "running",
@@ -388,7 +398,11 @@ describe("backups", () => {
       createdAt: T0,
       finishedAt: null,
     });
-    const second = insertBackup(db, { projectId, kind: "manual", s3Key: "b.dump" }, T1);
+    const second = insertBackup(
+      db,
+      { projectId, kind: "manual", bucket: "b", s3Key: "b.dump" },
+      T1,
+    );
     markBackupDone(db, first.id, 1234, T1);
     markBackupFailed(db, second.id, "pg_dump exited with code 1", T2);
     expect(listBackups(db, projectId)).toEqual([
@@ -400,8 +414,12 @@ describe("backups", () => {
   });
 
   it("fails every running backup with the given error", () => {
-    const running = insertBackup(db, { projectId, kind: "manual", s3Key: "a.dump" }, T0);
-    const done = insertBackup(db, { projectId, kind: "manual", s3Key: "b.dump" }, T0);
+    const running = insertBackup(
+      db,
+      { projectId, kind: "manual", bucket: "b", s3Key: "a.dump" },
+      T0,
+    );
+    const done = insertBackup(db, { projectId, kind: "manual", bucket: "b", s3Key: "b.dump" }, T0);
     markBackupDone(db, done.id, 10, T1);
     expect(failRunningBackups(db, "interrupted by restart", T2)).toBe(1);
     expect(getBackup(db, running.id)).toMatchObject({
@@ -421,10 +439,10 @@ describe("backups", () => {
         keepWeekly: 4,
       }),
     ).toThrow(constraintError("SQLITE_CONSTRAINT_CHECK"));
-    expect(() => insertBackup(db, { projectId, kind: "adhoc" as "manual", s3Key: "k" })).toThrow(
-      constraintError("SQLITE_CONSTRAINT_CHECK"),
-    );
-    const backup = insertBackup(db, { projectId, kind: "manual", s3Key: "k" });
+    expect(() =>
+      insertBackup(db, { projectId, kind: "adhoc" as "manual", bucket: "b", s3Key: "k" }),
+    ).toThrow(constraintError("SQLITE_CONSTRAINT_CHECK"));
+    const backup = insertBackup(db, { projectId, kind: "manual", bucket: "b", s3Key: "k" });
     expect(() =>
       db.prepare("UPDATE backups SET status = 'queued' WHERE id = ?").run(backup.id),
     ).toThrow(constraintError("SQLITE_CONSTRAINT_CHECK"));

@@ -102,7 +102,7 @@ beforeEach(() => {
     c.set("session", { user, tokenHash: "unused" });
     await next();
   });
-  app.route("/", projectRoutes(deps));
+  app.route("/", projectRoutes({ ...deps, backupHourUtc: 2 }));
   app.route("/", trashRoutes({ ...deps, purgeAfterDays: PURGE_AFTER_DAYS }));
 });
 

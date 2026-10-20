@@ -7,6 +7,7 @@ import {
   postQuery,
   sharedBoxId,
 } from "../helpers/projects.js";
+import { objectStatus, type S3Test, s3Fields, s3TestService } from "../helpers/s3.js";
 import { postForm, signIn } from "../helpers/session.js";
 import { compose, registryRows, registrySql, sharedBoxSql, stackEnv } from "../stack.js";
 
@@ -15,15 +16,10 @@ const ref = `it-bak-${randomUUID().slice(0, 8)}`;
 const dbName = ref.replaceAll("-", "_");
 let cookie: string;
 
-interface S3Test {
-  accessKey: string;
-  secretKey: string;
-  bucket: string;
-}
-
 interface BackupRow {
   id: number;
   kind: string;
+  bucket: string | null;
   s3Key: string;
   sizeBytes: number | null;
   status: string;
@@ -32,58 +28,9 @@ interface BackupRow {
 
 let s3: S3Test;
 
-function s3TestService(): S3Test {
-  const config = JSON.parse(compose(["--profile", "s3-test", "config", "--format", "json"])) as {
-    services: Record<string, { environment: Record<string, string> } | undefined>;
-  };
-  const env = config.services["s3-bucket"]?.environment;
-  if (!env) throw new Error("the s3-test profile is missing from the compose files");
-  return {
-    accessKey: env.S3_TEST_ACCESS_KEY as string,
-    secretKey: env.S3_TEST_SECRET_KEY as string,
-    bucket: env.S3_TEST_BUCKET as string,
-  };
-}
-
-function s3Fields(overrides: Record<string, string> = {}): Record<string, string> {
-  return {
-    endpoint: "http://s3:9000",
-    region: "us-east-1",
-    bucket: s3.bucket,
-    accessKeyId: s3.accessKey,
-    secretAccessKey: s3.secretKey,
-    forcePathStyle: "on",
-    prefix: "it-backups",
-    ...overrides,
-  };
-}
-
-// HTTP status of a HEAD on the object, signed inside the s3 container (its port is not published).
-function objectStatus(key: string): { status: number; length: number | undefined } {
-  const out = compose([
-    "exec",
-    "-T",
-    "s3",
-    "curl",
-    "-s",
-    "-o",
-    "/dev/null",
-    "-w",
-    "%{http_code} %header{content-length}",
-    "-I",
-    "--aws-sigv4",
-    "aws:amz:us-east-1:s3",
-    "--user",
-    `${s3.accessKey}:${s3.secretKey}`,
-    `http://localhost:9000/${s3.bucket}/${key}`,
-  ]).trim();
-  const [status, length] = out.split(" ");
-  return { status: Number(status), length: length ? Number(length) : undefined };
-}
-
 function backups(): BackupRow[] {
   return registryRows<BackupRow>(
-    `SELECT b.id, b.kind, b.s3_key AS s3Key, b.size_bytes AS sizeBytes, b.status, b.error
+    `SELECT b.id, b.kind, b.bucket, b.s3_key AS s3Key, b.size_bytes AS sizeBytes, b.status, b.error
        FROM backups b JOIN projects p ON p.id = b.project_id WHERE p.ref = ? ORDER BY b.id`,
     ref,
   );
@@ -165,12 +112,12 @@ describe("S3 settings", () => {
   });
 
   it("tests a working connection without saving it", async () => {
-    const response = await postForm(baseUrl, "/_hs/settings/s3/test", s3Fields(), cookie);
+    const response = await postForm(baseUrl, "/_hs/settings/s3/test", s3Fields(s3), cookie);
     const html = await response.text();
     expect(response.status).toBe(200);
     expect(html).toContain("Connection works");
     expect(html).not.toContain(s3.secretKey);
-    expect(objectStatus("it-backups/.hattisar-test").status).toBe(404);
+    expect(objectStatus(s3, "it-backups/.hattisar-test").status).toBe(404);
     expect(registryRows("SELECT key FROM settings WHERE key LIKE 's3.%'")).toEqual([]);
   });
 
@@ -179,7 +126,7 @@ describe("S3 settings", () => {
     const response = await postForm(
       baseUrl,
       "/_hs/settings/s3/test",
-      s3Fields({ secretAccessKey: wrong }),
+      s3Fields(s3, { secretAccessKey: wrong }),
       cookie,
     );
     const html = await response.text();
@@ -189,7 +136,7 @@ describe("S3 settings", () => {
   });
 
   it("saves the settings with the secret write-only", async () => {
-    const response = await postForm(baseUrl, "/_hs/settings/s3", s3Fields(), cookie);
+    const response = await postForm(baseUrl, "/_hs/settings/s3", s3Fields(s3), cookie);
     expect(response.status).toBe(200);
     expect(await response.text()).toContain("S3 settings saved.");
     const page = await (await fetchWith(baseUrl, cookie, "/_hs/settings")).text();
@@ -199,7 +146,7 @@ describe("S3 settings", () => {
     const kept = await postForm(
       baseUrl,
       "/_hs/settings/s3/test",
-      s3Fields({ secretAccessKey: "" }),
+      s3Fields(s3, { secretAccessKey: "" }),
       cookie,
     );
     expect(await kept.text()).toContain("Connection works");
@@ -212,9 +159,14 @@ describe("back up now", () => {
     expect(response.status).toBe(302);
     expect(response.headers.get("location")).toBe(`/_hs/projects/${ref}?backed-up`);
     const [backup] = backups();
-    expect(backup).toMatchObject({ kind: "manual", status: "done", error: null });
+    expect(backup).toMatchObject({
+      kind: "manual",
+      bucket: s3.bucket,
+      status: "done",
+      error: null,
+    });
     expect(backup?.s3Key).toMatch(new RegExp(`^it-backups/${ref}/\\d{8}T\\d{6}Z-manual\\.dump$`));
-    expect(objectStatus(backup?.s3Key as string)).toEqual({
+    expect(objectStatus(s3, backup?.s3Key as string)).toEqual({
       status: 200,
       length: backup?.sizeBytes,
     });
@@ -265,7 +217,7 @@ describe("back up now", () => {
     const { POSTGRES_PASSWORD } = stackEnv();
     expect(failed?.error).not.toContain(POSTGRES_PASSWORD);
     expect(failed?.error).not.toContain(s3.secretKey);
-    expect(objectStatus(failed?.s3Key as string).status).toBe(404);
+    expect(objectStatus(s3, failed?.s3Key as string).status).toBe(404);
   });
 
   it("deletes a backup's object and row", async () => {
@@ -277,7 +229,7 @@ describe("back up now", () => {
         cookie,
       );
       expect(response.status).toBe(302);
-      expect(objectStatus(backup.s3Key).status).toBe(404);
+      expect(objectStatus(s3, backup.s3Key).status).toBe(404);
     }
     expect(backups()).toEqual([]);
   });

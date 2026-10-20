@@ -76,6 +76,7 @@ beforeEach(() => {
       refreshPooler: async (_box, project, password) => {
         refreshed.push({ ref: project.ref, password });
       },
+      backupHourUtc: 2,
     }),
   );
 });
