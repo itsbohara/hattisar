@@ -6,6 +6,241 @@ Multi-project databases for **self-hosted Supabase Studio**. Self-hosted Supabas
 project; hattisar puts many databases behind one Studio and one login — on a shared dev box or on
 dedicated boxes — with connection strings, backups to S3, and soft delete.
 
-> Status: under construction. See [`docs/design.md`](docs/design.md) for the spec.
->
-> Not affiliated with Supabase.
+One stock, unmodified Studio serves every project. hattisar sits in front of it and picks the
+database per request, so opening `/project/notes-app/editor` shows `notes-app`'s tables and
+nothing else.
+
+> Not affiliated with Supabase. "Supabase" is used only to name the software hattisar works with.
+
+## What you get
+
+- **Projects** — a project is a Postgres database plus its own owner role, created in seconds.
+- **Boxes** — the Postgres servers projects live on: the bundled *shared* box (development only),
+  any *registered* Postgres you already run, or a *managed* box hattisar starts in Docker.
+- **Studio** — the real Supabase Studio, per project: Table Editor, SQL editor, database screens.
+- **Connection strings** — pooler (session and transaction) strings for the shared box, direct
+  strings for other boxes; reveal, copy, rotate.
+- **Backups** — download a `pg_dump`, back up to S3 now or on a daily/weekly schedule with
+  retention, restore into the same project or a new one.
+- **Soft delete** — deleted projects go to Trash and can be restored until they are purged
+  (7 days by default).
+
+### Screenshots
+
+Not captured yet. Planned:
+
+- Login
+- Projects list with "Open in Studio"
+- New project, with the shared box's "development only" warning
+- Project page: connection strings, backups, schedule
+- Studio Table Editor opened on a project, with the "← hattisar" link
+- Boxes: shared, registered and managed
+- Trash
+- Settings: S3 backup storage
+
+## Quick start (development)
+
+Needs Docker, Node 24 and pnpm 11 (`corepack enable`), and free host ports 8000, 54322 and 6543.
+
+```sh
+pnpm install
+pnpm stack:up        # writes docker/.env with generated secrets, builds and starts the stack
+```
+
+Open <http://localhost:8000> and log in as `admin` with the password from
+`grep HATTISAR_ADMIN_PASSWORD docker/.env`. Create a project on the shared box, open it in Studio,
+and copy its pooler connection string into an app.
+
+The development stack mounts `src/` into the hattisar container (`pnpm dev`, reloads on change),
+turns managed boxes on, and runs an S3-compatible test service reachable inside the compose
+network as `http://s3:9000` (bucket `hattisar-test`, keys `S3_TEST_*` in `docker/.env`, path-style
+on) — enough to try backups from Settings.
+
+```sh
+pnpm lint && pnpm typecheck && pnpm test     # unit
+pnpm test:it                                 # integration, needs the stack
+pnpm exec playwright install chromium
+pnpm test:e2e                                # end to end, needs the stack
+pnpm stack:down                              # add -v to drop the volumes too
+```
+
+`scripts/dev-env.sh` never overwrites `docker/.env`. The admin password is read only on the first
+boot of an empty `hattisar-data` volume; change it afterwards in Settings.
+
+## How it works
+
+```
+browser ──► hattisar :8000 ──► studio:3000 (internal only)
+              │                     │
+              │                     └──► meta:8080 ──► box (any registered Postgres)
+              ├─► meta:8080  (hattisar's own /query handling)
+              ├─► boxes      (admin ops: create db/role, dumps)
+              ├─► S3         (backups)
+              └─► docker-socket-proxy (only when managed boxes are on)
+apps ──► supavisor :54322/:6543 ──► shared box     |   apps ──► other boxes directly
+```
+
+Studio reaches a database through postgres-meta, which connects wherever the encrypted
+`x-connection-encrypted` header tells it to. hattisar answers Studio's project API itself, runs
+Studio's SQL queries against the project's database, and sets that header on every other pg-meta
+request for the project in the URL. Studio and postgres-meta are configured with a default
+database that exists nowhere (`hattisar_no_project`), so a Studio route hattisar does not redirect
+— including one a future Studio adds — fails instead of reading another project's data.
+
+The stack (`docker/compose.yml`) is `db` (the shared box, `supabase/postgres`), `meta`, `studio`,
+`supavisor` (pooler for the shared box) and `hattisar`, plus `docker-proxy` under the
+`managed-boxes` profile. Only hattisar, the pooler and managed boxes publish host ports. hattisar keeps its own
+state in SQLite in the `hattisar-data` volume. The full design is in
+[`docs/design.md`](docs/design.md).
+
+## Configuration
+
+Set in `docker/.env` (template: [`docker/env.example`](docker/env.example)).
+
+| Env | Default | Notes |
+|---|---|---|
+| `HATTISAR_SECRET_KEY` | — | Required, ≥ 32 chars. Encrypts stored secrets (box passwords, owner passwords, S3 secret). Losing it loses them. |
+| `HATTISAR_ADMIN_USERNAME` | `admin` | First boot only. |
+| `HATTISAR_ADMIN_PASSWORD` | — | Required on first boot, ≥ 12 chars. Ignored afterwards. |
+| `HATTISAR_PUBLIC_HOST` | `localhost` | Host shown in connection strings. |
+| `HATTISAR_PORT` | `8000` | Host-published port; the app listens on 8000 inside the container. |
+| `HATTISAR_DATA_DIR` | `/data` | SQLite registry and temporary restore files. |
+| `HATTISAR_COOKIE_SECURE` | `false` | `true` behind HTTPS. |
+| `HATTISAR_PURGE_AFTER_DAYS` | `7` | Deleted projects are purged after this many days. |
+| `HATTISAR_BACKUP_HOUR_UTC` | `2` | Hour scheduled backups run (weekly ones on Mondays). |
+| `HATTISAR_PG_BIN_DIR` | `/usr/bin` | Where `pg_dump`/`pg_restore` live (the image ships PostgreSQL 17 client). |
+| `HATTISAR_MANAGED_BOXES` | `false` | Turns managed boxes on; also start the `managed-boxes` profile. |
+| `HATTISAR_MANAGED_PORT_RANGE` | `55000-55999` | Host ports for managed boxes. |
+| `DOCKER_HOST` | `tcp://docker-proxy:2375` | Managed boxes only. Compose sets it to the proxy; the host's value is never used. |
+| `STUDIO_URL` | `http://studio:3000` | |
+| `PG_META_URL` | `http://meta:8080` | |
+| `PG_META_CRYPTO_KEY` | — | Shared by hattisar, Studio and postgres-meta. |
+| `POSTGRES_PASSWORD` | — | Admin password of the shared box. |
+| `POOLER_TENANT_ID` | — | Shared box pooler tenant; part of the pooler user name. |
+| `POOLER_PORT_SESSION` | `54322` | Shared box pooler, session mode. |
+| `POOLER_PORT_TRANSACTION` | `6543` | Shared box pooler, transaction mode. |
+| `POOLER_SECRET_KEY_BASE`, `POOLER_VAULT_ENC_KEY`, `POOLER_JWT_SECRET` | — | Supavisor's own secrets; generated by `scripts/dev-env.sh`. |
+
+S3 settings are not environment variables: set them in Settings (endpoint for S3-compatible
+stores, region, bucket, keys, path style, key prefix). The secret key is stored encrypted.
+
+## Production
+
+`docker/compose.yml` runs on its own, without the development override; it builds the hattisar
+image from [`docker/Dockerfile`](docker/Dockerfile).
+
+```sh
+sh scripts/dev-env.sh     # generate docker/.env with fresh secrets, then edit it
+docker compose -f docker/compose.yml up -d --build
+```
+
+Before exposing it:
+
+- **TLS** — put hattisar behind a reverse proxy that terminates HTTPS (Caddy, nginx, Traefik) and
+  set `HATTISAR_COOKIE_SECURE=true`. Compose publishes `HATTISAR_PORT` on every interface; firewall
+  it so only the proxy reaches it.
+- **Public host** — set `HATTISAR_PUBLIC_HOST` to the name apps use to reach the boxes; it goes
+  into every connection string.
+- **Pooler ports** — 54322 and 6543 are published for apps on the shared box. Close them if no
+  app should reach the shared box from outside.
+- **Secrets** — keep a copy of `docker/.env`. Without `HATTISAR_SECRET_KEY` the stored box and
+  S3 credentials cannot be decrypted.
+- **Backups** — configure S3 in Settings, set a schedule per project, and use "Test connection".
+  Back up the `hattisar-data` volume too: it is the registry of boxes and projects.
+- **PITR** — dumps restore to the moment of the dump. For production boxes also run box-level
+  point-in-time recovery (WAL-G, pgBackRest) on the Postgres servers themselves.
+- **Shared box** — development only. Put production projects on a registered or managed box.
+- **Managed boxes** — off by default; see the security note below before turning them on.
+
+To upgrade hattisar, pull and run the same `up -d --build`; registry migrations run at boot.
+Upgrading the pinned Studio and Postgres images is covered in
+[`docs/upgrading-studio.md`](docs/upgrading-studio.md).
+
+## Security model
+
+- **One admin.** A single user logs in (scrypt password hash, `HttpOnly` session cookie, 7-day
+  sessions, 5 failed logins per 15 minutes, `Origin`/`Referer` check on every form post). Every
+  project-scoped path goes through one authorization check; in v1 the admin sees everything.
+- **One owner role per project.** Creating a project creates `hs_<db>_owner` with a random
+  password and a database it owns. `CONNECT` and `TEMPORARY` on the database are revoked from
+  `PUBLIC` and granted to the owner alone, so a project's role cannot connect to another project's
+  database.
+- **Studio connects as the project's owner**, the same role apps use. Tables made in Studio belong
+  to the role your app logs in as. Studio actions that need a superuser (untrusted extensions,
+  role management) fail with a permission error. hattisar's own admin operations (create, delete,
+  backup, restore) use the box admin.
+- **No silent default database.** Every postgres-meta request carries the connection hattisar
+  chose for the ref in the URL; a ref it cannot resolve is a 404, and anything that slips past
+  lands on a database that does not exist.
+- **Shared box = development only.** All its projects share one Postgres server and one superuser,
+  and every role can connect to its `postgres` database (Postgres grants that to `PUBLIC`; owner
+  roles get no privileges there). Use dedicated boxes for production.
+- **Secrets at rest** are encrypted with AES-256-GCM under `HATTISAR_SECRET_KEY` and never written
+  to logs, error messages or command lines.
+- **Internal services stay internal.** Studio, postgres-meta and the shared box publish no host
+  ports; only hattisar, the pooler and managed boxes do.
+
+## Backups
+
+- **Download dump** streams `pg_dump -Fc` of the project's database.
+- **Back up now** and **schedules** (daily or weekly at `HATTISAR_BACKUP_HOUR_UTC`) write custom
+  format dumps to `<prefix>/<ref>/` in your S3 bucket. Scheduled backups keep the newest 7 dailies
+  and one per week for 4 weeks by default; manual backups stay until you delete them.
+- **Restore** a backup into the same project (drops and recreates its database, same owner and
+  password) or into a new project.
+
+**Backups are not point-in-time recovery.** A restore returns the database to the moment the dump
+was taken; everything written since is lost. Production boxes also need box-level PITR (WAL-G,
+pgBackRest).
+
+## Managed boxes
+
+With managed boxes on, "New managed box" (Boxes) and "New dedicated box" (New project) start a
+fresh `supabase/postgres` container per box, with its own volume and a host port from
+`HATTISAR_MANAGED_PORT_RANGE`. To turn them on, set `HATTISAR_MANAGED_BOXES=true` in
+`docker/.env` and start the profile:
+
+```sh
+docker compose -f docker/compose.yml --profile managed-boxes up -d --build
+```
+
+hattisar reaches Docker only through `docker-proxy` (tecnativa/docker-socket-proxy) on an internal
+network, and only lists, starts, stops and removes containers and volumes labelled
+`hattisar.managed=true`.
+
+**Security note:** the socket proxy allows creating containers. Whoever controls hattisar — its
+admin login, or code running in its container — can therefore start a container with any mount,
+which is equivalent to root on the Docker host. Turn managed boxes on only where that is
+acceptable.
+
+## Known limitations
+
+- **Single admin.** No multiple users or per-project access in v1.
+- **Pooler for the shared box only.** Projects on other boxes get direct connection strings.
+- **Shared box `postgres` database** is reachable by every role on that box (see Security model).
+- **Superuser-only Studio actions** fail, because Studio connects as the project's owner.
+- **Studio features hattisar does not serve** are hidden or answered with 404: Authentication,
+  Storage, Edge Functions, Realtime, AI assistance, lints/advisors, migrations, MCP.
+- **SQL snippets are shared.** Studio keeps saved snippets in one folder, so they appear in every
+  project's SQL editor and run against whichever project is open.
+- **Backups are not PITR.** A restore needs free disk in `HATTISAR_DATA_DIR` about the size of the
+  dump. Objects you added yourself to a project's `extensions` schema are not restored.
+- **Managed boxes:** the box admin password is in the container's environment (visible to anyone
+  with Docker access). Postgres's encryption root key lives in the container, not the volume, so
+  recreating a managed box's container by hand (for example to upgrade its image) loses
+  Vault-encrypted data. Upgrading managed boxes is not supported in v1.
+- **Boxes on other Docker hosts**, plain-Postgres boxes, and Auth/REST/Storage per project are out
+  of scope for v1.
+
+## Upgrading Studio
+
+Studio, postgres-meta, Postgres and Supavisor are pinned to one official self-hosted release.
+Bumping any of them needs the routing end-to-end test to pass — see
+[`docs/upgrading-studio.md`](docs/upgrading-studio.md).
+
+## License
+
+[Apache-2.0](LICENSE). `docker/compose.yml` and `docker/volumes/` derive from the Supabase
+self-hosted Docker setup, also Apache-2.0 — see [`docker/NOTICE`](docker/NOTICE).
+
+Not affiliated with Supabase.
