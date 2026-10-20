@@ -48,6 +48,17 @@ export interface BoxServiceDeps {
 
 export type BoxResult = { ok: true; box: Box } | { ok: false; problems: string[] };
 
+// Stored boxes were validated on the way in, so their sslmode is one of SSL_MODES.
+export function boxConnection(box: Box, secretKey: Buffer): BoxConnection {
+  return {
+    host: box.host,
+    port: box.port,
+    user: box.adminUser,
+    password: decryptSecret(box.adminPasswordEnc, secretKey),
+    sslmode: box.sslmode as SslMode,
+  };
+}
+
 export function formValues(box: Box): BoxFormValues {
   return {
     name: box.name,

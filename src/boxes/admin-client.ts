@@ -29,25 +29,37 @@ export function safeErrorMessage(error: unknown, password: string): string {
   return password === "" ? message : message.replaceAll(password, "********");
 }
 
-export async function withAdminClient<T>(
+// Without an 'error' listener, a connection the server drops while idle emits an unhandled 'error'
+// that crashes the process. The failure still surfaces through the pending or next query.
+export function ignoreIdleErrors(client: pg.Client): pg.Client {
+  client.on("error", () => undefined);
+  return client;
+}
+
+export type AdminClientRunner = <T>(
   conn: BoxConnection,
   run: (client: pg.Client) => Promise<T>,
-): Promise<T> {
-  const client = new pg.Client({
-    host: conn.host,
-    port: conn.port,
-    user: conn.user,
-    password: conn.password,
-    database: "postgres",
-    ssl: sslOption(conn.sslmode),
-    connectionTimeoutMillis: CONNECT_TIMEOUT_MS,
-    statement_timeout: STATEMENT_TIMEOUT_MS,
-    query_timeout: STATEMENT_TIMEOUT_MS,
-  });
+  database?: string,
+) => Promise<T>;
+
+export const withAdminClient: AdminClientRunner = async (conn, run, database = "postgres") => {
+  const client = ignoreIdleErrors(
+    new pg.Client({
+      host: conn.host,
+      port: conn.port,
+      user: conn.user,
+      password: conn.password,
+      database,
+      ssl: sslOption(conn.sslmode),
+      connectionTimeoutMillis: CONNECT_TIMEOUT_MS,
+      statement_timeout: STATEMENT_TIMEOUT_MS,
+      query_timeout: STATEMENT_TIMEOUT_MS,
+    }),
+  );
   await client.connect();
   try {
     return await run(client);
   } finally {
     await client.end();
   }
-}
+};
