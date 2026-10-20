@@ -1,0 +1,6 @@
+# Integration-only override: exposes the pg-meta debug log the routing tests read. Never part of
+# production compose.
+services:
+  hattisar:
+    environment:
+      HATTISAR_DEBUG: "true"

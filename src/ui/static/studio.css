@@ -1,0 +1,21 @@
+/* Studio's class names are hashed per build; its nav links' hrefs are not. */
+[data-sidebar="menu-item"]:has(> a[href^="/project/"][href$="/auth/users"]),
+[data-sidebar="menu-item"]:has(> a[href^="/project/"][href$="/storage/files"]),
+[data-sidebar="menu-item"]:has(
+  > a[href^="/project/"][href$="/functions"]:not([href$="/database/functions"])
+),
+[data-sidebar="menu-item"]:has(> a[href^="/project/"][href$="/realtime/inspector"]) {
+  display: none;
+}
+
+#hattisar-back {
+  margin-right: 12px;
+  font-size: 13px;
+  white-space: nowrap;
+  color: inherit;
+  opacity: 0.7;
+}
+
+#hattisar-back:hover {
+  opacity: 1;
+}

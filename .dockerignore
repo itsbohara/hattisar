@@ -1,0 +1,9 @@
+node_modules
+dist
+data
+.git
+.superpowers
+test-results
+playwright-report
+docker/.env
+.env

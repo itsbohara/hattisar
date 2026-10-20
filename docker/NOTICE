@@ -1,0 +1,24 @@
+hattisar lean stack
+
+docker/compose.yml and the files under docker/volumes/ are derived from the Supabase self-hosted
+Docker setup (https://github.com/supabase/supabase/tree/master/docker, commit 4b5b2a3).
+
+Copyright 2024 Supabase
+
+Licensed under the Apache License, Version 2.0 (the "License"); you may not use these files except
+in compliance with the License. A copy of the License is in the LICENSE file at the root of this
+repository, and at https://www.apache.org/licenses/LICENSE-2.0. Unless required by applicable law
+or agreed to in writing, software distributed under the License is distributed on an "AS IS"
+BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License
+for the specific language governing permissions and limitations under the License.
+
+Each of these files starts with a comment naming the upstream file it comes from.
+
+Modifications by hattisar:
+- compose.yml (from docker/docker-compose.yml) keeps only the db, meta, studio and supavisor
+  services, pins internal ports, drops environment for services not in the stack, uses named
+  volumes, lowers supavisor's RLIMIT_NOFILE, and adds the hattisar and docker-proxy services.
+- volumes/db/roles.sql sets a password only for the pgbouncer role (used by supavisor's
+  auth_query); the roles of absent services keep no password.
+- volumes/db/_supabase.sql, volumes/db/pooler.sql and volumes/pooler/pooler.exs are unmodified
+  apart from the header comment.

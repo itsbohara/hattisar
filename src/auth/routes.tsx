@@ -1,0 +1,94 @@
+import { Hono } from "hono";
+import { storedS3Form } from "../backups/s3-settings.js";
+import type { Registry } from "../registry/db.js";
+import { deleteOtherSessions } from "../registry/sessions.js";
+import { getUserByUsername, updateUserPasswordHash } from "../registry/users.js";
+import { renderPage } from "../ui/layout.js";
+import { LoginPage } from "../ui/pages/login.js";
+import { SettingsPage } from "../ui/pages/settings.js";
+import { type AuthEnv, LOGIN_PAGE } from "./middleware.js";
+import { hashPassword, verifyPassword } from "./password.js";
+import type { LoginRateLimiter } from "./rate-limit.js";
+import { clearSessionCookie, readSessionCookie, writeSessionCookie } from "./session-cookie.js";
+import { createSession, endSession, resolveSession } from "./sessions.js";
+
+export const HOME_PAGE = "/_hs/projects";
+const MIN_PASSWORD_LENGTH = 12;
+
+export interface AuthRoutesDeps {
+  db: Registry;
+  limiter: LoginRateLimiter;
+  cookieSecure: boolean;
+}
+
+function field(form: Record<string, unknown>, name: string): string {
+  const value = form[name];
+  return typeof value === "string" ? value : "";
+}
+
+export function authRoutes({ db, limiter, cookieSecure }: AuthRoutesDeps): Hono<AuthEnv> {
+  const app = new Hono<AuthEnv>();
+  // Unknown usernames are checked against this too, so response time does not reveal which exist.
+  const unknownUserHash = hashPassword("hattisar-unknown-user");
+
+  app.get(LOGIN_PAGE, async (c) => {
+    const token = readSessionCookie(c);
+    if (token !== undefined && resolveSession(db, token)) return c.redirect(HOME_PAGE, 302);
+    return renderPage(c, <LoginPage />);
+  });
+
+  app.post(LOGIN_PAGE, async (c) => {
+    const form = await c.req.parseBody();
+    const username = field(form, "username");
+    const password = field(form, "password");
+
+    if (limiter.isBlocked(username)) {
+      const error = "Too many failed attempts. Try again in 15 minutes.";
+      return renderPage(c, <LoginPage error={error} username={username} />, 429);
+    }
+
+    const user = getUserByUsername(db, username);
+    const valid = await verifyPassword(password, user?.passwordHash ?? (await unknownUserHash));
+    if (!user || !valid) {
+      limiter.recordFailure(username);
+      const error = "Wrong username or password.";
+      return renderPage(c, <LoginPage error={error} username={username} />, 401);
+    }
+
+    limiter.recordSuccess(username);
+    writeSessionCookie(c, createSession(db, user.id), cookieSecure);
+    return c.redirect(HOME_PAGE, 302);
+  });
+
+  app.post("/_hs/logout", (c) => {
+    endSession(db, c.var.session.tokenHash);
+    clearSessionCookie(c, cookieSecure);
+    return c.redirect(LOGIN_PAGE, 302);
+  });
+
+  app.get("/_hs/settings", (c) => renderPage(c, <SettingsPage s3={storedS3Form(db)} />));
+
+  app.post("/_hs/settings/password", async (c) => {
+    const { user, tokenHash } = c.var.session;
+    const form = await c.req.parseBody();
+    const password = field(form, "password");
+
+    let error: string | undefined;
+    if (!(await verifyPassword(field(form, "current"), user.passwordHash))) {
+      error = "Current password is wrong.";
+    } else if (password.length < MIN_PASSWORD_LENGTH) {
+      error = `New password must be at least ${MIN_PASSWORD_LENGTH} characters.`;
+    } else if (password !== field(form, "confirm")) {
+      error = "New password and confirmation do not match.";
+    }
+    if (error) {
+      return renderPage(c, <SettingsPage password={{ error }} s3={storedS3Form(db)} />, 400);
+    }
+
+    updateUserPasswordHash(db, user.id, await hashPassword(password));
+    deleteOtherSessions(db, user.id, tokenHash);
+    return renderPage(c, <SettingsPage password={{ saved: true }} s3={storedS3Form(db)} />);
+  });
+
+  return app;
+}

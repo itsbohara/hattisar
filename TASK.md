@@ -16,12 +16,12 @@ None — the concept locked TypeScript + Hono (Q12) and the lean stack (Q11).
 
 ## Phases
 
-- [ ] **Spike** — Task 1 foundation · Task 2 Studio proxy core · Task 3 routing e2e (GO/NO-GO)
-- [ ] **Core** — Task 4 registry · Task 5 auth + shell · Task 6 boxes · Task 7 projects · Task 8 soft delete
-- [ ] **Studio polish** — Task 9
-- [ ] **Backups** — Task 10 download + S3 + manual · Task 11 schedules, retention, restore
-- [ ] **Managed boxes** — Task 12
-- [ ] **Ship** — Task 13 CI, docs, licence
+- [x] **Spike** — Task 1 foundation · Task 2 Studio proxy core · Task 3 routing e2e (GO/NO-GO)
+- [x] **Core** — Task 4 registry · Task 5 auth + shell · Task 6 boxes · Task 7 projects · Task 8 soft delete
+- [x] **Studio polish** — Task 9
+- [x] **Backups** — Task 10 download + S3 + manual · Task 11 schedules, retention, restore
+- [x] **Managed boxes** — Task 12
+- [x] **Ship** — Task 13 CI, docs, licence
 
 ## Cross-cutting
 

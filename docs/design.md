@@ -18,6 +18,13 @@ Studio image `supabase/studio:2026.10.12-sha-3699278`, read from `apps/studio` s
 | `/api/platform/pg-meta/<ref>/{tables,policies,triggers,extensions,publications,types}` | **Relays** the incoming `x-connection-encrypted` header to postgres-meta (`lib/api/apiHelpers.ts` `constructHeaders`). Header absent → postgres-meta uses its own default DB. |
 | `/api/ai/code/complete`, `/api/ai/sql/generate-v4` | Build the connection from env. Need an OpenAI key. |
 | `GET /api/platform/projects`, `GET /api/platform/projects/<ref>` | Return one hard-coded `DEFAULT_PROJECT`, whatever the ref. |
+| `/api/platform/projects/<ref>/run-lints`, `/api/v1/projects/<ref>/database/migrations`, `/api/mcp*` | Query through Studio's env connection (`lib/api/self-hosted/{lints,migrations,mcp}.ts` → `executeQuery`). Not redirectable. |
+| `/api/v1/projects/<ref>/types/typescript` | `GET ${PG_META_URL}/generators/typescript?...` **without** a connection header → meta's default DB. |
+| `/api/platform/projects/<ref>/databases` | Returns hard-coded connection info for `postgres`. |
+
+**Fail closed.** Studio's `POSTGRES_DB` and meta's `PG_META_DB_NAME` are set to
+`hattisar_no_project`, a database that exists on no box. Any route hattisar does not redirect —
+including ones a future Studio adds — errors instead of reading another project's data.
 
 Encryption: `crypto-js` `AES.encrypt(connectionString, PG_META_CRYPTO_KEY).toString()` (passphrase
 mode, OpenSSL-compatible output). postgres-meta decrypts with the same key.
@@ -47,7 +54,7 @@ Order matters; first match wins.
 
 | Path | Behaviour |
 |---|---|
-| `/_hs/healthz` | 200 `ok`, no auth. |
+| `/_hs/healthz` | 200 `{"ok":true}`, no auth. |
 | `/_hs/login`, `/_hs/static/*` | No auth. |
 | everything else | Requires a session (§6). API paths (`/api/*`) → 401 JSON; pages → 302 `/_hs/login`. |
 | `/` | 302 `/_hs/projects` |
@@ -55,14 +62,20 @@ Order matters; first match wins.
 | `/api/ai/*` | 404 `{"error":{"message":"AI features are disabled in hattisar"}}` |
 | `GET /api/platform/projects` | Active projects the user may access, Studio shape (§3.1). |
 | `GET /api/platform/projects/:ref` | One project, Studio shape + `connectionString: ""`, `restUrl: ""`. Unknown/deleted/forbidden → 404. |
+| `GET /api/platform/projects/:ref/run-lints` | 200 `[]` — any error status makes Studio retry with backoff for ~12 s before the Table Editor refreshes (measured). Advisors therefore show no lints. |
+| `/api/v1/projects/:ref/database/migrations`, `/api/mcp`, `/api/mcp/*` | 404 `{"error":{"message":"Not available in hattisar"}}` |
+| `GET /api/platform/projects/:ref/databases` | hattisar answers: Studio's shape with `identifier` = ref, `db_name`, `db_host`/`db_port` = box public host/port, `db_user` = the project's owner role (admin user until projects have owners), other fields as Studio's. |
+| `GET /api/v1/projects/:ref/types/typescript` | hattisar calls `${PG_META_URL}/generators/typescript` with the same query Studio uses and the project's `x-connection-encrypted`; mirrors Studio's response shape. |
 | `/api/platform/projects/:ref/*` | Unknown/forbidden ref → 404; else pass through. |
+| `/api/v1/projects/:ref/*` | Unknown/forbidden ref → 404; else pass through. |
 | `POST /api/platform/pg-meta/:ref/query` | hattisar handles it itself (§3.2). |
 | `/api/platform/pg-meta/:ref/*` (other) | Unknown/forbidden ref → 404. Else **strip** any client `x-connection-encrypted`, **set** it to the project's encrypted connection string, pass through to Studio. |
 | `/project/default`, `/project/default/*` | If no project has ref `default`: 302 `/_hs/projects`. |
 | `/project/:ref`, `/project/:ref/*` | Unknown/forbidden ref → 302 `/_hs/projects`; else pass through. |
 | `/projects`, `/organizations`, `/org/*` | 302 `/_hs/projects` |
 | `/new`, `/new/*` | 302 `/_hs/projects/new` |
-| anything else | Pass through to Studio, streaming, method/body/query preserved, `Host` rewritten. |
+| path starting with `//` | 404. |
+| anything else | Pass through to Studio, streaming, method/body/query preserved, `Host` rewritten. The upstream URL is always Studio's origin with the request path set on it — never a URL resolved from the request path. `hs_session` and any client `x-connection-encrypted` are stripped from what Studio receives. |
 
 **Invariant — no silent default DB.** No request reaches postgres-meta (directly or via Studio's
 pg-meta routes) without hattisar having set `x-connection-encrypted` for the ref in the URL. A
@@ -83,9 +96,9 @@ sidebar entries for Authentication, Storage, Edge Functions and Realtime; the sc
 
 ### 3.2 hattisar's `/query`
 
-Read JSON body `{query, parameters?}`. Build the project's admin connection string
-`postgresql://<box admin user>:<pw>@<box host>:<box port>/<db_name>` (URL-encode user and
-password), encrypt (§1), `POST ${PG_META_URL}/query` with headers `Content-Type:
+Read JSON body `{query, parameters?}`. Build the project's **Studio connection string**
+`postgresql://<owner role>:<owner pw>@<box host>:<box port>/<db_name>` (URL-encode user and
+password; append `?sslmode=<box sslmode>` unless it is `disable`), encrypt (§1), `POST ${PG_META_URL}/query` with headers `Content-Type:
 application/json`, `x-connection-encrypted`, body `{query}` plus `parameters` only if present.
 Response mirroring, same as Studio: pg-meta OK → 200 with its JSON; pg-meta error → its status with
 `{message, formattedError}` (fallback `formattedError = message`); network/parse failure → 500
@@ -109,7 +122,8 @@ Numbered migrations in `src/registry/migrations/`, applied at boot, tracked in
 - `backup_schedules(project_id PK, frequency CHECK in ('off','daily','weekly'),
   keep_daily, keep_weekly)`
 - `backups(id, project_id, kind CHECK in ('manual','scheduled'), s3_key, size_bytes,
-  status CHECK in ('running','done','failed'), error NULL, created_at, finished_at NULL)`
+  status CHECK in ('running','done','failed'), error NULL, created_at, finished_at NULL,
+  bucket)` — `bucket` (migration 002) is where the object was written; delete/restore/retention use it.
 
 ### Secrets at rest
 AES-256-GCM. Key = SHA-256 of `HATTISAR_SECRET_KEY` (required, ≥ 32 chars, boot fails otherwise).
@@ -128,7 +142,8 @@ the S3 secret key use it. Plaintext secrets never appear in logs or error messag
 **E1 compatibility check** (on register, and before creating a managed box's first project),
 connecting as the admin: `server_version_num ≥ 150000`; roles `supabase_admin`, `anon`,
 `authenticated`, `service_role` exist; extensions `pgcrypto`, `uuid-ossp`, `pg_stat_statements`
-are in `pg_available_extensions`; admin is superuser **or** has `CREATEDB` and `CREATEROLE`.
+are in `pg_available_extensions`; admin is superuser (the H2 baseline needs it for
+`pg_stat_statements` and `ALTER SCHEMA public OWNER`).
 Failure lists every unmet item. A box with projects (any status) cannot be removed.
 
 ## 6. Auth (F3)
@@ -140,8 +155,9 @@ Failure lists every unmet item. A box with projects (any status) cannot be remov
   N=2^15, r=8, p=1, 16-byte salt, 64-byte key; constant-time compare.
 - Session: 32 random bytes, base64url, cookie `hs_session` (`HttpOnly`, `SameSite=Lax`, `Path=/`,
   `Secure` when `HATTISAR_COOKIE_SECURE=true`), stored as SHA-256 hash, 7-day expiry.
-- State-changing `/_hs/*` requests (non-GET) require `Origin` or `Referer` to match the request
-  host, else 403.
+- Every state-changing request (non-GET/HEAD) — `/_hs/*` **and** the proxied `/api/*`, which can
+  run SQL — requires `Origin` or `Referer` to match the request host, else 403. The reverse proxy in
+  front of hattisar must preserve `Host`.
 - Login: 5 failures per username per 15 min → 429 until window passes (in-memory).
 - Change password (Settings): current + new (≥ 12) + confirm; on success all other sessions of
   that user are deleted.
@@ -167,8 +183,14 @@ escape helpers, never string concatenation):
 5. Insert registry row.
 Any failure → drop what was created (db, role), no registry row, error shown.
 
-**Isolation (I1):** the owner role cannot connect to any other project's database. Studio uses the
-box admin.
+**Isolation (I1):** the owner role cannot connect to any other project's database.
+
+**Studio connects as the owner role**, the same role apps use (as on Supabase Cloud, where Studio
+and apps share `postgres`). Every pg-meta connection hattisar builds — its own `/query`, the
+relay header, `types/typescript` — uses the owner. If Studio used the box admin, tables created in
+Studio would be owned by `supabase_admin` and the app's role would get `permission denied`
+(verified). Consequence: Studio actions that need superuser (non-trusted extensions, role
+management) fail with a permission error; hattisar's own admin operations still use the box admin.
 
 **Connection strings (J1)** on the project page, password masked with reveal + copy:
 - box with pooler fields: session `postgresql://<owner>.<tenant>:<pw>@<public_host>:<session_port>/<db>`
@@ -180,8 +202,17 @@ box admin.
 
 **Soft delete (M2)** — confirm by typing the ref: `REVOKE CONNECT … FROM <owner>`; terminate
 backends on the db; `ALTER DATABASE <db> RENAME TO <db>__deleted_<YYYYMMDD>` (suffix `_2`, `_3`…
-on collision); `ALTER ROLE <owner> NOLOGIN`; status `deleted`, `deleted_at`, `deleted_db_name`.
-Hidden from Studio and the project list; shown under Trash.
+on collision); status `deleted`, `deleted_at`, `deleted_db_name`. Hidden from Studio and the
+project list; shown under Trash.
+
+The owner role **keeps LOGIN**. Apps still running against a deleted project then pass pooler
+authentication and fail on `CONNECT`, instead of failing authentication — Supavisor counts auth
+failures per tenant/IP and would otherwise lock out every project on the shared box. Revoked
+`CONNECT` on its only database is what stops the role.
+
+Known limitation (shared box): every role can connect to the box's `postgres`, `_supabase` and
+`template1` databases because Postgres grants `CONNECT` on them to `PUBLIC`; owner roles cannot
+create anything there. Production projects belong on dedicated boxes.
 **Restore:** reverse every step. **Purge:** on demand from Trash or automatically after
 `HATTISAR_PURGE_AFTER_DAYS` (default 7, checked hourly): `DROP DATABASE … WITH (FORCE)`, `DROP
 ROLE`, delete registry rows (backups in S3 are kept; retention never touches a purged project's
@@ -225,6 +256,11 @@ list + schedule + back up now + restore, delete), Trash, Boxes (list, register, 
 "New managed box" when enabled), Settings (change password, S3). Errors render inline, never as a
 stack trace.
 
+Known limitation: Studio stores SQL snippets in one folder (`SNIPPETS_MANAGEMENT_FOLDER`, a named
+volume) regardless of project, so saved snippets appear in every project's SQL editor and run
+against whichever project is open. Acceptable for a single admin; scoping
+`/api/platform/projects/:ref/content*` per project is post-v1.
+
 ## 10. Managed boxes (O4 + O2)
 
 Off unless `HATTISAR_MANAGED_BOXES=true`. Then compose profile `managed-boxes` runs
@@ -238,6 +274,15 @@ host port = first free in `HATTISAR_MANAGED_PORT_RANGE` (default `55000-55999`),
 `managed` (`host` = container name, `port` 5432, `public_host` = `HATTISAR_PUBLIC_HOST`,
 `public_port` = the host port). The New-project form offers "New dedicated box" which does this
 then creates the project on it.
+
+Implementation notes (Task 12): the proxy sits on its own internal `docker-api` network that only
+hattisar joins. Two read-only calls are unfiltered by label — listing containers to learn which host
+ports are published, and listing networks. Purging the last project on a managed box skips the DROP
+SQL and removes the container and volume (`purging` lifecycle event). "New dedicated box" names the
+box after the project ref. Known limitations: the box admin password is in the container env
+(visible to anyone with Docker access); Postgres's encryption root key lives in the container, not
+the volume, so recreating a container by hand (e.g. an image upgrade) loses Vault-encrypted data —
+upgrading managed boxes is post-v1.
 
 hattisar only lists/starts/stops/removes containers and volumes carrying `hattisar.managed=true`;
 every Docker call filters on it. A managed box whose only project is soft-deleted is stopped;
@@ -266,6 +311,11 @@ removes container and volume.
 | `PG_META_CRYPTO_KEY` | — | shared with meta |
 | `POSTGRES_PASSWORD` | — | shared box admin |
 | `POOLER_TENANT_ID`, `POOLER_PORT_SESSION` (54322), `POOLER_PORT_TRANSACTION` (6543) | | shared box pooler |
+| `POOLER_SECRET_KEY_BASE`, `POOLER_VAULT_ENC_KEY`, `POOLER_JWT_SECRET` | — | Supavisor's own secrets; generated by `scripts/dev-env.sh` |
+
+`HATTISAR_PORT` is the host-published port only; the app listens on 8000 inside the container.
+`DOCKER_HOST` is set explicitly in compose for the `managed-boxes` profile, never inherited from
+the host shell.
 
 ## 12. Pinned images (official self-hosted, supabase `master` 4b5b2a3, 2026-10-20)
 

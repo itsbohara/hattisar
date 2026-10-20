@@ -1,0 +1,44 @@
+{
+  "name": "hattisar",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.24.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "build": "tsc -p tsconfig.build.json && cp -R src/registry/migrations dist/registry/ && cp -R src/ui/static dist/ui/",
+    "start": "node dist/main.js",
+    "lint": "biome check .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:it": "HATTISAR_IT=1 vitest run --config vitest.integration.config.ts",
+    "test:e2e": "playwright test --pass-with-no-tests",
+    "stack:up": "sh scripts/dev-env.sh && docker compose -f docker/compose.yml -f docker/compose.dev.yml --profile s3-test --profile managed-boxes up -d --build --wait",
+    "stack:down": "docker compose -f docker/compose.yml -f docker/compose.dev.yml --profile s3-test --profile managed-boxes down"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1152.0",
+    "@aws-sdk/lib-storage": "^3.1152.0",
+    "@hono/node-server": "^2.1.5",
+    "better-sqlite3": "^13.0.3",
+    "crypto-js": "^4.2.0",
+    "dockerode": "^5.0.1",
+    "hono": "^4.13.13",
+    "pg": "^8.23.1"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.15",
+    "@playwright/test": "^1.64.1",
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/crypto-js": "^4.2.2",
+    "@types/dockerode": "^4.0.2",
+    "@types/node": "^24.19.2",
+    "@types/pg": "^8.23.1",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5"
+  }
+}
