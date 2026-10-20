@@ -1,8 +1,10 @@
 import { serve } from "@hono/node-server";
 import { createApp } from "./app.js";
 import { seedAdmin } from "./auth/seed.js";
+import { seedSharedBox } from "./boxes/shared.js";
 import { type Config, ConfigError, loadConfig } from "./config.js";
 import { openRegistry, type Registry } from "./registry/db.js";
+import { deriveSecretKey } from "./registry/secrets.js";
 
 // HATTISAR_PORT is the host-published port; compose maps it onto this fixed container port.
 const LISTEN_PORT = 8000;
@@ -25,6 +27,7 @@ async function seededRegistry(config: Config): Promise<Registry> {
   const registry = openRegistry(config.dataDir);
   try {
     await seedAdmin(registry, config);
+    seedSharedBox(registry, config, deriveSecretKey(config.secretKey));
     return registry;
   } catch (error) {
     registry.close();
