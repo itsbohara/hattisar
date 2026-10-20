@@ -1,8 +1,6 @@
 export interface Box {
   host: string;
   port: number;
-  adminUser: string;
-  adminPassword: string;
   sslmode: string;
   publicHost: string;
   publicPort: number;
@@ -14,6 +12,7 @@ export interface Project {
   name: string;
   dbName: string;
   ownerRole: string;
+  ownerPassword: string;
   boxName: string;
   box: Box;
   insertedAt: string;

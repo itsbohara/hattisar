@@ -1,4 +1,4 @@
-import { adminConnectionString } from "./connection.js";
+import { studioConnectionString } from "./connection.js";
 import { encryptConnectionString } from "./crypto.js";
 import type { Project } from "./projects-source.js";
 
@@ -29,7 +29,7 @@ export class PgMetaLog {
 }
 
 export function encryptedConnection(project: Project, cryptoKey: string): string {
-  return encryptConnectionString(adminConnectionString(project), cryptoKey);
+  return encryptConnectionString(studioConnectionString(project), cryptoKey);
 }
 
 export function connectionHeaders(project: Project, cryptoKey: string): Headers {
