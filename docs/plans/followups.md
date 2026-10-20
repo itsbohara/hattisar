@@ -93,3 +93,30 @@ rotating writes a fresh secret. Check that rotation itself does not need to decr
 **Tests.** Unit tests: `list()` with one corrupt `ownerPasswordEnc` returns every project; the
 Studio request for the corrupt ref returns the readable error; a good ref still connects; the
 project page renders for the corrupt project.
+
+## Task 5: Per-project details in Studio's Connect panel (#6)
+
+**Problem.** Studio's Connect panel shows user `postgres`, database `postgres` for every project.
+It reads `GET /api/platform/projects/<ref>/settings`, which `src/studio/routes.ts` classifies as
+`project-api-pass`, so Studio's self-hosted stub answers with its hard-coded default project.
+`/databases` is already answered per project in `src/studio/platform-routes.ts`.
+
+**Ruling.** Add a `project-settings` route that answers per project. Take Studio's stub response
+for the same request and override only the connection fields (`db_host`, `db_port`, `db_name`,
+`db_user`, `db_ssl` where the box's sslmode requires it), so the rest of the stub's shape (services,
+keys, flags) stays whatever this Studio version expects. If the stub can't be fetched or parsed,
+answer 502 rather than leaking the default. Use the same values as the `/databases` answer
+(`box.publicHost`, `box.publicPort`, `project.dbName`, `project.ownerRole`). An unknown or
+deleted ref gets the same answer the other per-project routes give.
+
+Then find where the panel's Session pooler and Transaction pooler tabs get their values. If they
+come from a route hattisar can answer, answer it with the project's Supavisor details, the same
+ones `src/projects/connection-strings.ts` builds. If they are built in the browser from env with
+no per-project input, leave them alone and add that to the known limitations in `docs/design.md`.
+To read Studio's compiled routes you may run read-only `docker exec` into the running studio
+container: grep and cat only, and its `.js.map` files hold the original sources. No other docker
+commands.
+
+**Tests.** Unit tests for the route classification and for the settings answer: the overridden
+fields for two projects on different boxes, the passthrough of other stub fields, 502 on a bad
+stub, and the unknown-ref answer.
