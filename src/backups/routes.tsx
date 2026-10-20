@@ -128,7 +128,8 @@ export function backupRoutes(deps: BackupDeps, projectDeps: ProjectServiceDeps):
   }
 
   function renderSettings(c: Context<AuthEnv>, s3: S3FormState, status: 200 | 400 | 502 = 200) {
-    const stored = isS3Configured(db) ? storedS3Form(db).values : undefined;
+    const { values, secretSet } = storedS3Form(db);
+    const stored = isS3Configured(db) && secretSet ? values : undefined;
     return renderPage(c, <StorageSettingsPage s3={s3} stored={stored} />, status);
   }
 

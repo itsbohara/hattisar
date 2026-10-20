@@ -8,6 +8,7 @@ import { saveS3Settings } from "../../src/backups/s3-settings.js";
 import { loadConfig } from "../../src/config.js";
 import { openRegistry, type Registry } from "../../src/registry/db.js";
 import { deriveSecretKey } from "../../src/registry/secrets.js";
+import { deleteSetting, setSetting } from "../../src/registry/settings.js";
 import { insertUser } from "../../src/registry/users.js";
 import { signInToRegistry } from "../helpers/session.js";
 
@@ -134,6 +135,36 @@ describe("storage status", () => {
     const html = await (await get("/_hs/settings/storage")).text();
     expect(html).toContain("Configured · bucket <code>team-backups</code></p>");
   });
+});
+
+describe("storage status edge cases", () => {
+  it("escapes markup in the bucket and endpoint", async () => {
+    configureS3("<script>alert(1)</script>");
+    setSetting(db, "s3.bucket", "<script>b</script>");
+    const html = await (await get("/_hs/settings/storage")).text();
+    expect(html).not.toContain("<script>b</script>");
+    expect(html).not.toContain("<script>alert(1)</script>");
+    expect(html).toContain("&lt;script&gt;b&lt;/script&gt;");
+  });
+
+  it("says not configured when the secret is missing", async () => {
+    configureS3(s3Fields.endpoint);
+    deleteSetting(db, "s3.secret_access_key_enc");
+    const html = await (await get("/_hs/settings/storage")).text();
+    expect(html).toContain("Not configured — backups and restores need this.");
+    expect(html).not.toContain("Configured · bucket");
+  });
+});
+
+describe("signed-out access", () => {
+  it.each(["/_hs/settings/account", "/_hs/settings/storage"])(
+    "redirects %s to login",
+    async (path) => {
+      const response = await app.request(`${ORIGIN}${path}`);
+      expect(response.status).toBe(302);
+      expect(response.headers.get("location")).toBe("/_hs/login");
+    },
+  );
 });
 
 describe("password POST", () => {
