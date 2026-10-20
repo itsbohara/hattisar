@@ -2,6 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import pg from "pg";
 import { type BoxConnection, safeErrorMessage } from "../boxes/admin-client.js";
+import { holdingProject, type ProjectOperation } from "../projects/locks.js";
 import {
   createProject,
   createProjectDatabase,
@@ -15,14 +16,13 @@ import type { Project } from "../registry/projects.js";
 import { restoreArchive, writeRestoreList } from "./pg-restore.js";
 import { downloadBackupObject, s3ErrorMessage } from "./s3.js";
 import { loadS3Settings, type S3Settings } from "./s3-settings.js";
-import {
-  type BackupDeps,
-  type BackupOutcome,
-  boxCredentials,
-  busyReason,
-  NOT_CONFIGURED,
-  whileRestoring,
-} from "./service.js";
+import { type BackupDeps, type BackupOutcome, boxCredentials, NOT_CONFIGURED } from "./service.js";
+
+const RESTORE: ProjectOperation = {
+  action: "restore a backup into",
+  holds: "it is being restored",
+  status: "active",
+};
 
 export type NewProjectRestore =
   | { ok: true; project: Project }
@@ -95,15 +95,9 @@ export async function restoreIntoProject(
 ): Promise<BackupOutcome> {
   const settings = restorable(deps, backup);
   if (typeof settings === "string") return { ok: false, problem: settings };
-  if (busyReason(deps.db, project) !== undefined) {
-    return {
-      ok: false,
-      problem: `${project.ref} is busy with a backup or restore. Try again later.`,
-    };
-  }
   const conn = boxCredentials(box, deps.secretKey);
   if (typeof conn === "string") return { ok: false, problem: conn };
-  return whileRestoring(project.id, () =>
+  return holdingProject(deps.db, project, RESTORE, () =>
     inWorkDir(deps.dataDir, async (dir) => {
       const fetched = await fetchArchive(deps, settings, backup, dir);
       if (typeof fetched === "string") return { ok: false, problem: fetched };
@@ -152,7 +146,7 @@ export async function restoreIntoNewProject(
     const created = await createProject(projectDeps, form);
     if (!created.ok) return created;
     const { project } = created;
-    const restored = await whileRestoring(project.id, () =>
+    const restored = await holdingProject(deps.db, project, RESTORE, () =>
       restoreInto(deps, conn, project, fetched),
     );
     return restored.ok ? { ok: true, project } : { ok: false, project, problem: restored.problem };

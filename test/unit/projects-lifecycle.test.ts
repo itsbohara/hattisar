@@ -5,7 +5,6 @@ import { Hono } from "hono";
 import type pg from "pg";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthEnv } from "../../src/auth/middleware.js";
-import { whileRestoring } from "../../src/backups/service.js";
 import type { AdminClientRunner } from "../../src/boxes/admin-client.js";
 import { seedSharedBox } from "../../src/boxes/shared.js";
 import { loadConfig } from "../../src/config.js";
@@ -15,8 +14,13 @@ import {
   restoreProject,
   softDeleteProject,
 } from "../../src/projects/lifecycle.js";
+import { busyReason, holdingProject } from "../../src/projects/locks.js";
 import { projectRoutes } from "../../src/projects/routes.js";
-import type { LifecycleEvent, ProjectServiceDeps } from "../../src/projects/service.js";
+import {
+  type LifecycleEvent,
+  type ProjectServiceDeps,
+  rotateOwnerPassword,
+} from "../../src/projects/service.js";
 import { trashRoutes } from "../../src/projects/trash-routes.js";
 import { insertBackup, markBackupDone } from "../../src/registry/backups.js";
 import { type Box, getSharedBox, insertBox } from "../../src/registry/boxes.js";
@@ -29,6 +33,7 @@ import {
 } from "../../src/registry/projects.js";
 import { deriveSecretKey, encryptSecret } from "../../src/registry/secrets.js";
 import { insertUser } from "../../src/registry/users.js";
+import { countedAdmin, gatedAdmin } from "../helpers/gate.js";
 
 const secretKey = deriveSecretKey("p".repeat(32));
 const ADMIN_PASSWORD = "box-admin-secret";
@@ -131,6 +136,11 @@ function project(ref = "my-app"): Project | undefined {
 
 function post(path: string, fields: Record<string, string> = {}): Promise<Response> {
   return Promise.resolve(app.request(path, { method: "POST", body: new URLSearchParams(fields) }));
+}
+
+function whileRestoring<T>(target: Project, run: () => Promise<T>) {
+  const operation = { action: "restore", holds: "it is being restored", status: target.status };
+  return holdingProject(db, target, operation, run);
 }
 
 function renameAttempt(): unknown[] {
@@ -481,7 +491,7 @@ describe("while a backup or restore holds the project", () => {
 
   it("refuses to delete or rotate during a restore", async () => {
     const target = seed();
-    await whileRestoring(target.id, async () => {
+    await whileRestoring(target, async () => {
       expect(await softDeleteProject(deps, target, box)).toEqual({
         ok: false,
         problem: "Can't delete my-app while it is being restored. Try again when it finishes.",
@@ -513,7 +523,7 @@ describe("while a backup or restore holds the project", () => {
       "Can&#39;t purge my-app while a backup of it is running. Try again when it finishes.",
     );
     markBackupDone(db, backup.id, 1);
-    await whileRestoring(deleted.id, async () => {
+    await whileRestoring(deleted, async () => {
       expect((await purgeProject(deps, deleted, box)).ok).toBe(false);
     });
     expect(sql).toEqual([]);
@@ -539,5 +549,113 @@ describe("while a backup or restore holds the project", () => {
     await purgeExpiredProjects(deps, PURGE_AFTER_DAYS, new Date("2026-10-20T01:00:00.000Z"));
     expect(project()).toBeUndefined();
     vi.restoreAllMocks();
+  });
+});
+
+describe("one lifecycle operation at a time per project", () => {
+  it("refuses to rotate while a delete is on the box, then frees the project", async () => {
+    const target = seed();
+    const gate = gatedAdmin(fakeAdmin);
+    const deleting = softDeleteProject({ ...deps, admin: gate.admin }, target, box);
+    await gate.entered;
+
+    const { admin, calls } = countedAdmin(fakeAdmin);
+    expect(await rotateOwnerPassword({ ...deps, admin }, target, box)).toEqual({
+      ok: false,
+      problem:
+        "Can't rotate the password of my-app while it is being deleted. Try again when it finishes.",
+    });
+    expect(calls()).toBe(0);
+
+    gate.release();
+    expect(await deleting).toEqual({ ok: true });
+    expect(busyReason(db, target)).toBeUndefined();
+    expect(await rotateOwnerPassword({ ...deps, admin }, target, box)).toEqual({
+      ok: false,
+      problem: "Can't rotate the password of my-app: it is deleted now.",
+    });
+    expect(calls()).toBe(0);
+  });
+
+  it("refuses to purge while the project is being restored from Trash", async () => {
+    seed();
+    const deleted = await softDeleted("my-app", new Date("2026-10-20T08:00:00.000Z"));
+    const gate = gatedAdmin(fakeAdmin);
+    const restoring = restoreProject({ ...deps, admin: gate.admin }, deleted, box);
+    await gate.entered;
+
+    const { admin, calls } = countedAdmin(fakeAdmin);
+    expect(await purgeProject({ ...deps, admin }, deleted, box)).toEqual({
+      ok: false,
+      problem:
+        "Can't purge my-app while it is being restored from Trash. Try again when it finishes.",
+    });
+    expect(calls()).toBe(0);
+
+    gate.release();
+    expect(await restoring).toEqual({ ok: true });
+    expect(await purgeProject({ ...deps, admin }, deleted, box)).toEqual({
+      ok: false,
+      problem: "Can't purge my-app: it is active now.",
+    });
+    expect(project()?.status).toBe("active");
+  });
+
+  it("skips the hourly purge of a project that is being restored from Trash", async () => {
+    const warnings: string[] = [];
+    vi.spyOn(console, "warn").mockImplementation((line: string) => {
+      warnings.push(line);
+    });
+    seed();
+    const deleted = await softDeleted("my-app", new Date("2026-10-01T00:00:00.000Z"));
+    const gate = gatedAdmin(fakeAdmin);
+    const restoring = restoreProject({ ...deps, admin: gate.admin }, deleted, box);
+    await gate.entered;
+
+    await purgeExpiredProjects(deps, PURGE_AFTER_DAYS, new Date("2026-10-20T00:00:00.000Z"));
+    expect(warnings).toEqual([
+      "hattisar: auto-purge of my-app skipped: it is being restored from Trash; retrying next hour",
+    ]);
+    gate.release();
+    expect(await restoring).toEqual({ ok: true });
+    expect(project()?.status).toBe("active");
+    vi.restoreAllMocks();
+  });
+
+  it("does not hold up an operation on a different project", async () => {
+    const first = seed("my-app");
+    const second = seed("other");
+    const gate = gatedAdmin(fakeAdmin);
+    const deleting = softDeleteProject({ ...deps, admin: gate.admin }, first, box);
+    await gate.entered;
+
+    expect(await rotateOwnerPassword(deps, second, box)).toEqual({ ok: true });
+    expect(await softDeleteProject(deps, second, box)).toEqual({ ok: true });
+    gate.release();
+    expect(await deleting).toEqual({ ok: true });
+    expect(project("other")?.status).toBe("deleted");
+  });
+
+  it("frees the project when the operation throws", async () => {
+    const target = seed();
+    const throwing = {
+      ...deps,
+      refreshPooler: async () => Promise.reject(new Error("pooler down")),
+    };
+    await expect(rotateOwnerPassword(throwing, target, box)).rejects.toThrow("pooler down");
+    expect(busyReason(db, target)).toBeUndefined();
+    expect(await softDeleteProject(deps, target, box)).toEqual({ ok: true });
+  });
+
+  it("refuses an operation on a project that is gone by the time it runs", async () => {
+    const target = seed();
+    await softDeleted("my-app", new Date("2026-10-20T08:00:00.000Z"));
+    await purgeProject(deps, project() as Project, box);
+    sql = [];
+    expect(await softDeleteProject(deps, target, box)).toEqual({
+      ok: false,
+      problem: "Can't delete my-app: it no longer exists.",
+    });
+    expect(sql).toEqual([]);
   });
 });

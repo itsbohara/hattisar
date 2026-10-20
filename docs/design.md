@@ -218,6 +218,16 @@ create anything there. Production projects belong on dedicated boxes.
 ROLE`, delete registry rows (backups in S3 are kept; retention never touches a purged project's
 objects). Managed boxes: §10.
 
+**One lifecycle operation at a time per project.** Soft delete, restore from Trash, purge (manual
+and hourly), password rotation and both kinds of backup restore (§8; for a new project, the restore
+step) hold the project for their whole run in an in-process lock — sufficient because hattisar is
+one process over one SQLite registry. Any of these, or a manual or scheduled backup, started while
+another holds the project or a backup of it is running is refused at once, naming what holds it
+("Can't delete <ref> while it is being restored. Try again when it finishes."); nothing waits.
+Once it holds the lock an operation re-reads the project and refuses if its status no longer
+allows it, e.g. a restore into a project that was deleted meanwhile. The hourly purge skips a busy
+project and retries next hour.
+
 ## 8. Backups
 
 `pg_dump`/`pg_restore` from `HATTISAR_PG_BIN_DIR` (image ships PostgreSQL 17 client). Passwords
