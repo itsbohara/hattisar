@@ -2,7 +2,7 @@ import { SESSION_COOKIE } from "../../src/auth/session-cookie.js";
 import { createSession } from "../../src/auth/sessions.js";
 import type { Registry } from "../../src/registry/db.js";
 import { getUserByUsername, insertUser } from "../../src/registry/users.js";
-import { compose } from "../spike-stack.js";
+import { stackEnv } from "../stack.js";
 
 export interface Credentials {
   username: string;
@@ -15,10 +15,7 @@ let stackAdmin: Credentials | undefined;
 // the same file. A hattisar-data volume seeded from an older .env will not accept this password.
 export function adminCredentials(): Credentials {
   if (stackAdmin) return stackAdmin;
-  const config = JSON.parse(compose(["config", "--format", "json"])) as {
-    services: { hattisar: { environment: Record<string, string | null | undefined> } };
-  };
-  const env = config.services.hattisar.environment;
+  const env = stackEnv();
   const password = env.HATTISAR_ADMIN_PASSWORD;
   if (!password) throw new Error("HATTISAR_ADMIN_PASSWORD is not set for the stack");
   stackAdmin = { username: env.HATTISAR_ADMIN_USERNAME || "admin", password };

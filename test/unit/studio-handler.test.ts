@@ -7,7 +7,10 @@ import CryptoJS from "crypto-js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createApp } from "../../src/app.js";
 import { loadConfig } from "../../src/config.js";
+import { insertBox } from "../../src/registry/boxes.js";
 import { openRegistry, type Registry } from "../../src/registry/db.js";
+import { insertProject, markProjectDeleted } from "../../src/registry/projects.js";
+import { deriveSecretKey, encryptSecret } from "../../src/registry/secrets.js";
 import { signInToRegistry } from "../helpers/session.js";
 
 interface Seen {
@@ -18,13 +21,39 @@ interface Seen {
 }
 
 const cryptoKey = "unit-test-crypto-key";
-const spikeB = {
-  ref: "spike-b",
-  name: "Spike B",
-  dbName: "spike_b",
-  boxName: "shared",
-  box: { host: "db", port: 5432, adminUser: "supabase_admin", adminPassword: "pw" },
-};
+const secretKey = deriveSecretKey("s".repeat(32));
+
+function seedProjects(db: Registry): void {
+  const box = insertBox(db, {
+    name: "shared",
+    kind: "shared",
+    devOnly: true,
+    host: "db",
+    port: 5432,
+    adminUser: "supabase_admin",
+    adminPasswordEnc: encryptSecret("pw", secretKey),
+    sslmode: "disable",
+    publicHost: "db.example.test",
+    publicPort: 54322,
+    poolerTenant: "hattisar",
+    poolerSessionPort: 54322,
+    poolerTransactionPort: 6543,
+    containerName: null,
+  });
+  for (const ref of ["spike-b", "gone"]) {
+    const dbName = ref.replace("-", "_");
+    insertProject(db, {
+      ref,
+      name: ref,
+      boxId: box.id,
+      dbName,
+      ownerRole: `hs_${dbName}_owner`,
+      ownerPasswordEnc: encryptSecret("owner-pw", secretKey),
+    });
+  }
+  const gone = db.prepare("SELECT id FROM projects WHERE ref = 'gone'").get() as { id: number };
+  markProjectDeleted(db, gone.id, "gone__deleted_20261020");
+}
 
 let studio: Server;
 let seen: Seen[] = [];
@@ -59,6 +88,7 @@ beforeAll(async () => {
   dataDir = mkdtempSync(join(tmpdir(), "hattisar-studio-handler-"));
   registry = openRegistry(dataDir);
   cookie = signInToRegistry(registry);
+  seedProjects(registry);
   app = createApp(
     loadConfig({
       HATTISAR_SECRET_KEY: "s".repeat(32),
@@ -66,7 +96,6 @@ beforeAll(async () => {
       POSTGRES_PASSWORD: "unused",
       POOLER_TENANT_ID: "hattisar",
       STUDIO_URL: `http://127.0.0.1:${port}`,
-      HATTISAR_SPIKE_PROJECTS: JSON.stringify([spikeB]),
     }),
     registry,
   );
@@ -100,10 +129,35 @@ describe("pg-meta pass-through", () => {
     expect(seen[0]?.url).toBe("/api/platform/pg-meta/spike-b/tables?included_schemas=public");
   });
 
-  it("answers an unknown ref with 404 and never reaches Studio", async () => {
-    const response = await request("/api/platform/pg-meta/nope/tables");
-    expect(response.status).toBe(404);
-    expect(seen).toHaveLength(0);
+  it.each(["nope", "gone"])(
+    "answers an unknown or deleted ref (%s) with 404 and never reaches Studio",
+    async (ref) => {
+      const response = await request(`/api/platform/pg-meta/${ref}/tables`);
+      expect(response.status).toBe(404);
+      expect(seen).toHaveLength(0);
+    },
+  );
+});
+
+describe("registry-backed platform routes", () => {
+  it("lists only active projects", async () => {
+    const response = await request("/api/platform/projects");
+    expect(await response.json()).toEqual([
+      expect.objectContaining({ ref: "spike-b", region: "shared", status: "ACTIVE_HEALTHY" }),
+    ]);
+  });
+
+  it("describes the database with the box's public endpoint and the owner role", async () => {
+    const response = await request("/api/platform/projects/spike-b/databases");
+    expect(await response.json()).toEqual([
+      expect.objectContaining({
+        identifier: "spike-b",
+        db_name: "spike_b",
+        db_host: "db.example.test",
+        db_port: 54322,
+        db_user: "hs_spike_b_owner",
+      }),
+    ]);
   });
 });
 

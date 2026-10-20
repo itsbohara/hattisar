@@ -1,5 +1,5 @@
 import { expect, type Page, type Request, type Response, test } from "@playwright/test";
-import { dbLogSince } from "../test/spike-stack.js";
+import { dbLogSince } from "../test/stack.js";
 import { studioScreenPaths } from "./studio-screens.js";
 
 const PROJECT = { ref: "spike-b", db: "spike_b", table: "beta" };
@@ -25,7 +25,7 @@ interface ApiCall {
 
 async function readPgMetaLog(page: Page): Promise<PgMetaLogEntry[]> {
   const response = await page.request.get("/_hs/debug/pg-meta-log");
-  expect(response.ok(), "HATTISAR_DEBUG must be on (test/compose.spike.yml)").toBe(true);
+  expect(response.ok(), "HATTISAR_DEBUG must be on (test/compose.test.yml)").toBe(true);
   return response.json();
 }
 

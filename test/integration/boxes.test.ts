@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { postForm, signIn } from "../helpers/session.js";
-import { compose } from "../spike-stack.js";
+import { compose, registrySql, stackEnv } from "../stack.js";
 
 const baseUrl = process.env.HATTISAR_URL ?? "http://localhost:8000";
 const PLAIN_PG = `hattisar-it-plain-pg-${randomUUID().slice(0, 8)}`;
@@ -23,13 +23,6 @@ function composeNetwork(): string {
   ]);
 }
 
-function stackEnv(): Record<string, string | null | undefined> {
-  const config = JSON.parse(compose(["config", "--format", "json"])) as {
-    services: { hattisar: { environment: Record<string, string | null | undefined> } };
-  };
-  return config.services.hattisar.environment;
-}
-
 // The init-time server listens on the unix socket only, so TCP readiness means the real server.
 async function waitForTcpReady(container: string): Promise<void> {
   for (let attempt = 0; attempt < 60; attempt++) {
@@ -41,17 +34,6 @@ async function waitForTcpReady(container: string): Promise<void> {
     }
   }
   throw new Error(`${container} never became ready`);
-}
-
-// Task 7 adds project creation; until then a row goes straight into the stack's registry.
-function registry(sql: string, ...params: (string | number)[]): void {
-  const script = `
-    const Database = require("better-sqlite3");
-    const db = new Database("/data/hattisar.db");
-    db.pragma("foreign_keys = ON");
-    db.prepare(process.argv[1]).run(...JSON.parse(process.argv[2]));
-  `;
-  compose(["exec", "-T", "hattisar", "node", "-e", script, sql, JSON.stringify(params)]);
 }
 
 async function boxesPage(): Promise<string> {
@@ -165,7 +147,7 @@ describe("boxes", () => {
     expect((await registerSharedDbAgain(name)).status).toBe(302);
     const id = boxIdFrom(await boxesPage(), name);
     const ref = `it-${randomUUID().slice(0, 8)}`;
-    registry(
+    registrySql(
       `INSERT INTO projects (ref, name, box_id, db_name, owner_role, owner_password_enc, status, created_at)
        VALUES (?, ?, ?, ?, ?, 'v1:x:y:z', 'active', '2026-10-20T00:00:00.000Z')`,
       ref,
@@ -179,7 +161,7 @@ describe("boxes", () => {
       expect(refused.status).toBe(409);
       expect(await refused.text()).toContain(`Box ${name} still has 1 project`);
     } finally {
-      registry("DELETE FROM projects WHERE ref = ?", ref);
+      registrySql("DELETE FROM projects WHERE ref = ?", ref);
     }
     expect((await remove(id)).status).toBe(302);
   });

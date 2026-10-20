@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
+import { prepareRoutingProjects } from "../helpers/projects.js";
 import { signIn } from "../helpers/session.js";
-import { compose, prepareSpikeStack } from "../spike-stack.js";
+import { compose, stackEnv } from "../stack.js";
 
 const baseUrl = process.env.HATTISAR_URL ?? "http://localhost:8000";
 let cookie: string;
@@ -20,11 +21,11 @@ async function postQuery(ref: string, query: string): Promise<Response> {
 }
 
 beforeAll(async () => {
-  prepareSpikeStack();
+  await prepareRoutingProjects(baseUrl);
   cookie = await signIn(baseUrl);
 }, 180_000);
 
-describe("Studio proxy with two spike projects on the shared box", () => {
+describe("Studio proxy with two projects on the shared box", () => {
   it("lists both projects in Studio's shape", async () => {
     const response = await fetchSignedIn("/api/platform/projects");
     expect(response.status).toBe(200);
@@ -101,7 +102,9 @@ describe("Studio proxy with two spike projects on the shared box", () => {
       expect.objectContaining({
         identifier: "spike-b",
         db_name: "spike_b",
-        db_user: "supabase_admin",
+        db_host: stackEnv().HATTISAR_PUBLIC_HOST || "localhost",
+        db_port: Number(stackEnv().POOLER_PORT_SESSION || 54322),
+        db_user: "hs_spike_b_owner",
         status: "ACTIVE_HEALTHY",
       }),
     ]);

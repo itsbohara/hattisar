@@ -1,8 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { adminConnectionString } from "../../src/studio/connection.js";
-import type { Project } from "../../src/studio/projects-source.js";
 
-function project(adminUser: string, adminPassword: string): Pick<Project, "dbName" | "box"> {
+function project(adminUser: string, adminPassword: string) {
   return { dbName: "spike_b", box: { host: "db", port: 5432, adminUser, adminPassword } };
 }
 
