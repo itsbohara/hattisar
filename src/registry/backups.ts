@@ -15,6 +15,7 @@ export interface Backup {
   id: number;
   projectId: number;
   kind: BackupKind;
+  bucket: string | null;
   s3Key: string;
   sizeBytes: number | null;
   status: BackupStatus;
@@ -26,7 +27,7 @@ export interface Backup {
 const SCHEDULE_COLUMNS =
   "project_id AS projectId, frequency, keep_daily AS keepDaily, keep_weekly AS keepWeekly";
 
-const BACKUP_COLUMNS = `id, project_id AS projectId, kind, s3_key AS s3Key, size_bytes AS sizeBytes,
+const BACKUP_COLUMNS = `id, project_id AS projectId, kind, bucket, s3_key AS s3Key, size_bytes AS sizeBytes,
   status, error, created_at AS createdAt, finished_at AS finishedAt`;
 
 export function defaultBackupSchedule(projectId: number): BackupSchedule {
@@ -62,16 +63,16 @@ export function listEnabledBackupSchedules(db: Registry): BackupSchedule[] {
 
 export function insertBackup(
   db: Registry,
-  backup: { projectId: number; kind: BackupKind; s3Key: string },
+  backup: { projectId: number; kind: BackupKind; bucket: string; s3Key: string },
   now: string = new Date().toISOString(),
 ): Backup {
   return db
-    .prepare<[number, BackupKind, string, string], Backup>(
-      `INSERT INTO backups (project_id, kind, s3_key, status, created_at)
-       VALUES (?, ?, ?, 'running', ?)
+    .prepare<[number, BackupKind, string, string, string], Backup>(
+      `INSERT INTO backups (project_id, kind, bucket, s3_key, status, created_at)
+       VALUES (?, ?, ?, ?, 'running', ?)
        RETURNING ${BACKUP_COLUMNS}`,
     )
-    .get(backup.projectId, backup.kind, backup.s3Key, now) as Backup;
+    .get(backup.projectId, backup.kind, backup.bucket, backup.s3Key, now) as Backup;
 }
 
 export function getBackup(db: Registry, id: number): Backup | undefined {
