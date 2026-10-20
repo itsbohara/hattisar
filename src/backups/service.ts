@@ -48,6 +48,21 @@ export async function whileRestoring<T>(projectId: number, run: () => Promise<T>
   }
 }
 
+// Deleting, purging or re-keying the project under a running pg_dump or pg_restore would break it.
+export function busyReason(db: Registry, project: Project): string | undefined {
+  if (isRestoring(project.id)) return "it is being restored";
+  if (listBackups(db, project.id).some((backup) => backup.status === "running")) {
+    return "a backup of it is running";
+  }
+  return undefined;
+}
+
+export function busyProblem(db: Registry, project: Project, action: string): string | undefined {
+  const reason = busyReason(db, project);
+  if (reason === undefined) return undefined;
+  return `Can't ${action} ${project.ref} while ${reason}. Try again when it finishes.`;
+}
+
 export function boxCredentials(box: Box, secretKey: Buffer): BoxConnection | string {
   try {
     return boxConnection(box, secretKey);

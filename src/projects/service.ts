@@ -1,4 +1,5 @@
 import pg from "pg";
+import { busyProblem } from "../backups/service.js";
 import type { AdminClientRunner, BoxConnection } from "../boxes/admin-client.js";
 import { safeErrorMessage } from "../boxes/admin-client.js";
 import { boxConnection } from "../boxes/service.js";
@@ -212,6 +213,8 @@ export async function rotateOwnerPassword(
   project: Project,
   box: Box,
 ): Promise<{ ok: true } | { ok: false; problem: string }> {
+  const busy = busyProblem(deps.db, project, "rotate the password of");
+  if (busy !== undefined) return { ok: false, problem: busy };
   const conn = boxConnection(box, deps.secretKey);
   const password = generateOwnerPassword();
   try {

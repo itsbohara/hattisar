@@ -9,7 +9,7 @@ import {
   type ProjectServiceDeps,
   validateProjectForm,
 } from "../projects/service.js";
-import { type Backup, listBackups } from "../registry/backups.js";
+import type { Backup } from "../registry/backups.js";
 import type { Box } from "../registry/boxes.js";
 import type { Project } from "../registry/projects.js";
 import { restoreArchive, writeRestoreList } from "./pg-restore.js";
@@ -19,7 +19,7 @@ import {
   type BackupDeps,
   type BackupOutcome,
   boxCredentials,
-  isRestoring,
+  busyReason,
   NOT_CONFIGURED,
   whileRestoring,
 } from "./service.js";
@@ -95,10 +95,7 @@ export async function restoreIntoProject(
 ): Promise<BackupOutcome> {
   const settings = restorable(deps, backup);
   if (typeof settings === "string") return { ok: false, problem: settings };
-  if (
-    isRestoring(project.id) ||
-    listBackups(deps.db, project.id).some((b) => b.status === "running")
-  ) {
+  if (busyReason(deps.db, project) !== undefined) {
     return {
       ok: false,
       problem: `${project.ref} is busy with a backup or restore. Try again later.`,
@@ -124,7 +121,13 @@ export async function restoreIntoProject(
           problem: `Could not recreate database ${project.dbName}: ${message}. Restore again to bring it back.`,
         };
       }
-      return restoreInto(deps, conn, project, fetched);
+      const restored = await restoreInto(deps, conn, project, fetched);
+      if (restored.ok) return restored;
+      // Leads the message: pg_restore's stderr tail after it can run to kilobytes.
+      return {
+        ok: false,
+        problem: `The previous data of ${project.ref} was replaced and its database now holds part of the backup. Restore again to finish. ${restored.problem}`,
+      };
     }),
   );
 }

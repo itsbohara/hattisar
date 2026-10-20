@@ -1,4 +1,5 @@
 import pg from "pg";
+import { busyProblem, busyReason } from "../backups/service.js";
 import { type BoxConnection, safeErrorMessage } from "../boxes/admin-client.js";
 import { boxConnection } from "../boxes/service.js";
 import { type Box, getBoxById } from "../registry/boxes.js";
@@ -55,8 +56,8 @@ function isObjectInUse(error: unknown): boolean {
   return (error as { code?: unknown } | null)?.code === OBJECT_IN_USE;
 }
 
-// Superusers (Studio's pg-meta) bypass the revoked CONNECT and may reconnect between the terminate
-// and the rename, which then fails as in use: terminate again and retry.
+// Superusers such as the box admin bypass the revoked CONNECT and may reconnect between the
+// terminate and the rename, which then fails as in use: terminate again and retry.
 async function renameAway(client: pg.Client, project: Project, now: Date): Promise<string> {
   for (let attempt = 1; ; attempt++) {
     await client.query(
@@ -94,6 +95,8 @@ export async function softDeleteProject(
   box: Box,
   now: Date = new Date(),
 ): Promise<LifecycleResult> {
+  const busy = busyProblem(deps.db, project, "delete");
+  if (busy !== undefined) return { ok: false, problem: busy };
   const db = pg.escapeIdentifier(project.dbName);
   const role = pg.escapeIdentifier(project.ownerRole);
   let deletedDbName = "";
@@ -165,6 +168,8 @@ export async function purgeProject(
 ): Promise<LifecycleResult> {
   const { deletedDbName } = project;
   if (deletedDbName === null) return { ok: false, problem: "Project is not deleted" };
+  const busy = busyProblem(deps.db, project, "purge");
+  if (busy !== undefined) return { ok: false, problem: busy };
   const result = await onBox(deps, box, "purge", async (conn) => {
     if ((await deps.onLifecycle?.(box, project, "purging")) === "skip-sql") return;
     await deps.admin(conn, async (client) => {
@@ -207,6 +212,11 @@ export async function purgeExpiredProjects(
 ): Promise<void> {
   const cutoff = new Date(now.getTime() - purgeAfterDays * DAY_MS).toISOString();
   for (const project of listProjectsDeletedBefore(deps.db, cutoff)) {
+    const busy = busyReason(deps.db, project);
+    if (busy !== undefined) {
+      console.warn(`hattisar: auto-purge of ${project.ref} skipped: ${busy}; retrying next hour`);
+      continue;
+    }
     try {
       const box = getBoxById(deps.db, project.boxId);
       if (box === undefined) continue;

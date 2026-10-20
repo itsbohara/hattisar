@@ -5,6 +5,7 @@ import { Hono } from "hono";
 import type pg from "pg";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthEnv } from "../../src/auth/middleware.js";
+import { whileRestoring } from "../../src/backups/service.js";
 import type { AdminClientRunner } from "../../src/boxes/admin-client.js";
 import { seedSharedBox } from "../../src/boxes/shared.js";
 import { loadConfig } from "../../src/config.js";
@@ -17,6 +18,7 @@ import {
 import { projectRoutes } from "../../src/projects/routes.js";
 import type { LifecycleEvent, ProjectServiceDeps } from "../../src/projects/service.js";
 import { trashRoutes } from "../../src/projects/trash-routes.js";
+import { insertBackup, markBackupDone } from "../../src/registry/backups.js";
 import { type Box, getSharedBox, insertBox } from "../../src/registry/boxes.js";
 import { openRegistry, type Registry } from "../../src/registry/db.js";
 import {
@@ -453,6 +455,89 @@ describe("a box whose admin password cannot be decrypted", () => {
     expect(project("stuck")?.status).toBe("deleted");
     expect(project("my-app")).toBeUndefined();
     expect(errors).toEqual([expect.stringMatching(/^hattisar: auto-purge of stuck failed: /)]);
+    vi.restoreAllMocks();
+  });
+});
+
+describe("while a backup or restore holds the project", () => {
+  function runningBackup(target: Project) {
+    return insertBackup(db, {
+      projectId: target.id,
+      kind: "manual",
+      bucket: "b",
+      s3Key: `k/${target.ref}`,
+    });
+  }
+
+  it("refuses to delete during a running backup, without touching the box", async () => {
+    runningBackup(seed());
+    const response = await post("/_hs/projects/my-app/delete", { confirm: "my-app" });
+    expect(await response.text()).toContain(
+      "Can&#39;t delete my-app while a backup of it is running. Try again when it finishes.",
+    );
+    expect(sql).toEqual([]);
+    expect(project()?.status).toBe("active");
+  });
+
+  it("refuses to delete or rotate during a restore", async () => {
+    const target = seed();
+    await whileRestoring(target.id, async () => {
+      expect(await softDeleteProject(deps, target, box)).toEqual({
+        ok: false,
+        problem: "Can't delete my-app while it is being restored. Try again when it finishes.",
+      });
+      const rotated = await post("/_hs/projects/my-app/rotate");
+      expect(await rotated.text()).toContain(
+        "Can&#39;t rotate the password of my-app while it is being restored.",
+      );
+    });
+    expect(sql).toEqual([]);
+  });
+
+  it("refuses to rotate during a running backup", async () => {
+    runningBackup(seed());
+    const response = await post("/_hs/projects/my-app/rotate");
+    expect(await response.text()).toContain(
+      "Can&#39;t rotate the password of my-app while a backup of it is running.",
+    );
+    expect(sql).toEqual([]);
+  });
+
+  it("refuses to purge during a running backup or a restore", async () => {
+    seed();
+    const deleted = await softDeleted("my-app", new Date("2026-10-20T08:00:00.000Z"));
+    sql = [];
+    const backup = runningBackup(deleted);
+    const response = await post("/_hs/trash/my-app/purge", { confirm: "my-app" });
+    expect(await response.text()).toContain(
+      "Can&#39;t purge my-app while a backup of it is running. Try again when it finishes.",
+    );
+    markBackupDone(db, backup.id, 1);
+    await whileRestoring(deleted.id, async () => {
+      expect((await purgeProject(deps, deleted, box)).ok).toBe(false);
+    });
+    expect(sql).toEqual([]);
+    expect(project()?.status).toBe("deleted");
+  });
+
+  it("skips the hourly purge and purges on the next run once the backup is done", async () => {
+    const warnings: string[] = [];
+    vi.spyOn(console, "warn").mockImplementation((line: string) => {
+      warnings.push(line);
+    });
+    seed();
+    const deleted = await softDeleted("my-app", new Date("2026-10-01T00:00:00.000Z"));
+    const backup = runningBackup(deleted);
+
+    await purgeExpiredProjects(deps, PURGE_AFTER_DAYS, new Date("2026-10-20T00:00:00.000Z"));
+    expect(project()?.status).toBe("deleted");
+    expect(warnings).toEqual([
+      "hattisar: auto-purge of my-app skipped: a backup of it is running; retrying next hour",
+    ]);
+
+    markBackupDone(db, backup.id, 1);
+    await purgeExpiredProjects(deps, PURGE_AFTER_DAYS, new Date("2026-10-20T01:00:00.000Z"));
+    expect(project()).toBeUndefined();
     vi.restoreAllMocks();
   });
 });
