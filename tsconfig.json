@@ -5,6 +5,8 @@
     "moduleResolution": "NodeNext",
     "lib": ["ES2024"],
     "types": ["node"],
+    "jsx": "react-jsx",
+    "jsxImportSource": "hono/jsx",
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "verbatimModuleSyntax": true,

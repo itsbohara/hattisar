@@ -4,5 +4,6 @@ data/
 .superpowers/
 test-results/
 playwright-report/
+e2e/.auth/
 .env
 docker/.env
