@@ -6,9 +6,11 @@ import { connectionHeaders, generateTypescriptTypes, type PgMetaLog, runQuery } 
 import {
   AI_DISABLED_BODY,
   NOT_AVAILABLE_BODY,
+  SETTINGS_UNAVAILABLE_BODY,
   studioDatabases,
   studioProject,
   studioProjectDetail,
+  studioSettings,
 } from "./platform-routes.js";
 import type { Project, ProjectSource } from "./projects-source.js";
 import { proxyToStudio } from "./proxy.js";
@@ -73,6 +75,15 @@ export function createStudioHandler({ config, projects, pgMetaLog }: StudioDeps)
         return c.json(studioProjectDetail(project));
       case "project-databases":
         return c.json(studioDatabases(project));
+      case "project-settings": {
+        // Never the stub as-is: it describes Studio's own default database.
+        const upstream = await proxyToStudio(config.studioUrl, c.req.raw);
+        const stub: unknown = upstream.ok
+          ? await upstream.json().catch(() => undefined)
+          : undefined;
+        if (!isRecord(stub)) return c.json(SETTINGS_UNAVAILABLE_BODY, 502);
+        return c.json(studioSettings(project, stub));
+      }
       case "run-lints":
         return c.json([]);
       case "project-types": {
@@ -102,4 +113,8 @@ export function createStudioHandler({ config, projects, pgMetaLog }: StudioDeps)
         return proxyToStudio(config.studioUrl, c.req.raw);
     }
   };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

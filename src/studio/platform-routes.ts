@@ -2,6 +2,9 @@ import type { Project } from "./projects-source.js";
 
 export const AI_DISABLED_BODY = { error: { message: "AI features are disabled in hattisar" } };
 export const NOT_AVAILABLE_BODY = { error: { message: "Not available in hattisar" } };
+export const SETTINGS_UNAVAILABLE_BODY = { message: "Studio's project settings are unavailable" };
+
+const SSL_REQUIRED = new Set(["require", "verify-ca", "verify-full"]);
 
 export function studioProject(project: Project) {
   return {
@@ -38,4 +41,19 @@ export function studioDatabases(project: Project) {
       status: "ACTIVE_HEALTHY",
     },
   ];
+}
+
+// Only the project's identity and connection: the rest of the stub is whatever shape this Studio
+// version expects.
+export function studioSettings(project: Project, stub: Record<string, unknown>) {
+  return {
+    ...stub,
+    ref: project.ref,
+    name: project.name,
+    db_host: project.box.publicHost,
+    db_name: project.dbName,
+    db_port: project.box.publicPort,
+    db_user: project.ownerRole,
+    ...(SSL_REQUIRED.has(project.box.sslmode) && { ssl_enforced: true }),
+  };
 }
