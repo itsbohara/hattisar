@@ -16,6 +16,7 @@ const baseUrl = process.env.HATTISAR_URL ?? "http://localhost:8000";
 const ref = `it-life-${randomUUID().slice(0, 8)}`;
 const dbName = ref.replaceAll("-", "_");
 const ownerRole = `hs_${dbName}_owner`;
+const healthyRef = `it-healthy-${randomUUID().slice(0, 8)}`;
 let cookie: string;
 let boxId: string;
 
@@ -44,9 +45,6 @@ async function notes(url: string): Promise<string[]> {
   );
 }
 
-// One locked-out pooler login only: after that Supavisor's auth query no longer finds the role, and
-// those failures open its circuit breakers (keyed by tenant, and by client IP), which would then
-// refuse every project's pooler logins from this host, other test files' included.
 async function poolerError(url: string): Promise<string> {
   try {
     await notes(url);
@@ -58,7 +56,7 @@ async function poolerError(url: string): Promise<string> {
 
 // The box port is not published, so the owner's direct login is tried from inside the compose
 // network. The password travels on stdin, never in argv.
-function directLogin(password: string): string {
+function directLogin(password: string, database = dbName): string {
   const script = `
     const pg = require("pg");
     const { user, password, database } = JSON.parse(require("fs").readFileSync(0, "utf8"));
@@ -70,7 +68,7 @@ function directLogin(password: string): string {
   `;
   return compose(
     ["exec", "-T", "-w", "/app", "hattisar", "node", "-e", script],
-    JSON.stringify({ user: ownerRole, password, database: dbName }),
+    JSON.stringify({ user: ownerRole, password, database }),
   ).trim();
 }
 
@@ -118,6 +116,7 @@ beforeAll(async () => {
 
 afterAll(() => {
   dropProject(ref);
+  dropProject(healthyRef);
 });
 
 describe("soft delete, restore and purge on the shared box", () => {
@@ -146,11 +145,14 @@ describe("soft delete, restore and purge on the shared box", () => {
     expect(response.headers.get("location")).toBe("/_hs/trash");
 
     expect(databases()).toEqual([`${dbName}__deleted_${today()}`]);
-    expect(roleLogin()).toBe("f");
+    expect(roleLogin()).toBe("t");
 
-    expect(await poolerError(strings.session)).toMatch(/is not permitted to log in/);
-    expect(directLogin(ownerPassword(strings.session))).toMatch(
-      /^refused .*not permitted to log in/,
+    expect(await poolerError(strings.session)).toMatch(/database ".+" does not exist/);
+    expect(await poolerError(strings.transaction)).toMatch(/database ".+" does not exist/);
+    const password = ownerPassword(strings.session);
+    expect(directLogin(password)).toMatch(/^refused database ".+" does not exist/);
+    expect(directLogin(password, `${dbName}__deleted_${today()}`)).toMatch(
+      /^refused permission denied for database/,
     );
 
     expect(await studioListed()).toBe(false);
@@ -167,6 +169,33 @@ describe("soft delete, restore and purge on the shared box", () => {
 
     const trash = await (await fetchWith(baseUrl, cookie, "/_hs/trash")).text();
     expect(trash).toContain(`data-project="${ref}"`);
+  });
+
+  // A NOLOGIN owner would fail pooler auth instead, and Supavisor's auth breakers (keyed by tenant
+  // and client IP) would then refuse every project's pooler logins for a while.
+  it("lets an app keep retrying a deleted project without locking out healthy ones", async () => {
+    const created = await createProject(baseUrl, cookie, {
+      ref: healthyRef,
+      name: "Healthy",
+      boxId,
+    });
+    expect(created.status).toBe(302);
+    const [healthySession, healthyTransaction] = await connectionStrings(
+      baseUrl,
+      cookie,
+      healthyRef,
+    );
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const url = attempt % 2 === 0 ? strings.session : strings.transaction;
+      expect(await poolerError(url)).toMatch(/database ".+" does not exist/);
+    }
+    for (const url of [healthySession, healthyTransaction]) {
+      const rows = await withClient(
+        url as string,
+        async (client) => (await client.query("select 1 as ok")).rows,
+      );
+      expect(rows).toEqual([{ ok: 1 }]);
+    }
   });
 
   it("restores everything, data included", async () => {
@@ -202,7 +231,7 @@ describe("soft delete, restore and purge on the shared box", () => {
         `role ${ownerRole} still owns objects or holds privileges in the cluster; nothing was dropped`,
       );
       expect(databases()).toEqual([`${dbName}__deleted_${today()}`]);
-      expect(roleLogin()).toBe("f");
+      expect(roleLogin()).toBe("t");
     } finally {
       sharedBoxSql('REVOKE CONNECT ON DATABASE postgres FROM :"role"', { role: ownerRole });
     }
