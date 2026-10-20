@@ -1,3 +1,5 @@
+import { SESSION_COOKIE } from "../auth/session-cookie.js";
+
 export const STUDIO_CSS_PATH = "/_hs/static/studio.css";
 export const STUDIO_JS_PATH = "/_hs/static/studio.js";
 
@@ -27,9 +29,23 @@ function withoutHopByHop(headers: Headers): Headers {
   return result;
 }
 
+function withoutSessionCookie(cookie: string): string {
+  return cookie
+    .split(";")
+    .map((pair) => pair.trim())
+    .filter((pair) => pair !== "" && pair.split("=", 1)[0]?.trim() !== SESSION_COOKIE)
+    .join("; ");
+}
+
+// Only hattisar may set x-connection-encrypted (the overrides); a client's copy would pick the
+// database pg-meta connects to.
 function upstreamRequestHeaders(incoming: Headers, overrides: Headers): Headers {
   const headers = withoutHopByHop(incoming);
   headers.delete("host");
+  headers.delete("x-connection-encrypted");
+  const cookie = withoutSessionCookie(headers.get("cookie") ?? "");
+  if (cookie === "") headers.delete("cookie");
+  else headers.set("cookie", cookie);
   // Uncompressed responses let HTML be rewritten without a decode/re-encode step.
   headers.set("accept-encoding", "identity");
   for (const [name, value] of overrides) headers.set(name, value);
@@ -52,7 +68,10 @@ export async function proxyToStudio(
   overrides: Headers = new Headers(),
 ): Promise<Response> {
   const url = new URL(request.url);
-  const target = new URL(`${url.pathname}${url.search}`, studioUrl);
+  // Set on Studio's URL, never resolved against it: a path like //host/x resolves to that host.
+  const target = new URL(studioUrl);
+  target.pathname = url.pathname;
+  target.search = url.search;
   const hasBody = request.method !== "GET" && request.method !== "HEAD";
 
   let upstream: Response;

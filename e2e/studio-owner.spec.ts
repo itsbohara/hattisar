@@ -19,7 +19,7 @@ test("a table created in Studio's Table Editor belongs to the project's owner", 
   await page.getByRole("button", { name: /^Save/ }).click();
   await expect(
     page.getByTestId("tables-list").getByRole("button", { name: `View ${TABLE}`, exact: true }),
-  ).toBeVisible({ timeout: 30_000 });
+  ).toBeVisible();
 
   const [session] = await connectionStrings(baseURL as string, cookie, REF);
   const client = new pg.Client({ connectionString: session, connectionTimeoutMillis: 10_000 });

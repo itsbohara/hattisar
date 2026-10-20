@@ -21,7 +21,7 @@ describe("classifyRequest", () => {
       { kind: "project-api-pass", ref: "spike-b" },
     ],
     ["POST", "/api/platform/projects/spike-b/run-lints", { kind: "not-available" }],
-    ["GET", "/api/platform/projects/spike-b/run-lints", { kind: "not-available" }],
+    ["GET", "/api/platform/projects/spike-b/run-lints", { kind: "run-lints", ref: "spike-b" }],
     ["GET", "/api/v1/projects/spike-b/database/migrations", { kind: "not-available" }],
     ["POST", "/api/v1/projects/nope/database/migrations", { kind: "not-available" }],
     ["POST", "/api/mcp", { kind: "not-available" }],
@@ -65,6 +65,17 @@ describe("classifyRequest", () => {
     ["GET", "/projectsx", { kind: "pass" }],
   ])("%s %s", (method, path, expected) => {
     expect(classifyRequest(method, path)).toEqual(expected);
+  });
+
+  it.each([
+    "//evil.example/x",
+    "//meta:8080/health",
+    "/%2F%2Fevil/x",
+    "/%2f/evil/x",
+    "//_hs/static/studio.css",
+    "//api/platform/projects",
+  ])("answers a path starting with // (%s) with not-found", (path) => {
+    expect(classifyRequest("GET", path)).toEqual({ kind: "not-found" });
   });
 
   describe("never lets a pg-meta path through without a ref", () => {

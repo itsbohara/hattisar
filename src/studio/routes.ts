@@ -6,6 +6,7 @@ export type Route =
   | { kind: "not-available" }
   | { kind: "project-databases"; ref: string }
   | { kind: "project-types"; ref: string }
+  | { kind: "run-lints"; ref: string }
   | { kind: "platform-projects" }
   | { kind: "platform-project"; ref: string }
   | { kind: "project-api-pass"; ref: string }
@@ -25,7 +26,8 @@ const PG_META = /^\/api\/platform\/pg-meta\/([^/]+)(\/.*)?$/i;
 
 export function classifyRequest(method: string, rawPath: string): Route {
   const path = decodePath(rawPath);
-  if (path === undefined) return { kind: "not-found" };
+  // A leading // reads as a host to URL resolution; nothing legitimate is spelled that way.
+  if (path === undefined || path.startsWith("//")) return { kind: "not-found" };
 
   if (PG_META_PREFIX.test(path)) {
     const match = PG_META.exec(path);
@@ -43,6 +45,10 @@ export function classifyRequest(method: string, rawPath: string): Route {
   if (/^\/api\/ai(?:\/|$)/i.test(path)) return { kind: "ai-disabled" };
 
   if (path === "/api/platform/projects" && method === "GET") return { kind: "platform-projects" };
+
+  // Any error status makes Studio retry for ~12 s before the Table Editor refreshes (§3).
+  const lints = /^\/api\/platform\/projects\/([^/]+)\/run-lints$/.exec(path);
+  if (lints?.[1] && method === "GET") return { kind: "run-lints", ref: lints[1] };
 
   // These query through Studio's own connection and cannot be pointed at a project.
   if (

@@ -11,6 +11,7 @@ import { insertBox } from "../../src/registry/boxes.js";
 import { openRegistry, type Registry } from "../../src/registry/db.js";
 import { insertProject, markProjectDeleted } from "../../src/registry/projects.js";
 import { deriveSecretKey, encryptSecret } from "../../src/registry/secrets.js";
+import { proxyToStudio } from "../../src/studio/proxy.js";
 import { signInToRegistry } from "../helpers/session.js";
 
 interface Seen {
@@ -56,6 +57,7 @@ function seedProjects(db: Registry): void {
 }
 
 let studio: Server;
+let studioUrl: string;
 let seen: Seen[] = [];
 let app: ReturnType<typeof createApp>;
 let dataDir: string;
@@ -85,6 +87,7 @@ beforeAll(async () => {
   });
   await new Promise<void>((resolve) => studio.listen(0, "127.0.0.1", resolve));
   const { port } = studio.address() as AddressInfo;
+  studioUrl = `http://127.0.0.1:${port}`;
   dataDir = mkdtempSync(join(tmpdir(), "hattisar-studio-handler-"));
   registry = openRegistry(dataDir);
   cookie = signInToRegistry(registry);
@@ -95,7 +98,7 @@ beforeAll(async () => {
       PG_META_CRYPTO_KEY: cryptoKey,
       POSTGRES_PASSWORD: "unused",
       POOLER_TENANT_ID: "hattisar",
-      STUDIO_URL: `http://127.0.0.1:${port}`,
+      STUDIO_URL: studioUrl,
     }),
     registry,
   );
@@ -110,7 +113,8 @@ afterAll(() => {
 function request(path: string, init?: RequestInit): Promise<Response> {
   seen = [];
   const headers = new Headers(init?.headers);
-  headers.set("cookie", cookie);
+  if (!headers.has("cookie")) headers.set("cookie", cookie);
+  if (!headers.has("origin")) headers.set("origin", "http://hattisar.test");
   return Promise.resolve(app.request(`http://hattisar.test${path}`, { ...init, headers }));
 }
 
@@ -174,6 +178,25 @@ describe("registry-backed platform routes", () => {
   });
 });
 
+it("answers a missing hattisar static file with 404, signed in or not", async () => {
+  const anonymous = await app.request("http://hattisar.test/_hs/static/nope.css");
+  expect(anonymous.status).toBe(404);
+  expect((await request("/_hs/static/nope.css")).status).toBe(404);
+});
+
+describe("run-lints", () => {
+  it("answers with no lints without reaching Studio", async () => {
+    const response = await request("/api/platform/projects/spike-b/run-lints");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual([]);
+    expect(seen).toHaveLength(0);
+  });
+
+  it("answers an unknown ref with 404", async () => {
+    expect((await request("/api/platform/projects/nope/run-lints")).status).toBe(404);
+  });
+});
+
 describe("Studio pass-through", () => {
   it("preserves method, body and query and rewrites Host", async () => {
     await request("/api/platform/profile?x=1", { method: "POST", body: "payload" });
@@ -197,10 +220,50 @@ describe("Studio pass-through", () => {
     );
   });
 
+  it("strips the session cookie and keeps the others", async () => {
+    await request("/api/platform/profile", { headers: { cookie: `theme=dark; ${cookie}; a=b` } });
+    expect(seen[0]?.headers.cookie).toBe("theme=dark; a=b");
+  });
+
+  it("sends no cookie header when the session was the only cookie", async () => {
+    await request("/api/platform/profile");
+    expect(seen[0]?.headers).not.toHaveProperty("cookie");
+  });
+
+  it("strips a client x-connection-encrypted", async () => {
+    await request("/api/platform/profile", {
+      headers: { "x-connection-encrypted": "client-supplied" },
+    });
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.headers).not.toHaveProperty("x-connection-encrypted");
+  });
+
   it("redirects an unknown Studio project page to the project list", async () => {
     const response = await request("/project/default/editor");
     expect(response.status).toBe(302);
     expect(response.headers.get("location")).toBe("/_hs/projects");
     expect(seen).toHaveLength(0);
   });
+});
+
+describe("paths that look like another host", () => {
+  it.each(["//evil.example/x", "//meta:8080/health", "/%2F%2Fevil/x", "//_hs/static/studio.css"])(
+    "answers %s with 404 and never fetches it",
+    async (path) => {
+      const response = await request(path);
+      expect(response.status).toBe(404);
+      expect(seen).toHaveLength(0);
+    },
+  );
+
+  it.each(["//evil.example/x?a=1", "//meta:8080/health"])(
+    "proxyToStudio sends %s to Studio's origin, not to the host in the path",
+    async (path) => {
+      seen = [];
+      const response = await proxyToStudio(studioUrl, new Request(`http://hattisar.test${path}`));
+      expect(response.status).toBe(200);
+      expect(seen.map((s) => s.url)).toEqual([path]);
+      expect(seen[0]?.headers.host).toBe(new URL(studioUrl).host);
+    },
+  );
 });

@@ -38,12 +38,11 @@ export function createStudioHandler({ config, projects, pgMetaLog }: StudioDeps)
   }
 
   return async (c: Context<AuthEnv>): Promise<Response> => {
-    const { user } = c.var.session;
     const route = classifyRequest(c.req.method, new URL(c.req.url).pathname);
+    // requireSession lets public paths through without a session, so this check comes first.
+    if (route.kind === "hattisar-public" || route.kind === "hattisar") return c.notFound();
+    const { user } = c.var.session;
     switch (route.kind) {
-      case "hattisar-public":
-      case "hattisar":
-        return c.notFound();
       case "not-found":
         return c.json(PROJECT_NOT_FOUND, 404);
       case "redirect":
@@ -74,6 +73,8 @@ export function createStudioHandler({ config, projects, pgMetaLog }: StudioDeps)
         return c.json(studioProjectDetail(project));
       case "project-databases":
         return c.json(studioDatabases(project));
+      case "run-lints":
+        return c.json([]);
       case "project-types": {
         trace(c, project);
         const result = await generateTypescriptTypes(

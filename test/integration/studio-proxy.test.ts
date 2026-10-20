@@ -9,6 +9,7 @@ let cookie: string;
 function fetchSignedIn(path: string, init: RequestInit = {}): Promise<Response> {
   const headers = new Headers(init.headers);
   headers.set("cookie", cookie);
+  if (!headers.has("origin")) headers.set("origin", baseUrl);
   return fetch(`${baseUrl}${path}`, { ...init, headers });
 }
 
@@ -116,6 +117,30 @@ describe("Studio proxy with two projects on the shared box", () => {
     const { types } = (await response.json()) as { types: string };
     expect(types).toContain("beta:");
     expect(types).not.toContain("alpha:");
+  });
+
+  it("answers run-lints with no lints, so Studio does not retry it", async () => {
+    const response = await fetchSignedIn("/api/platform/projects/spike-b/run-lints");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual([]);
+    expect((await fetchSignedIn("/api/platform/projects/nope/run-lints")).status).toBe(404);
+  });
+
+  it.each(["//meta:8080/health", "//docker-proxy:2375/containers/json", "/%2F%2Fmeta:8080/health"])(
+    "never fetches the host named in %s",
+    async (path) => {
+      const response = await fetchSignedIn(path);
+      expect(response.status).toBe(404);
+    },
+  );
+
+  it("refuses a cross-origin POST that would run SQL", async () => {
+    const response = await fetchSignedIn("/api/platform/pg-meta/spike-b/query", {
+      method: "POST",
+      headers: { origin: "http://evil.example", "content-type": "text/plain" },
+      body: JSON.stringify({ query: "select 1" }),
+    });
+    expect(response.status).toBe(403);
   });
 
   it.each([
