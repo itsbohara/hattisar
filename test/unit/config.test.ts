@@ -43,6 +43,8 @@ describe("loadConfig", () => {
       pgMetaCryptoKey: required.PG_META_CRYPTO_KEY,
       postgresPassword: required.POSTGRES_PASSWORD,
       pooler: { tenantId: "hattisar", portSession: 54322, portTransaction: 6543 },
+      debug: false,
+      spikeProjects: [],
     });
   });
 
@@ -143,5 +145,40 @@ describe("loadConfig", () => {
         );
       },
     );
+  });
+
+  it("reads HATTISAR_DEBUG", () => {
+    expect(load({ HATTISAR_DEBUG: "true" }).debug).toBe(true);
+  });
+
+  describe("HATTISAR_SPIKE_PROJECTS", () => {
+    const project = {
+      ref: "spike-a",
+      name: "Spike A",
+      dbName: "spike_a",
+      boxName: "shared",
+      box: { host: "db", port: 5432, adminUser: "supabase_admin", adminPassword: "hunter2" },
+    };
+
+    it("parses a JSON array of projects", () => {
+      const spikeProjects = load({
+        HATTISAR_SPIKE_PROJECTS: JSON.stringify([project]),
+      }).spikeProjects;
+      expect(spikeProjects).toEqual([project]);
+    });
+
+    it.each([
+      ["not JSON", "{"],
+      ["not an array", JSON.stringify(project)],
+      ["a missing field", JSON.stringify([{ ...project, dbName: undefined }])],
+      ["a bad port", JSON.stringify([{ ...project, box: { ...project.box, port: 0 } }])],
+      ["a duplicate ref", JSON.stringify([project, project])],
+    ])("rejects %s without echoing the value", (_label, value) => {
+      const message = errorOf({ HATTISAR_SPIKE_PROJECTS: value }).message;
+      expect(message).toBe(
+        "HATTISAR_SPIKE_PROJECTS must be a JSON array of projects with unique refs",
+      );
+      expect(message).not.toContain("hunter2");
+    });
   });
 });

@@ -1,3 +1,5 @@
+import type { SpikeProject } from "./studio/projects-source.js";
+
 export interface PortRange {
   start: number;
   end: number;
@@ -26,6 +28,8 @@ export interface Config {
     portSession: number;
     portTransaction: number;
   };
+  debug: boolean;
+  spikeProjects: SpikeProject[];
 }
 
 export class ConfigError extends Error {
@@ -105,6 +109,20 @@ class EnvReader {
     return { start, end };
   }
 
+  spikeProjects(name: string): SpikeProject[] {
+    const value = this.raw(name);
+    if (value === undefined) return [];
+    const projects = parseJson(value);
+    if (
+      !Array.isArray(projects) ||
+      !projects.every(isSpikeProject) ||
+      new Set(projects.map((project) => project.ref)).size !== projects.length
+    ) {
+      throw new ConfigError(`${name} must be a JSON array of projects with unique refs`);
+    }
+    return projects;
+  }
+
   url(name: string, fallback: string): string {
     const value = this.string(name, fallback);
     if (!URL.canParse(value) || !/^https?:$/.test(new URL(value).protocol)) {
@@ -120,6 +138,35 @@ function parseInteger(value: string): number | undefined {
 
 function isPort(value: number): boolean {
   return value >= 1 && value <= 65535;
+}
+
+function parseJson(value: string): unknown {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return undefined;
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value !== "";
+}
+
+function isSpikeProject(value: unknown): value is SpikeProject {
+  if (!isRecord(value) || !isRecord(value.box)) return false;
+  const { box } = value;
+  return (
+    [value.ref, value.name, value.dbName, value.boxName, box.host, box.adminUser].every(
+      isNonEmptyString,
+    ) &&
+    typeof box.adminPassword === "string" &&
+    Number.isInteger(box.port) &&
+    isPort(box.port as number)
+  );
 }
 
 export function loadConfig(env: Env = process.env): Config {
@@ -147,5 +194,7 @@ export function loadConfig(env: Env = process.env): Config {
       portSession: read.port("POOLER_PORT_SESSION", 54322),
       portTransaction: read.port("POOLER_PORT_TRANSACTION", 6543),
     },
+    debug: read.boolean("HATTISAR_DEBUG", false),
+    spikeProjects: read.spikeProjects("HATTISAR_SPIKE_PROJECTS"),
   };
 }
