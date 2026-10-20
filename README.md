@@ -138,7 +138,8 @@ Before exposing it:
 
 - **TLS** — put hattisar behind a reverse proxy that terminates HTTPS (Caddy, nginx, Traefik) and
   set `HATTISAR_COOKIE_SECURE=true`. Compose publishes `HATTISAR_PORT` on every interface; firewall
-  it so only the proxy reaches it.
+  it so only the proxy reaches it. The proxy must pass the browser's `Host` header through
+  unchanged: hattisar compares it with `Origin` on every POST, and answers a mismatch with 403.
 - **Public host** — set `HATTISAR_PUBLIC_HOST` to the name apps use to reach the boxes; it goes
   into every connection string.
 - **Pooler ports** — 54322 and 6543 are published for apps on the shared box. Close them if no
@@ -159,7 +160,8 @@ Upgrading the pinned Studio and Postgres images is covered in
 ## Security model
 
 - **One admin.** A single user logs in (scrypt password hash, `HttpOnly` session cookie, 7-day
-  sessions, 5 failed logins per 15 minutes, `Origin`/`Referer` check on every form post). Every
+  sessions, 5 failed logins per 15 minutes, `Origin`/`Referer` check on every state-changing request,
+  Studio's API calls included). Every
   project-scoped path goes through one authorization check; in v1 the admin sees everything.
 - **One owner role per project.** Creating a project creates `hs_<db>_owner` with a random
   password and a database it owns. `CONNECT` and `TEMPORARY` on the database are revoked from
@@ -173,8 +175,9 @@ Upgrading the pinned Studio and Postgres images is covered in
   chose for the ref in the URL; a ref it cannot resolve is a 404, and anything that slips past
   lands on a database that does not exist.
 - **Shared box = development only.** All its projects share one Postgres server and one superuser,
-  and every role can connect to its `postgres` database (Postgres grants that to `PUBLIC`; owner
-  roles get no privileges there). Use dedicated boxes for production.
+  and every role can connect to its `postgres`, `_supabase` and `template1` databases (Postgres
+  grants `CONNECT` on them to `PUBLIC`; owner roles cannot create anything there). Use dedicated
+  boxes for production.
 - **Secrets at rest** are encrypted with AES-256-GCM under `HATTISAR_SECRET_KEY` and never written
   to logs, error messages or command lines.
 - **Internal services stay internal.** Studio, postgres-meta and the shared box publish no host
@@ -217,14 +220,17 @@ acceptable.
 
 - **Single admin.** No multiple users or per-project access in v1.
 - **Pooler for the shared box only.** Projects on other boxes get direct connection strings.
-- **Shared box `postgres` database** is reachable by every role on that box (see Security model).
+- **Shared box `postgres`, `_supabase` and `template1` databases** are reachable by every role on
+  that box (see Security model).
 - **Superuser-only Studio actions** fail, because Studio connects as the project's owner.
 - **Studio features hattisar does not serve** are hidden or answered with 404: Authentication,
-  Storage, Edge Functions, Realtime, AI assistance, lints/advisors, migrations, MCP.
+  Storage, Edge Functions, Realtime, AI assistance, migrations, MCP. Advisors always show no lints.
 - **SQL snippets are shared.** Studio keeps saved snippets in one folder, so they appear in every
   project's SQL editor and run against whichever project is open.
 - **Backups are not PITR.** A restore needs free disk in `HATTISAR_DATA_DIR` about the size of the
-  dump. Objects you added yourself to a project's `extensions` schema are not restored.
+  dump. Objects you added yourself to a project's `extensions` schema are not restored. A backup
+  to S3 is uploaded in 5 MiB parts, at most 10,000 of them, so a dump larger than about 48 GB
+  fails; use the download instead.
 - **Managed boxes:** the box admin password is in the container's environment (visible to anyone
   with Docker access). Postgres's encryption root key lives in the container, not the volume, so
   recreating a managed box's container by hand (for example to upgrade its image) loses

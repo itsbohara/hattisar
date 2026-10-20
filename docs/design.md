@@ -210,9 +210,9 @@ authentication and fail on `CONNECT`, instead of failing authentication — Supa
 failures per tenant/IP and would otherwise lock out every project on the shared box. Revoked
 `CONNECT` on its only database is what stops the role.
 
-Known limitation (shared box): every role can connect to the box's `postgres` database because
-Postgres grants `CONNECT` on it to `PUBLIC`; owner roles get no privileges there. Production
-projects belong on dedicated boxes.
+Known limitation (shared box): every role can connect to the box's `postgres`, `_supabase` and
+`template1` databases because Postgres grants `CONNECT` on them to `PUBLIC`; owner roles cannot
+create anything there. Production projects belong on dedicated boxes.
 **Restore:** reverse every step. **Purge:** on demand from Trash or automatically after
 `HATTISAR_PURGE_AFTER_DAYS` (default 7, checked hourly): `DROP DATABASE … WITH (FORCE)`, `DROP
 ROLE`, delete registry rows (backups in S3 are kept; retention never touches a purged project's
