@@ -16,8 +16,8 @@
     "test": "vitest run",
     "test:it": "HATTISAR_IT=1 vitest run --config vitest.integration.config.ts",
     "test:e2e": "playwright test --pass-with-no-tests",
-    "stack:up": "sh scripts/dev-env.sh && docker compose -f docker/compose.yml -f docker/compose.dev.yml up -d --build --wait",
-    "stack:down": "docker compose -f docker/compose.yml -f docker/compose.dev.yml down"
+    "stack:up": "sh scripts/dev-env.sh && docker compose -f docker/compose.yml -f docker/compose.dev.yml --profile s3-test up -d --build --wait",
+    "stack:down": "docker compose -f docker/compose.yml -f docker/compose.dev.yml --profile s3-test down"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1152.0",

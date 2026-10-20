@@ -3,6 +3,11 @@ services:
     build:
       target: dev
     command: ["pnpm", "dev"]
+    # Lets `up --wait` accept the one-shot bucket job exiting; absent without the s3-test profile.
+    depends_on:
+      s3-bucket:
+        condition: service_completed_successfully
+        required: false
     # Only source and package files are mounted: node_modules stays in the image so
     # macOS-built native modules never reach the Linux container.
     volumes:
@@ -10,3 +15,45 @@ services:
       - ../sql:/app/sql:ro
       - ../package.json:/app/package.json:ro
       - ../tsconfig.json:/app/tsconfig.json:ro
+
+  # S3-compatible storage for local development and the backup tests. Not reachable from the host.
+  s3:
+    image: rustfs/rustfs:1.0.1
+    profiles: [s3-test]
+    restart: unless-stopped
+    environment:
+      RUSTFS_ACCESS_KEY: ${S3_TEST_ACCESS_KEY:?S3_TEST_ACCESS_KEY is required, run scripts/dev-env.sh}
+      RUSTFS_SECRET_KEY: ${S3_TEST_SECRET_KEY:?S3_TEST_SECRET_KEY is required, run scripts/dev-env.sh}
+    security_opt:
+      - "no-new-privileges:true"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/health"]
+      interval: 2s
+      timeout: 10s
+      retries: 15
+    volumes:
+      - s3-test-data:/data
+
+  # Creates the test bucket with curl's SigV4 signing; a 409 means it already exists.
+  s3-bucket:
+    image: rustfs/rustfs:1.0.1
+    profiles: [s3-test]
+    restart: "no"
+    depends_on:
+      s3:
+        condition: service_healthy
+    environment:
+      S3_TEST_ACCESS_KEY: ${S3_TEST_ACCESS_KEY}
+      S3_TEST_SECRET_KEY: ${S3_TEST_SECRET_KEY}
+      S3_TEST_BUCKET: ${S3_TEST_BUCKET:-hattisar-test}
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - >
+        code=$$(curl -s -o /dev/null -w '%{http_code}' -X PUT
+        --aws-sigv4 aws:amz:us-east-1:s3 --user "$$S3_TEST_ACCESS_KEY:$$S3_TEST_SECRET_KEY"
+        "http://s3:9000/$$S3_TEST_BUCKET");
+        case "$$code" in 200|409) echo "bucket $$S3_TEST_BUCKET ready";; *) echo "bucket create failed: $$code"; exit 1;; esac
+
+volumes:
+  s3-test-data:
