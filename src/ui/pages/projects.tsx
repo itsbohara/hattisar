@@ -464,7 +464,7 @@ export function ProjectPage({
         ) : (
           <p class="alert alert-error" role="alert">
             The stored owner password cannot be decrypted, so the connection strings cannot be
-            shown. Rotate the password to set a new one.
+            shown. If the stored secret is corrupt, rotating the password sets a new one.
           </p>
         )}
         <form method="post" action={`${base}/rotate`} class="form-inline">

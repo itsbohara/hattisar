@@ -210,4 +210,16 @@ describe("removeStaleRestoreDirs", () => {
       rmSync(dataDir, { recursive: true, force: true });
     }
   });
+
+  it("warns and does not throw when the data directory cannot be listed", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await expect(
+        removeStaleRestoreDirs(join(tmpdir(), "hattisar-missing-dir")),
+      ).resolves.toBeUndefined();
+      expect(warn).toHaveBeenCalledOnce();
+    } finally {
+      warn.mockRestore();
+    }
+  });
 });

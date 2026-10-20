@@ -1,3 +1,4 @@
+import type { Dirent } from "node:fs";
 import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import pg from "pg";
@@ -51,7 +52,15 @@ async function inWorkDir<T>(dataDir: string, run: (dir: string) => Promise<T>): 
 }
 
 export async function removeStaleRestoreDirs(dataDir: string): Promise<void> {
-  const entries = await readdir(dataDir, { withFileTypes: true });
+  let entries: Dirent[];
+  try {
+    entries = await readdir(dataDir, { withFileTypes: true });
+  } catch (error) {
+    console.warn(
+      `hattisar: could not list ${dataDir} for stale restore directories: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return;
+  }
   for (const entry of entries) {
     if (!entry.isDirectory() || !entry.name.startsWith(WORK_DIR_PREFIX)) continue;
     try {
