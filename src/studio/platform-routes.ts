@@ -20,21 +20,16 @@ export function studioProjectDetail(project: Project) {
   return { ...studioProject(project), connectionString: "", restUrl: "" };
 }
 
-export interface PublicEndpoint {
-  host: string;
-  port: number;
-}
-
-export function studioDatabases(project: Project, endpoint: PublicEndpoint) {
+export function studioDatabases(project: Project) {
   return [
     {
       cloud_provider: "localhost",
       connectionString: "",
       connection_string_read_only: "",
-      db_host: endpoint.host,
+      db_host: project.box.publicHost,
       db_name: project.dbName,
-      db_port: endpoint.port,
-      db_user: project.box.adminUser,
+      db_port: project.box.publicPort,
+      db_user: project.ownerRole,
       identifier: project.ref,
       inserted_at: "",
       region: "local",

@@ -73,10 +73,7 @@ export function createStudioHandler({ config, projects, pgMetaLog }: StudioDeps)
       case "platform-project":
         return c.json(studioProjectDetail(project));
       case "project-databases":
-        // Spike: every project is on the shared box, published through the pooler's session port.
-        return c.json(
-          studioDatabases(project, { host: config.publicHost, port: config.pooler.portSession }),
-        );
+        return c.json(studioDatabases(project));
       case "project-types": {
         trace(c, project);
         const result = await generateTypescriptTypes(
