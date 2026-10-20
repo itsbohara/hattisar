@@ -192,8 +192,17 @@ box admin.
 
 **Soft delete (M2)** — confirm by typing the ref: `REVOKE CONNECT … FROM <owner>`; terminate
 backends on the db; `ALTER DATABASE <db> RENAME TO <db>__deleted_<YYYYMMDD>` (suffix `_2`, `_3`…
-on collision); `ALTER ROLE <owner> NOLOGIN`; status `deleted`, `deleted_at`, `deleted_db_name`.
-Hidden from Studio and the project list; shown under Trash.
+on collision); status `deleted`, `deleted_at`, `deleted_db_name`. Hidden from Studio and the
+project list; shown under Trash.
+
+The owner role **keeps LOGIN**. Apps still running against a deleted project then pass pooler
+authentication and fail on `CONNECT`, instead of failing authentication — Supavisor counts auth
+failures per tenant/IP and would otherwise lock out every project on the shared box. Revoked
+`CONNECT` on its only database is what stops the role.
+
+Known limitation (shared box): every role can connect to the box's `postgres` database because
+Postgres grants `CONNECT` on it to `PUBLIC`; owner roles get no privileges there. Production
+projects belong on dedicated boxes.
 **Restore:** reverse every step. **Purge:** on demand from Trash or automatically after
 `HATTISAR_PURGE_AFTER_DAYS` (default 7, checked hourly): `DROP DATABASE … WITH (FORCE)`, `DROP
 ROLE`, delete registry rows (backups in S3 are kept; retention never touches a purged project's
