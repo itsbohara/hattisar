@@ -51,3 +51,7 @@ export function prepareSpikeStack(): void {
   createSpikeDatabase("spike_b", "beta");
   compose(["up", "-d", "--wait", "hattisar"]);
 }
+
+export function dbLogSince(since: string): string {
+  return compose(["logs", "db", "--since", since, "--no-log-prefix"]);
+}

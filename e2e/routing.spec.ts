@@ -1,4 +1,5 @@
 import { expect, type Page, type Request, type Response, test } from "@playwright/test";
+import { dbLogSince } from "../test/spike-stack.js";
 import { studioScreenPaths } from "./studio-screens.js";
 
 const PROJECT = { ref: "spike-b", db: "spike_b", table: "beta" };
@@ -37,6 +38,7 @@ function apiPattern({ method, path }: ApiCall): string {
 
 test("every Studio screen for project B reads only B's database", async ({ page }, testInfo) => {
   test.setTimeout(300_000);
+  const startedAt = new Date().toISOString();
 
   const calls: ApiCall[] = [];
   const pending: Promise<void>[] = [];
@@ -94,15 +96,30 @@ test("every Studio screen for project B reads only B's database", async ({ page 
   for (const path of studioScreenPaths(PROJECT.ref)) await visit(path);
 
   await visit(`/project/${PROJECT.ref}/editor`);
-  await expect(page.getByText(PROJECT.table, { exact: true }).first()).toBeVisible();
+  const tables = page.getByTestId("tables-list");
+  await expect(
+    tables.getByRole("button", { name: `View ${PROJECT.table}`, exact: true }),
+  ).toBeVisible();
+  await expect(
+    tables.getByRole("button", { name: `View ${OTHER_TABLE}`, exact: true }),
+  ).toHaveCount(0);
   await expect(page.getByText(OTHER_TABLE, { exact: true })).toHaveCount(0);
 
   await Promise.all(pending);
   const pgMetaCalls = calls.filter((call) => PG_META.test(call.path));
   const failures = calls.filter((call) => call.status >= 400);
+  // A request that reaches postgres-meta without hattisar's header never shows in hattisar's log;
+  // it falls back to the nonexistent default db, which Postgres logs as FATAL.
+  const bypasses = dbLogSince(startedAt)
+    .split("\n")
+    .filter((line) => line.includes(NO_PROJECT_DB));
   const inventory = [...new Set(calls.map(apiPattern))].sort();
   await testInfo.attach("api-inventory.json", {
-    body: JSON.stringify({ inventory, failures, pgMetaRequests, pgMetaLog: entries }, null, 2),
+    body: JSON.stringify(
+      { inventory, failures, pgMetaRequests, pgMetaLog: entries, bypasses },
+      null,
+      2,
+    ),
     contentType: "application/json",
   });
 
@@ -111,5 +128,6 @@ test("every Studio screen for project B reads only B's database", async ({ page 
     [],
   );
   expect(pgMetaCalls.filter((call) => call.status >= 500)).toEqual([]);
-  expect(pgMetaCalls.filter((call) => call.body?.includes(NO_PROJECT_DB))).toEqual([]);
+  expect(failures.filter((call) => call.body?.includes(NO_PROJECT_DB))).toEqual([]);
+  expect(bypasses).toEqual([]);
 });

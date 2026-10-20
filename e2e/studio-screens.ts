@@ -13,6 +13,8 @@ export const STUDIO_SCREENS = [
   "database/indexes",
   "database/types",
   "database/schemas",
+  // These three make no pg-meta calls in the pinned Studio: kept for the API inventory, not as
+  // routing proof.
   "settings/general",
   "advisors/security",
   "advisors/performance",
