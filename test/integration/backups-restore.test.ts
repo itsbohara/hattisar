@@ -97,7 +97,6 @@ beforeAll(async () => {
     cookie,
     ref,
     `create table public.widgets (id int primary key, token uuid default extensions.gen_random_uuid());
-     alter table public.widgets owner to ${ownerRole};
      insert into public.widgets (id) values (1), (2)`,
   );
   if (table.status !== 200) throw new Error(`creating ${ref}.widgets failed`);

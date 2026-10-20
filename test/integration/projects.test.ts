@@ -6,6 +6,7 @@ import {
   createProject,
   dropProject,
   fetchWith,
+  postQuery,
   sharedBoxId,
 } from "../helpers/projects.js";
 import { postForm, signIn } from "../helpers/session.js";
@@ -141,6 +142,31 @@ describe("projects on the shared box", () => {
       expect(rows).toEqual([{ current_user: ownerRole(refA), current_database: dbName(refA) }]);
     },
   );
+
+  it("runs Studio's queries as the owner, so the app can use what Studio creates", async () => {
+    const created = await postQuery(
+      baseUrl,
+      cookie,
+      refA,
+      "create table public.studio_made (id int primary key); select current_user",
+    );
+    expect(created.status).toBe(200);
+    expect(await created.json()).toEqual([{ current_user: ownerRole(refA) }]);
+    const tableOwner = sharedBoxSql(
+      "SELECT tableowner FROM pg_tables WHERE schemaname = 'public' AND tablename = 'studio_made'",
+      {},
+      dbName(refA),
+    );
+    expect(tableOwner.trim()).toBe(ownerRole(refA));
+
+    const { session } = await poolerStrings(refA);
+    const rows = await withClient(session, async (client) => {
+      await client.query("insert into public.studio_made (id) values (1)");
+      await client.query("alter table public.studio_made add column note text");
+      return (await client.query("select id, note from public.studio_made")).rows;
+    });
+    expect(rows).toEqual([{ id: 1, note: null }]);
+  });
 
   it("keeps each owner out of every other project's database", async () => {
     expect((await create(refB)).status).toBe(302);

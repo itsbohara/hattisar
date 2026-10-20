@@ -124,7 +124,7 @@ describe("pg-meta pass-through", () => {
     const header = seen[0]?.headers["x-connection-encrypted"];
     expect(typeof header).toBe("string");
     expect(CryptoJS.AES.decrypt(header as string, cryptoKey).toString(CryptoJS.enc.Utf8)).toBe(
-      "postgresql://supabase_admin:pw@db:5432/spike_b",
+      "postgresql://hs_spike_b_owner:owner-pw@db:5432/spike_b",
     );
     expect(seen[0]?.url).toBe("/api/platform/pg-meta/spike-b/tables?included_schemas=public");
   });
@@ -138,7 +138,7 @@ describe("pg-meta pass-through", () => {
     }
     const header = seen[0]?.headers["x-connection-encrypted"] as string;
     expect(CryptoJS.AES.decrypt(header, cryptoKey).toString(CryptoJS.enc.Utf8)).toBe(
-      "postgresql://supabase_admin:pw@db:5432/spike_b?sslmode=require",
+      "postgresql://hs_spike_b_owner:owner-pw@db:5432/spike_b?sslmode=require",
     );
   });
 
