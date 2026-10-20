@@ -1,6 +1,7 @@
 import { serve } from "@hono/node-server";
 import { createApp, projectServiceDeps } from "./app.js";
 import { seedAdmin } from "./auth/seed.js";
+import { failInterruptedBackups } from "./backups/service.js";
 import { seedSharedBox } from "./boxes/shared.js";
 import { type Config, ConfigError, loadConfig } from "./config.js";
 import { Scheduler } from "./jobs.js";
@@ -32,6 +33,7 @@ async function seededRegistry(config: Config): Promise<Registry> {
   try {
     await seedAdmin(registry, config);
     seedSharedBox(registry, config, deriveSecretKey(config.secretKey));
+    failInterruptedBackups(registry);
     return registry;
   } catch (error) {
     registry.close();

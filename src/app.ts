@@ -4,6 +4,7 @@ import type { AuthEnv } from "./auth/middleware.js";
 import { requireSameOrigin, requireSession } from "./auth/middleware.js";
 import { LoginRateLimiter } from "./auth/rate-limit.js";
 import { authRoutes } from "./auth/routes.js";
+import { backupRoutes } from "./backups/routes.js";
 import { withAdminClient } from "./boxes/admin-client.js";
 import { checkBox } from "./boxes/e1.js";
 import { boxRoutes } from "./boxes/routes.js";
@@ -71,6 +72,7 @@ export function createApp(config: Config, registry: Registry): Hono<AuthEnv> {
   const projectDeps = projectServiceDeps(config, registry);
   app.route("/", projectRoutes(projectDeps));
   app.route("/", trashRoutes({ ...projectDeps, purgeAfterDays: config.purgeAfterDays }));
+  app.route("/", backupRoutes({ db: registry, secretKey, pgBinDir: config.pgBinDir }));
   if (config.debug) {
     app.get("/_hs/debug/pg-meta-log", (c) => c.json(pgMetaLog.recent()));
   }

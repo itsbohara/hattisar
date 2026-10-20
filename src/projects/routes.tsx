@@ -1,7 +1,10 @@
 import { type Context, Hono } from "hono";
 import { canAccess } from "../auth/access.js";
 import type { AuthEnv } from "../auth/middleware.js";
+import { isS3Configured } from "../backups/s3-settings.js";
+import { listBackups } from "../registry/backups.js";
 import { type Box, getBoxById, getSharedBox, listBoxes } from "../registry/boxes.js";
+import type { Registry } from "../registry/db.js";
 import { getProjectByRef, listProjects, type Project } from "../registry/projects.js";
 import { renderPage } from "../ui/layout.js";
 import {
@@ -32,31 +35,62 @@ function boxIdFrom(value: string): number | undefined {
   return /^\d+$/.test(value) ? Number(value) : undefined;
 }
 
+export interface ProjectAndBox {
+  project: Project;
+  box: Box;
+}
+
+// Unknown, deleted and forbidden projects all look the same: not found.
+export function accessibleProject(db: Registry, c: Context<AuthEnv>): ProjectAndBox | undefined {
+  const project = getProjectByRef(db, c.req.param("ref") ?? "");
+  if (project?.status !== "active" || !canAccess(c.var.session.user, project)) return undefined;
+  const box = getBoxById(db, project.boxId);
+  return box && { project, box };
+}
+
+export function renderProjectDetail(
+  c: Context<AuthEnv>,
+  { db, secretKey }: { db: Registry; secretKey: Buffer },
+  { project, box }: ProjectAndBox,
+  notice?: ProjectPageNotice,
+  status: 200 | 400 | 502 = 200,
+) {
+  const strings = ownerConnectionStrings(box, project, ownerPassword(project, secretKey));
+  return renderPage(
+    c,
+    <ProjectPage
+      project={project}
+      box={box}
+      strings={strings}
+      backups={listBackups(db, project.id)}
+      s3Configured={isS3Configured(db)}
+      notice={notice}
+    />,
+    status,
+  );
+}
+
+const QUERY_NOTICES: Record<string, string> = {
+  rotated: "Password rotated. The connection strings below use the new one.",
+  "backed-up": "Backup finished.",
+  "backup-deleted": "Backup deleted.",
+};
+
+function queryNotice(c: Context<AuthEnv>): ProjectPageNotice | undefined {
+  const key = Object.keys(QUERY_NOTICES).find((name) => c.req.query(name) !== undefined);
+  return key === undefined ? undefined : { kind: "ok", message: QUERY_NOTICES[key] as string };
+}
+
 export function projectRoutes(deps: ProjectServiceDeps): Hono<AuthEnv> {
-  const { db, secretKey } = deps;
+  const { db } = deps;
   const app = new Hono<AuthEnv>();
-
-  // Unknown, deleted and forbidden projects all look the same: not found.
-  function accessible(c: Context<AuthEnv>): { project: Project; box: Box } | undefined {
-    const project = getProjectByRef(db, c.req.param("ref") ?? "");
-    if (project?.status !== "active" || !canAccess(c.var.session.user, project)) return undefined;
-    const box = getBoxById(db, project.boxId);
-    return box && { project, box };
-  }
-
-  function renderDetail(
+  const accessible = (c: Context<AuthEnv>) => accessibleProject(db, c);
+  const renderDetail = (
     c: Context<AuthEnv>,
-    { project, box }: { project: Project; box: Box },
+    found: ProjectAndBox,
     notice?: ProjectPageNotice,
-    status: 200 | 400 | 502 = 200,
-  ) {
-    const strings = ownerConnectionStrings(box, project, ownerPassword(project, secretKey));
-    return renderPage(
-      c,
-      <ProjectPage project={project} box={box} strings={strings} notice={notice} />,
-      status,
-    );
-  }
+    status?: 200 | 400 | 502,
+  ) => renderProjectDetail(c, deps, found, notice, status);
 
   function renderNew(c: Context<AuthEnv>, values: NewProjectValues, problems?: string[]) {
     return renderPage(
@@ -91,14 +125,7 @@ export function projectRoutes(deps: ProjectServiceDeps): Hono<AuthEnv> {
   app.get(`${PROJECTS_PAGE}/:ref`, (c) => {
     const found = accessible(c);
     if (!found) return c.notFound();
-    const notice: ProjectPageNotice | undefined =
-      c.req.query("rotated") === undefined
-        ? undefined
-        : {
-            kind: "ok",
-            message: "Password rotated. The connection strings below use the new one.",
-          };
-    return renderDetail(c, found, notice);
+    return renderDetail(c, found, queryNotice(c));
   });
 
   app.post(`${PROJECTS_PAGE}/:ref/name`, async (c) => {
