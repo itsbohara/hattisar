@@ -119,6 +119,9 @@ describe("Studio proxy with two spike projects on the shared box", () => {
     ["POST", "/api/platform/pg-meta/nope/query"],
     ["GET", "/api/platform/pg-meta/nope/tables"],
     ["GET", "/api/platform/projects/nope"],
+    ["GET", "/api/platform/projects/nope/databases"],
+    ["GET", "/api/v1/projects/nope/types/typescript"],
+    ["GET", "/api/v1/projects/nope/api-keys"],
   ])("answers %s %s for an unknown ref with 404", async (method, path) => {
     const response = await fetch(`${baseUrl}${path}`, {
       method,
@@ -126,6 +129,61 @@ describe("Studio proxy with two spike projects on the shared box", () => {
       body: method === "POST" ? JSON.stringify({ query: "select 1" }) : undefined,
     });
     expect(response.status).toBe(404);
+  });
+
+  it("describes the project's database", async () => {
+    const response = await fetch(`${baseUrl}/api/platform/projects/spike-b/databases`);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual([
+      expect.objectContaining({
+        identifier: "spike-b",
+        db_name: "spike_b",
+        db_user: "supabase_admin",
+        status: "ACTIVE_HEALTHY",
+      }),
+    ]);
+  });
+
+  it("generates TypeScript types from the project's database", async () => {
+    const response = await fetch(`${baseUrl}/api/v1/projects/spike-b/types/typescript`);
+    expect(response.status).toBe(200);
+    const { types } = (await response.json()) as { types: string };
+    expect(types).toContain("beta:");
+    expect(types).not.toContain("alpha:");
+  });
+
+  it.each([
+    ["POST", "/api/platform/projects/spike-b/run-lints"],
+    ["GET", "/api/v1/projects/spike-b/database/migrations"],
+    ["POST", "/api/mcp"],
+  ])("refuses %s %s, which only reach Studio's own connection", async (method, path) => {
+    const response = await fetch(`${baseUrl}${path}`, { method });
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: { message: "Not available in hattisar" } });
+  });
+
+  it("fails closed when Studio or meta are reached without a project connection", () => {
+    const probe = `
+      const json = { "content-type": "application/json" };
+      const calls = [
+        ["http://meta:8080/tables", {}],
+        ["http://studio:3000/api/platform/pg-meta/default/query",
+          { method: "POST", headers: json, body: JSON.stringify({ query: "select 1" }) }],
+      ];
+      Promise.all(calls.map(async ([url, init]) => {
+        const response = await fetch(url, init);
+        return { status: response.status, body: await response.text() };
+      })).then((results) => console.log(JSON.stringify(results)));
+    `;
+    const results = JSON.parse(compose(["exec", "-T", "hattisar", "node", "-e", probe])) as {
+      status: number;
+      body: string;
+    }[];
+    expect(results).toHaveLength(2);
+    for (const { status, body } of results) {
+      expect(status).toBeGreaterThanOrEqual(400);
+      expect(body).toContain('database \\"hattisar_no_project\\" does not exist');
+    }
   });
 
   it("disables AI routes", async () => {
