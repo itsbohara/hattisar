@@ -10,7 +10,9 @@ import { boxRoutes } from "./boxes/routes.js";
 import type { Config } from "./config.js";
 import { refreshSharedPooler } from "./projects/pooler.js";
 import { projectRoutes } from "./projects/routes.js";
+import type { ProjectServiceDeps } from "./projects/service.js";
 import { RegistryProjectSource } from "./projects/studio-source.js";
+import { trashRoutes } from "./projects/trash-routes.js";
 import type { Registry } from "./registry/db.js";
 import { deriveSecretKey } from "./registry/secrets.js";
 import { PgMetaLog } from "./studio/pg-meta.js";
@@ -27,6 +29,16 @@ const INTERNAL_ERROR_BODY = { error: { message: "Internal error" } };
 function logUnexpected(method: string, path: string, error: Error): void {
   const frames = (error.stack ?? "").split("\n").filter((line) => /^\s+at /.test(line));
   console.error([`hattisar: ${error.name} on ${method} ${path}`, ...frames].join("\n"));
+}
+
+// Shared by the HTTP routes and the hourly purge job in main.ts.
+export function projectServiceDeps(config: Config, registry: Registry): ProjectServiceDeps {
+  return {
+    db: registry,
+    secretKey: deriveSecretKey(config.secretKey),
+    admin: withAdminClient,
+    refreshPooler: refreshSharedPooler,
+  };
 }
 
 export function createApp(config: Config, registry: Registry): Hono<AuthEnv> {
@@ -61,15 +73,9 @@ export function createApp(config: Config, registry: Registry): Hono<AuthEnv> {
   );
   app.route("/", uiRoutes());
   app.route("/", boxRoutes({ db: registry, secretKey, check: checkBox }));
-  app.route(
-    "/",
-    projectRoutes({
-      db: registry,
-      secretKey,
-      admin: withAdminClient,
-      refreshPooler: refreshSharedPooler,
-    }),
-  );
+  const projectDeps = projectServiceDeps(config, registry);
+  app.route("/", projectRoutes(projectDeps));
+  app.route("/", trashRoutes({ ...projectDeps, purgeAfterDays: config.purgeAfterDays }));
   if (config.debug) {
     app.get("/_hs/debug/pg-meta-log", (c) => c.json(pgMetaLog.recent()));
   }
