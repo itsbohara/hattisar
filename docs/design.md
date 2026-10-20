@@ -96,7 +96,7 @@ sidebar entries for Authentication, Storage, Edge Functions and Realtime; the sc
 
 Read JSON body `{query, parameters?}`. Build the project's admin connection string
 `postgresql://<box admin user>:<pw>@<box host>:<box port>/<db_name>` (URL-encode user and
-password), encrypt (§1), `POST ${PG_META_URL}/query` with headers `Content-Type:
+password; append `?sslmode=<box sslmode>` unless it is `disable`), encrypt (§1), `POST ${PG_META_URL}/query` with headers `Content-Type:
 application/json`, `x-connection-encrypted`, body `{query}` plus `parameters` only if present.
 Response mirroring, same as Studio: pg-meta OK → 200 with its JSON; pg-meta error → its status with
 `{message, formattedError}` (fallback `formattedError = message`); network/parse failure → 500
@@ -139,7 +139,8 @@ the S3 secret key use it. Plaintext secrets never appear in logs or error messag
 **E1 compatibility check** (on register, and before creating a managed box's first project),
 connecting as the admin: `server_version_num ≥ 150000`; roles `supabase_admin`, `anon`,
 `authenticated`, `service_role` exist; extensions `pgcrypto`, `uuid-ossp`, `pg_stat_statements`
-are in `pg_available_extensions`; admin is superuser **or** has `CREATEDB` and `CREATEROLE`.
+are in `pg_available_extensions`; admin is superuser (the H2 baseline needs it for
+`pg_stat_statements` and `ALTER SCHEMA public OWNER`).
 Failure lists every unmet item. A box with projects (any status) cannot be removed.
 
 ## 6. Auth (F3)
