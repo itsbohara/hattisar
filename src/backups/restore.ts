@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import pg from "pg";
 import { type BoxConnection, safeErrorMessage } from "../boxes/admin-client.js";
@@ -17,6 +17,8 @@ import { restoreArchive, writeRestoreList } from "./pg-restore.js";
 import { downloadBackupObject, s3ErrorMessage } from "./s3.js";
 import { loadS3Settings, type S3Settings } from "./s3-settings.js";
 import { type BackupDeps, type BackupOutcome, boxCredentials, NOT_CONFIGURED } from "./service.js";
+
+const WORK_DIR_PREFIX = "restore-";
 
 const RESTORE: ProjectOperation = {
   action: "restore a backup into",
@@ -40,11 +42,25 @@ function restorable(deps: BackupDeps, backup: Backup): S3Settings | string {
 }
 
 async function inWorkDir<T>(dataDir: string, run: (dir: string) => Promise<T>): Promise<T> {
-  const dir = await mkdtemp(join(dataDir, "restore-"));
+  const dir = await mkdtemp(join(dataDir, WORK_DIR_PREFIX));
   try {
     return await run(dir);
   } finally {
     await rm(dir, { recursive: true, force: true });
+  }
+}
+
+export async function removeStaleRestoreDirs(dataDir: string): Promise<void> {
+  const entries = await readdir(dataDir, { withFileTypes: true });
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !entry.name.startsWith(WORK_DIR_PREFIX)) continue;
+    try {
+      await rm(join(dataDir, entry.name), { recursive: true, force: true });
+    } catch (error) {
+      console.warn(
+        `hattisar: could not remove stale ${entry.name}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 }
 

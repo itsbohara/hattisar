@@ -1,9 +1,9 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type pg from "pg";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { restoreIntoProject } from "../../src/backups/restore.js";
+import { removeStaleRestoreDirs, restoreIntoProject } from "../../src/backups/restore.js";
 import { saveS3Settings } from "../../src/backups/s3-settings.js";
 import { type BackupDeps, runBackup } from "../../src/backups/service.js";
 import type { AdminClientRunner } from "../../src/boxes/admin-client.js";
@@ -189,5 +189,25 @@ describe("restoring alongside other lifecycle operations", () => {
         problem: "Can't back up my-app while it is being deleted. Try again when it finishes.",
       });
     });
+  });
+});
+
+describe("removeStaleRestoreDirs", () => {
+  it("removes leftover restore directories and nothing else", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "hattisar-stale-"));
+    try {
+      mkdirSync(join(dataDir, "restore-a"));
+      writeFileSync(join(dataDir, "restore-a", "backup.dump"), "x");
+      mkdirSync(join(dataDir, "restore-b"));
+      mkdirSync(join(dataDir, "other"));
+      writeFileSync(join(dataDir, "registry.db"), "x");
+      writeFileSync(join(dataDir, "restore-note"), "x");
+
+      await removeStaleRestoreDirs(dataDir);
+
+      expect(readdirSync(dataDir).sort()).toEqual(["other", "registry.db", "restore-note"]);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
   });
 });
