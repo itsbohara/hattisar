@@ -18,6 +18,13 @@ Studio image `supabase/studio:2026.10.12-sha-3699278`, read from `apps/studio` s
 | `/api/platform/pg-meta/<ref>/{tables,policies,triggers,extensions,publications,types}` | **Relays** the incoming `x-connection-encrypted` header to postgres-meta (`lib/api/apiHelpers.ts` `constructHeaders`). Header absent → postgres-meta uses its own default DB. |
 | `/api/ai/code/complete`, `/api/ai/sql/generate-v4` | Build the connection from env. Need an OpenAI key. |
 | `GET /api/platform/projects`, `GET /api/platform/projects/<ref>` | Return one hard-coded `DEFAULT_PROJECT`, whatever the ref. |
+| `/api/platform/projects/<ref>/run-lints`, `/api/v1/projects/<ref>/database/migrations`, `/api/mcp*` | Query through Studio's env connection (`lib/api/self-hosted/{lints,migrations,mcp}.ts` → `executeQuery`). Not redirectable. |
+| `/api/v1/projects/<ref>/types/typescript` | `GET ${PG_META_URL}/generators/typescript?...` **without** a connection header → meta's default DB. |
+| `/api/platform/projects/<ref>/databases` | Returns hard-coded connection info for `postgres`. |
+
+**Fail closed.** Studio's `POSTGRES_DB` and meta's `PG_META_DB_NAME` are set to
+`hattisar_no_project`, a database that exists on no box. Any route hattisar does not redirect —
+including ones a future Studio adds — errors instead of reading another project's data.
 
 Encryption: `crypto-js` `AES.encrypt(connectionString, PG_META_CRYPTO_KEY).toString()` (passphrase
 mode, OpenSSL-compatible output). postgres-meta decrypts with the same key.
@@ -55,7 +62,11 @@ Order matters; first match wins.
 | `/api/ai/*` | 404 `{"error":{"message":"AI features are disabled in hattisar"}}` |
 | `GET /api/platform/projects` | Active projects the user may access, Studio shape (§3.1). |
 | `GET /api/platform/projects/:ref` | One project, Studio shape + `connectionString: ""`, `restUrl: ""`. Unknown/deleted/forbidden → 404. |
+| `/api/platform/projects/:ref/run-lints`, `/api/v1/projects/:ref/database/migrations`, `/api/mcp`, `/api/mcp/*` | 404 `{"error":{"message":"Not available in hattisar"}}` |
+| `GET /api/platform/projects/:ref/databases` | hattisar answers: Studio's shape with `identifier` = ref, `db_name`, `db_host`/`db_port` = box public host/port, `db_user` = the project's owner role (admin user until projects have owners), other fields as Studio's. |
+| `GET /api/v1/projects/:ref/types/typescript` | hattisar calls `${PG_META_URL}/generators/typescript` with the same query Studio uses and the project's `x-connection-encrypted`; mirrors Studio's response shape. |
 | `/api/platform/projects/:ref/*` | Unknown/forbidden ref → 404; else pass through. |
+| `/api/v1/projects/:ref/*` | Unknown/forbidden ref → 404; else pass through. |
 | `POST /api/platform/pg-meta/:ref/query` | hattisar handles it itself (§3.2). |
 | `/api/platform/pg-meta/:ref/*` (other) | Unknown/forbidden ref → 404. Else **strip** any client `x-connection-encrypted`, **set** it to the project's encrypted connection string, pass through to Studio. |
 | `/project/default`, `/project/default/*` | If no project has ref `default`: 302 `/_hs/projects`. |
