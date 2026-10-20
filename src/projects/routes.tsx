@@ -2,7 +2,7 @@ import { type Context, Hono } from "hono";
 import { canAccess } from "../auth/access.js";
 import type { AuthEnv } from "../auth/middleware.js";
 import { isS3Configured } from "../backups/s3-settings.js";
-import { listBackups } from "../registry/backups.js";
+import { getBackupSchedule, listBackups } from "../registry/backups.js";
 import { type Box, getBoxById, getSharedBox, listBoxes } from "../registry/boxes.js";
 import type { Registry } from "../registry/db.js";
 import { getProjectByRef, listProjects, type Project } from "../registry/projects.js";
@@ -41,16 +41,26 @@ export interface ProjectAndBox {
 }
 
 // Unknown, deleted and forbidden projects all look the same: not found.
-export function accessibleProject(db: Registry, c: Context<AuthEnv>): ProjectAndBox | undefined {
-  const project = getProjectByRef(db, c.req.param("ref") ?? "");
+export function accessibleProject(
+  db: Registry,
+  c: Context<AuthEnv>,
+  ref: string = c.req.param("ref") ?? "",
+): ProjectAndBox | undefined {
+  const project = getProjectByRef(db, ref);
   if (project?.status !== "active" || !canAccess(c.var.session.user, project)) return undefined;
   const box = getBoxById(db, project.boxId);
   return box && { project, box };
 }
 
+export interface ProjectPageDeps {
+  db: Registry;
+  secretKey: Buffer;
+  backupHourUtc: number;
+}
+
 export function renderProjectDetail(
   c: Context<AuthEnv>,
-  { db, secretKey }: { db: Registry; secretKey: Buffer },
+  { db, secretKey, backupHourUtc }: ProjectPageDeps,
   { project, box }: ProjectAndBox,
   notice?: ProjectPageNotice,
   status: 200 | 400 | 502 = 200,
@@ -63,6 +73,8 @@ export function renderProjectDetail(
       box={box}
       strings={strings}
       backups={listBackups(db, project.id)}
+      schedule={getBackupSchedule(db, project.id)}
+      backupHourUtc={backupHourUtc}
       s3Configured={isS3Configured(db)}
       notice={notice}
     />,
@@ -74,6 +86,8 @@ const QUERY_NOTICES: Record<string, string> = {
   rotated: "Password rotated. The connection strings below use the new one.",
   "backed-up": "Backup finished.",
   "backup-deleted": "Backup deleted.",
+  "schedule-saved": "Backup schedule saved.",
+  restored: "Backup restored.",
 };
 
 function queryNotice(c: Context<AuthEnv>): ProjectPageNotice | undefined {
@@ -81,7 +95,9 @@ function queryNotice(c: Context<AuthEnv>): ProjectPageNotice | undefined {
   return key === undefined ? undefined : { kind: "ok", message: QUERY_NOTICES[key] as string };
 }
 
-export function projectRoutes(deps: ProjectServiceDeps): Hono<AuthEnv> {
+export function projectRoutes(
+  deps: ProjectServiceDeps & Pick<ProjectPageDeps, "backupHourUtc">,
+): Hono<AuthEnv> {
   const { db } = deps;
   const app = new Hono<AuthEnv>();
   const accessible = (c: Context<AuthEnv>) => accessibleProject(db, c);
