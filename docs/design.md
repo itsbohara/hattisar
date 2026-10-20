@@ -21,6 +21,7 @@ Studio image `supabase/studio:2026.10.12-sha-3699278`, read from `apps/studio` s
 | `/api/platform/projects/<ref>/run-lints`, `/api/v1/projects/<ref>/database/migrations`, `/api/mcp*` | Query through Studio's env connection (`lib/api/self-hosted/{lints,migrations,mcp}.ts` → `executeQuery`). Not redirectable. |
 | `/api/v1/projects/<ref>/types/typescript` | `GET ${PG_META_URL}/generators/typescript?...` **without** a connection header → meta's default DB. |
 | `/api/platform/projects/<ref>/databases` | Returns hard-coded connection info for `postgres`. |
+| `GET /api/platform/projects/<ref>/settings` | Returns one hard-coded project (`lib/api/self-hosted/settings.ts` `getProjectSettings`): flat `db_host`/`db_port` from env, `db_name`/`db_user` = `postgres`, `ssl_enforced: false`, plus `ref`, `service_api_keys`, `jwt_secret`, `app_config`. |
 
 **Fail closed.** Studio's `POSTGRES_DB` and meta's `PG_META_DB_NAME` are set to
 `hattisar_no_project`, a database that exists on no box. Any route hattisar does not redirect —
@@ -65,6 +66,7 @@ Order matters; first match wins.
 | `GET /api/platform/projects/:ref/run-lints` | 200 `[]` — any error status makes Studio retry with backoff for ~12 s before the Table Editor refreshes (measured). Advisors therefore show no lints. |
 | `/api/v1/projects/:ref/database/migrations`, `/api/mcp`, `/api/mcp/*` | 404 `{"error":{"message":"Not available in hattisar"}}` |
 | `GET /api/platform/projects/:ref/databases` | hattisar answers: Studio's shape with `identifier` = ref, `db_name`, `db_host`/`db_port` = box public host/port, `db_user` = the project's owner role (admin user until projects have owners), other fields as Studio's. |
+| `GET /api/platform/projects/:ref/settings` | hattisar fetches Studio's stub for the same request and overrides only `ref`, `name`, `db_host`/`db_port` (box public host/port), `db_name`, `db_user` (owner role) and, when the box's sslmode is `require`/`verify-ca`/`verify-full`, `ssl_enforced: true`; every other field is Studio's. Stub unreachable, non-2xx or not a JSON object → 502, never the default. Unknown/deleted/forbidden → 404. |
 | `GET /api/v1/projects/:ref/types/typescript` | hattisar calls `${PG_META_URL}/generators/typescript` with the same query Studio uses and the project's `x-connection-encrypted`; mirrors Studio's response shape. |
 | `/api/platform/projects/:ref/*` | Unknown/forbidden ref → 404; else pass through. |
 | `/api/v1/projects/:ref/*` | Unknown/forbidden ref → 404; else pass through. |
@@ -84,7 +86,20 @@ pg-meta request hattisar cannot resolve is a 404, never a pass-through.
 HTML responses from Studio get `<link rel="stylesheet" href="/_hs/static/studio.css">` and
 `<script src="/_hs/static/studio.js" defer></script>` injected before `</head>`. The CSS hides
 sidebar entries for Authentication, Storage, Edge Functions and Realtime; the script adds a
-"← hattisar" link to the top bar. Content-Length is dropped on rewritten responses.
+"← hattisar" link to the top bar and redirects the Connect sheet (below). Content-Length is dropped
+on rewritten responses.
+
+Studio's Connect sheet is replaced by hattisar's project page. In self-hosted mode the sheet's
+connection strings come from `buildConnectionStringPooler` in the browser bundle, which takes only
+`db_host` and `db_port` (from `/databases`) and hard-codes the rest: user `postgres` (pooler tabs
+`postgres.[POOLER_TENANT_ID]`), database `postgres`, transaction port `6543`. The Supavisor config
+query that feeds the pooler tabs in cloud (`/platform/projects/{ref}/config/supavisor`) is gated on
+`IS_PLATFORM` and never sent, so no route hattisar answers can correct the sheet. Instead
+`studio.js` watches for Studio's `showConnect=true` query parameter on `/project/<ref>/*` — on page
+load, on `popstate`, and by wrapping `history.pushState`/`replaceState`, which is how Studio opens
+the sheet without a reload — drops `showConnect`, `connectTab` and `method` from the current
+history entry (so Back does not redirect again) and goes to `/_hs/projects/<ref>`, whose connection
+strings are the project's own. This relies on Studio opening the sheet through `showConnect`.
 
 ### 3.1 Studio project shape
 

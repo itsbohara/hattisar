@@ -92,6 +92,9 @@ bypassed hattisar. If it fails, do not bump.
 `e2e/studio-polish.spec.ts` checks the sidebar entries hattisar hides and the "← hattisar" link.
 `src/ui/static/studio.css` matches sidebar links by `href` (Studio's class names change per build)
 and `studio.js` anchors on the top bar's `<header>`; update them if Studio moved either.
+It also checks that the Connect button and a `?showConnect=true` URL land on hattisar's project
+page; `studio.js` keys that redirect on Studio's `showConnect` query parameter (design §3), so if
+Studio opens its Connect sheet some other way, update the redirect.
 `e2e/studio-owner.spec.ts` checks that a table made in the Table Editor belongs to the project's
 owner role.
 
