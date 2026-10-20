@@ -9,6 +9,7 @@ export const ROUTING_PROJECTS = [
 export function fetchWith(baseUrl: string, cookie: string, path: string, init: RequestInit = {}) {
   const headers = new Headers(init.headers);
   headers.set("cookie", cookie);
+  headers.set("origin", baseUrl);
   return fetch(`${baseUrl}${path}`, { ...init, headers, redirect: "manual" });
 }
 

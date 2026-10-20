@@ -63,6 +63,8 @@ test("Studio saves a SQL snippet", async ({ page }) => {
 
   await expect(page).toHaveURL(new RegExp(`/project/${REF}/sql/[0-9a-f-]{36}$`));
   const id = new URL(page.url()).pathname.split("/").pop();
-  const deleted = await page.request.delete(`/api/platform/projects/${REF}/content?ids=${id}`);
+  const deleted = await page.request.delete(`/api/platform/projects/${REF}/content?ids=${id}`, {
+    headers: { origin: new URL(page.url()).origin },
+  });
   expect(deleted.ok()).toBe(true);
 });

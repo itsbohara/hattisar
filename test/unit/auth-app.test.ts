@@ -183,7 +183,7 @@ describe("signed-in requests", () => {
     expect((await get("/_hs/debug/pg-meta-log", signInToRegistry(db))).status).toBe(200);
   });
 
-  it.each(["/_hs/logout", "/%5Fhs/logout"])(
+  it.each(["/_hs/logout", "/%5Fhs/logout", "/api/platform/pg-meta/any/query", "/api/whatever"])(
     "refuses a state change to %s without a matching Origin or Referer",
     async (path) => {
       const response = await app.request(`${ORIGIN}${path}`, {
@@ -193,6 +193,19 @@ describe("signed-in requests", () => {
       expect(response.status).toBe(403);
     },
   );
+
+  it("refuses a cross-origin text/plain POST that would run SQL", async () => {
+    const response = await app.request(`${ORIGIN}/api/platform/pg-meta/any/query`, {
+      method: "POST",
+      headers: {
+        cookie: signInToRegistry(db),
+        origin: "http://evil.test",
+        "content-type": "text/plain",
+      },
+      body: JSON.stringify({ query: "drop schema public cascade" }),
+    });
+    expect(response.status).toBe(403);
+  });
 
   it("logs out and ends the session", async () => {
     const cookie = signInToRegistry(db);

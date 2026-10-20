@@ -13,21 +13,11 @@ export const LOGIN_PAGE = "/_hs/login";
 const UNAUTHORIZED_BODY = { error: { message: "Not signed in" } };
 const SAFE_METHODS = new Set(["GET", "HEAD"]);
 
-function decodedPath(url: string): string | undefined {
-  try {
-    return decodeURIComponent(new URL(url).pathname);
-  } catch {
-    return undefined;
-  }
-}
-
-// Checked on the decoded path so an encoded spelling of /_hs/ cannot skip it; an undecodable
-// path is checked too.
+// Every unsafe method, not only /_hs/*: the proxied /api/* routes run SQL, and a text/plain POST
+// from another site needs no CORS preflight.
 export function requireSameOrigin(): MiddlewareHandler {
   return async (c, next) => {
     if (SAFE_METHODS.has(c.req.method)) return next();
-    const path = decodedPath(c.req.url);
-    if (path !== undefined && !path.startsWith("/_hs/")) return next();
     if (!isSameOrigin(c.req.raw.headers, new URL(c.req.url).host)) {
       return c.text("Forbidden: cross-origin request", 403);
     }
