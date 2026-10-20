@@ -8,14 +8,58 @@ export interface BoxRow {
   projectCount: number;
 }
 
-export function BoxesPage({ rows, error }: { rows: BoxRow[]; error?: string }) {
+function RemoveButton({ box }: { box: Box }) {
+  return (
+    <form method="post" action={`/_hs/boxes/${box.id}/remove`}>
+      <button type="submit" class="button-quiet button-danger">
+        Remove
+      </button>
+    </form>
+  );
+}
+
+function BoxActions({ box, managedEnabled }: { box: Box; managedEnabled: boolean }) {
+  if (box.kind === "registered") {
+    return (
+      <>
+        <a class="button-quiet" href={`/_hs/boxes/${box.id}/edit`}>
+          Edit
+        </a>
+        <RemoveButton box={box} />
+      </>
+    );
+  }
+  if (box.kind === "managed" && managedEnabled) return <RemoveButton box={box} />;
+  return (
+    <span class="hint">
+      {box.kind === "shared" ? "Managed by environment" : "Managed by hattisar"}
+    </span>
+  );
+}
+
+export function BoxesPage({
+  rows,
+  managedEnabled = false,
+  error,
+}: {
+  rows: BoxRow[];
+  managedEnabled?: boolean;
+  error?: string;
+}) {
   return (
     <Layout title="Boxes" section="boxes">
       <div class="page-head">
         <h1>Boxes</h1>
-        <a class="button" href="/_hs/boxes/new">
-          Register box
-        </a>
+        <div class="row-actions">
+          {managedEnabled && (
+            <a class="button-quiet" href="/_hs/managed-boxes/new">
+              New managed box
+            </a>
+          )}
+          <a class="button" href="/_hs/boxes/new">
+            Register box
+          </a>
+        </div>
       </div>
       {error && (
         <p class="alert alert-error" role="alert">
@@ -50,22 +94,7 @@ export function BoxesPage({ rows, error }: { rows: BoxRow[]; error?: string }) {
                 </td>
                 <td>{projectCount}</td>
                 <td class="row-actions">
-                  {box.kind === "registered" ? (
-                    <>
-                      <a class="button-quiet" href={`/_hs/boxes/${box.id}/edit`}>
-                        Edit
-                      </a>
-                      <form method="post" action={`/_hs/boxes/${box.id}/remove`}>
-                        <button type="submit" class="button-quiet button-danger">
-                          Remove
-                        </button>
-                      </form>
-                    </>
-                  ) : (
-                    <span class="hint">
-                      {box.kind === "shared" ? "Managed by environment" : "Managed by hattisar"}
-                    </span>
-                  )}
+                  <BoxActions box={box} managedEnabled={managedEnabled} />
                 </td>
               </tr>
             ))}
@@ -173,6 +202,50 @@ export function BoxFormPage({
           <div class="form-actions">
             <button type="submit" class="button">
               {editing ? "Save" : "Register"}
+            </button>
+            <a class="button-quiet" href="/_hs/boxes">
+              Cancel
+            </a>
+          </div>
+        </form>
+      </section>
+    </Layout>
+  );
+}
+
+export function ManagedBoxFormPage({
+  name = "",
+  problems = [],
+}: {
+  name?: string;
+  problems?: string[];
+}) {
+  return (
+    <Layout title="New managed box" section="boxes">
+      <h1>New managed box</h1>
+      <section class="card">
+        <form method="post" action="/_hs/managed-boxes" class="form">
+          {problems.length > 0 && (
+            <div class="alert alert-error" role="alert">
+              <p>The box could not be started:</p>
+              <ul class="problems">
+                {problems.map((problem) => (
+                  <li>{problem}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          <label class="field">
+            <span>Name</span>
+            <input name="name" required pattern="[a-z][a-z0-9\-]{2,39}" value={name} />
+            <small class="hint">
+              Lowercase letters, digits and hyphens; 3–40 characters. hattisar starts a dedicated
+              Postgres container for it, which can take a minute or two.
+            </small>
+          </label>
+          <div class="form-actions">
+            <button type="submit" class="button">
+              Start box
             </button>
             <a class="button-quiet" href="/_hs/boxes">
               Cancel

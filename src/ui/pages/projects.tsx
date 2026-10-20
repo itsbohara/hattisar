@@ -85,7 +85,10 @@ export interface NewProjectValues {
   name: string;
   ref: string;
   boxId: number | undefined;
+  newBox?: boolean;
 }
+
+export const NEW_BOX_OPTION = "new";
 
 // The ref follows the name until the user types into it.
 export function slugScript(formId: string): string {
@@ -105,7 +108,15 @@ export function slugScript(formId: string): string {
 }
 
 // Name, ref and box: the fields of every form that creates a project.
-export function ProjectFields({ boxes, values }: { boxes: Box[]; values: NewProjectValues }) {
+export function ProjectFields({
+  boxes,
+  values,
+  offerNewBox = false,
+}: {
+  boxes: Box[];
+  values: NewProjectValues;
+  offerNewBox?: boolean;
+}) {
   return (
     <>
       <label class="field">
@@ -128,7 +139,13 @@ export function ProjectFields({ boxes, values }: { boxes: Box[]; values: NewProj
               {box.devOnly ? `${box.name} — ${DEV_ONLY_WARNING}` : box.name}
             </option>
           ))}
+          {offerNewBox && (
+            <option value={NEW_BOX_OPTION} selected={values.newBox === true}>
+              New dedicated box — its own Postgres container, named after the ref
+            </option>
+          )}
         </select>
+        {offerNewBox && <small class="hint">Starting a new box can take a minute or two.</small>}
       </label>
     </>
   );
@@ -138,10 +155,12 @@ export function NewProjectPage({
   boxes,
   values,
   problems = [],
+  offerNewBox = false,
 }: {
   boxes: Box[];
   values: NewProjectValues;
   problems?: string[];
+  offerNewBox?: boolean;
 }) {
   return (
     <Layout title="New project" section="projects">
@@ -149,7 +168,7 @@ export function NewProjectPage({
       <section class="card card-roomy">
         <form method="post" action="/_hs/projects" class="form" id="new-project">
           <Problems problems={problems} />
-          <ProjectFields boxes={boxes} values={values} />
+          <ProjectFields boxes={boxes} values={values} offerNewBox={offerNewBox} />
           <div class="form-actions">
             <button type="submit" class="button">
               Create project
