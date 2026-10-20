@@ -1,6 +1,7 @@
 import type { Project } from "./projects-source.js";
 
 export const AI_DISABLED_BODY = { error: { message: "AI features are disabled in hattisar" } };
+export const NOT_AVAILABLE_BODY = { error: { message: "Not available in hattisar" } };
 
 export function studioProject(project: Project) {
   return {
@@ -17,4 +18,29 @@ export function studioProject(project: Project) {
 
 export function studioProjectDetail(project: Project) {
   return { ...studioProject(project), connectionString: "", restUrl: "" };
+}
+
+export interface PublicEndpoint {
+  host: string;
+  port: number;
+}
+
+export function studioDatabases(project: Project, endpoint: PublicEndpoint) {
+  return [
+    {
+      cloud_provider: "localhost",
+      connectionString: "",
+      connection_string_read_only: "",
+      db_host: endpoint.host,
+      db_name: project.dbName,
+      db_port: endpoint.port,
+      db_user: project.box.adminUser,
+      identifier: project.ref,
+      inserted_at: "",
+      region: "local",
+      restUrl: "",
+      size: "",
+      status: "ACTIVE_HEALTHY",
+    },
+  ];
 }

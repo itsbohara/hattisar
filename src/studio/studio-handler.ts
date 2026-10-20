@@ -1,7 +1,13 @@
 import type { Context } from "hono";
 import type { Config } from "../config.js";
-import { connectionHeaders, type PgMetaLog, runQuery } from "./pg-meta.js";
-import { AI_DISABLED_BODY, studioProject, studioProjectDetail } from "./platform-routes.js";
+import { connectionHeaders, generateTypescriptTypes, type PgMetaLog, runQuery } from "./pg-meta.js";
+import {
+  AI_DISABLED_BODY,
+  NOT_AVAILABLE_BODY,
+  studioDatabases,
+  studioProject,
+  studioProjectDetail,
+} from "./platform-routes.js";
 import type { Project, ProjectSource } from "./projects-source.js";
 import { proxyToStudio } from "./proxy.js";
 import { classifyRequest } from "./routes.js";
@@ -44,6 +50,8 @@ export function createStudioHandler({ config, projects, pgMetaLog }: StudioDeps)
         return c.redirect(route.location, 302);
       case "ai-disabled":
         return c.json(AI_DISABLED_BODY, 404);
+      case "not-available":
+        return c.json(NOT_AVAILABLE_BODY, 404);
       case "platform-projects":
         return c.json((await projects.list(user)).map(studioProject));
       case "pass":
@@ -60,6 +68,20 @@ export function createStudioHandler({ config, projects, pgMetaLog }: StudioDeps)
     switch (route.kind) {
       case "platform-project":
         return c.json(studioProjectDetail(project));
+      case "project-databases":
+        // Spike: every project is on the shared box, published through the pooler's session port.
+        return c.json(
+          studioDatabases(project, { host: config.publicHost, port: config.pooler.portSession }),
+        );
+      case "project-types": {
+        trace(c, project);
+        const result = await generateTypescriptTypes(
+          config.pgMetaUrl,
+          project,
+          config.pgMetaCryptoKey,
+        );
+        return Response.json(result.body, { status: result.status });
+      }
       case "pg-meta-query": {
         trace(c, project);
         const body = await c.req.json().catch(() => undefined);
@@ -73,7 +95,7 @@ export function createStudioHandler({ config, projects, pgMetaLog }: StudioDeps)
           c.req.raw,
           connectionHeaders(project, config.pgMetaCryptoKey),
         );
-      case "platform-project-pass":
+      case "project-api-pass":
       case "studio-project":
         return proxyToStudio(config.studioUrl, c.req.raw);
     }

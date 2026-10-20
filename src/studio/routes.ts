@@ -3,9 +3,12 @@ export type Route =
   | { kind: "hattisar" }
   | { kind: "redirect"; location: string }
   | { kind: "ai-disabled" }
+  | { kind: "not-available" }
+  | { kind: "project-databases"; ref: string }
+  | { kind: "project-types"; ref: string }
   | { kind: "platform-projects" }
   | { kind: "platform-project"; ref: string }
-  | { kind: "platform-project-pass"; ref: string }
+  | { kind: "project-api-pass"; ref: string }
   | { kind: "pg-meta-query"; ref: string }
   | { kind: "pg-meta"; ref: string }
   | { kind: "studio-project"; ref: string }
@@ -40,12 +43,29 @@ export function classifyRequest(method: string, rawPath: string): Route {
   if (/^\/api\/ai(?:\/|$)/i.test(path)) return { kind: "ai-disabled" };
 
   if (path === "/api/platform/projects" && method === "GET") return { kind: "platform-projects" };
-  const project = /^\/api\/platform\/projects\/([^/]+)(\/.*)?$/.exec(path);
-  if (project?.[1]) {
-    const ref = project[1];
-    return method === "GET" && project[2] === undefined
-      ? { kind: "platform-project", ref }
-      : { kind: "platform-project-pass", ref };
+
+  // These query through Studio's own connection and cannot be pointed at a project.
+  if (
+    /^\/api\/platform\/projects\/[^/]+\/run-lints$/.test(path) ||
+    /^\/api\/v1\/projects\/[^/]+\/database\/migrations$/.test(path) ||
+    /^\/api\/mcp(?:\/|$)/.test(path)
+  ) {
+    return { kind: "not-available" };
+  }
+
+  const project = /^\/api\/(platform|v1)\/projects\/([^/]+)(\/.*)?$/.exec(path);
+  if (project?.[2]) {
+    const [, api, ref, rest] = project;
+    if (method === "GET" && api === "platform" && rest === undefined) {
+      return { kind: "platform-project", ref };
+    }
+    if (method === "GET" && api === "platform" && rest === "/databases") {
+      return { kind: "project-databases", ref };
+    }
+    if (method === "GET" && api === "v1" && rest === "/types/typescript") {
+      return { kind: "project-types", ref };
+    }
+    return { kind: "project-api-pass", ref };
   }
 
   const page = /^\/project\/([^/]+)(?:\/.*)?$/.exec(path);
