@@ -81,6 +81,9 @@ services:
       DEFAULT_ORGANIZATION_NAME: hattisar
       DEFAULT_PROJECT_NAME: hattisar
       ENABLED_FEATURES_LOGS_ALL: "false"
+      SNIPPETS_MANAGEMENT_FOLDER: /app/snippets
+    volumes:
+      - studio-snippets:/app/snippets
 
   supavisor:
     image: supabase/supavisor:2.9.13
@@ -173,3 +176,4 @@ volumes:
   db-data:
   db-config:
   hattisar-data:
+  studio-snippets:
