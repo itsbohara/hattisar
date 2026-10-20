@@ -1,9 +1,14 @@
+import { mkdtempSync, rmSync } from "node:fs";
 import { createServer, type IncomingHttpHeaders, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import CryptoJS from "crypto-js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createApp } from "../../src/app.js";
 import { loadConfig } from "../../src/config.js";
+import { openRegistry, type Registry } from "../../src/registry/db.js";
+import { signInToRegistry } from "../helpers/session.js";
 
 interface Seen {
   method: string;
@@ -24,6 +29,9 @@ const spikeB = {
 let studio: Server;
 let seen: Seen[] = [];
 let app: ReturnType<typeof createApp>;
+let dataDir: string;
+let registry: Registry;
+let cookie: string;
 
 beforeAll(async () => {
   studio = createServer((req, res) => {
@@ -48,6 +56,9 @@ beforeAll(async () => {
   });
   await new Promise<void>((resolve) => studio.listen(0, "127.0.0.1", resolve));
   const { port } = studio.address() as AddressInfo;
+  dataDir = mkdtempSync(join(tmpdir(), "hattisar-studio-handler-"));
+  registry = openRegistry(dataDir);
+  cookie = signInToRegistry(registry);
   app = createApp(
     loadConfig({
       HATTISAR_SECRET_KEY: "s".repeat(32),
@@ -57,16 +68,21 @@ beforeAll(async () => {
       STUDIO_URL: `http://127.0.0.1:${port}`,
       HATTISAR_SPIKE_PROJECTS: JSON.stringify([spikeB]),
     }),
+    registry,
   );
 });
 
 afterAll(() => {
   studio.close();
+  registry.close();
+  rmSync(dataDir, { recursive: true, force: true });
 });
 
 function request(path: string, init?: RequestInit): Promise<Response> {
   seen = [];
-  return Promise.resolve(app.request(`http://hattisar.test${path}`, init));
+  const headers = new Headers(init?.headers);
+  headers.set("cookie", cookie);
+  return Promise.resolve(app.request(`http://hattisar.test${path}`, { ...init, headers }));
 }
 
 describe("pg-meta pass-through", () => {

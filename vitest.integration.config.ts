@@ -7,5 +7,7 @@ export default defineConfig({
     include: enabled ? ["test/integration/**/*.test.ts"] : [],
     passWithNoTests: !enabled,
     testTimeout: 30_000,
+    // The password-change test ends every other session of the admin, including other files'.
+    fileParallelism: false,
   },
 });

@@ -1,21 +1,32 @@
 import { beforeAll, describe, expect, it } from "vitest";
+import { signIn } from "../helpers/session.js";
 import { compose, prepareSpikeStack } from "../spike-stack.js";
 
 const baseUrl = process.env.HATTISAR_URL ?? "http://localhost:8000";
+let cookie: string;
+
+function fetchSignedIn(path: string, init: RequestInit = {}): Promise<Response> {
+  const headers = new Headers(init.headers);
+  headers.set("cookie", cookie);
+  return fetch(`${baseUrl}${path}`, { ...init, headers });
+}
 
 async function postQuery(ref: string, query: string): Promise<Response> {
-  return fetch(`${baseUrl}/api/platform/pg-meta/${ref}/query`, {
+  return fetchSignedIn(`/api/platform/pg-meta/${ref}/query`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ query }),
   });
 }
 
-beforeAll(prepareSpikeStack, 180_000);
+beforeAll(async () => {
+  prepareSpikeStack();
+  cookie = await signIn(baseUrl);
+}, 180_000);
 
 describe("Studio proxy with two spike projects on the shared box", () => {
   it("lists both projects in Studio's shape", async () => {
-    const response = await fetch(`${baseUrl}/api/platform/projects`);
+    const response = await fetchSignedIn("/api/platform/projects");
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual([
       expect.objectContaining({ ref: "spike-a", name: "Spike A", region: "shared" }),
@@ -24,7 +35,7 @@ describe("Studio proxy with two spike projects on the shared box", () => {
   });
 
   it("returns one project with an empty connection string", async () => {
-    const response = await fetch(`${baseUrl}/api/platform/projects/spike-b`);
+    const response = await fetchSignedIn("/api/platform/projects/spike-b");
     expect(await response.json()).toMatchObject({
       ref: "spike-b",
       status: "ACTIVE_HEALTHY",
@@ -49,7 +60,7 @@ describe("Studio proxy with two spike projects on the shared box", () => {
   });
 
   it("lists the project's tables through Studio's relay route", async () => {
-    const response = await fetch(`${baseUrl}/api/platform/pg-meta/spike-b/tables`, {
+    const response = await fetchSignedIn("/api/platform/pg-meta/spike-b/tables", {
       headers: { "x-connection-encrypted": "client-supplied" },
     });
     expect(response.status).toBe(200);
@@ -60,7 +71,7 @@ describe("Studio proxy with two spike projects on the shared box", () => {
 
   it("records the resolved database in the debug log", async () => {
     await postQuery("spike-a", "select 1");
-    const log = (await (await fetch(`${baseUrl}/_hs/debug/pg-meta-log`)).json()) as {
+    const log = (await (await fetchSignedIn("/_hs/debug/pg-meta-log")).json()) as {
       ref: string;
       db: string;
     }[];
@@ -75,7 +86,7 @@ describe("Studio proxy with two spike projects on the shared box", () => {
     ["GET", "/api/v1/projects/nope/types/typescript"],
     ["GET", "/api/v1/projects/nope/api-keys"],
   ])("answers %s %s for an unknown ref with 404", async (method, path) => {
-    const response = await fetch(`${baseUrl}${path}`, {
+    const response = await fetchSignedIn(path, {
       method,
       headers: { "content-type": "application/json" },
       body: method === "POST" ? JSON.stringify({ query: "select 1" }) : undefined,
@@ -84,7 +95,7 @@ describe("Studio proxy with two spike projects on the shared box", () => {
   });
 
   it("describes the project's database", async () => {
-    const response = await fetch(`${baseUrl}/api/platform/projects/spike-b/databases`);
+    const response = await fetchSignedIn("/api/platform/projects/spike-b/databases");
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual([
       expect.objectContaining({
@@ -97,7 +108,7 @@ describe("Studio proxy with two spike projects on the shared box", () => {
   });
 
   it("generates TypeScript types from the project's database", async () => {
-    const response = await fetch(`${baseUrl}/api/v1/projects/spike-b/types/typescript`);
+    const response = await fetchSignedIn("/api/v1/projects/spike-b/types/typescript");
     expect(response.status).toBe(200);
     const { types } = (await response.json()) as { types: string };
     expect(types).toContain("beta:");
@@ -109,7 +120,7 @@ describe("Studio proxy with two spike projects on the shared box", () => {
     ["GET", "/api/v1/projects/spike-b/database/migrations"],
     ["POST", "/api/mcp"],
   ])("refuses %s %s, which only reach Studio's own connection", async (method, path) => {
-    const response = await fetch(`${baseUrl}${path}`, { method });
+    const response = await fetchSignedIn(path, { method });
     expect(response.status).toBe(404);
     expect(await response.json()).toEqual({ error: { message: "Not available in hattisar" } });
   });
@@ -139,7 +150,7 @@ describe("Studio proxy with two spike projects on the shared box", () => {
   });
 
   it("disables AI routes", async () => {
-    const response = await fetch(`${baseUrl}/api/ai/sql/generate-v4`, { method: "POST" });
+    const response = await fetchSignedIn("/api/ai/sql/generate-v4", { method: "POST" });
     expect(response.status).toBe(404);
     expect(await response.json()).toEqual({
       error: { message: "AI features are disabled in hattisar" },
@@ -147,7 +158,7 @@ describe("Studio proxy with two spike projects on the shared box", () => {
   });
 
   it("serves Studio's project page with hattisar's assets injected", async () => {
-    const response = await fetch(`${baseUrl}/project/spike-b/editor`);
+    const response = await fetchSignedIn("/project/spike-b/editor");
     expect(response.status).toBe(200);
     const html = await response.text();
     expect(html).toContain('<script src="/_hs/static/studio.js" defer></script></head>');
