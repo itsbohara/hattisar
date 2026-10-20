@@ -1,3 +1,5 @@
+# Modified from supabase/supabase docker/docker-compose.yml (Apache-2.0); see NOTICE.
+
 name: hattisar
 
 services:
@@ -121,6 +123,9 @@ services:
       POOLER_MAX_CLIENT_CONN: 100
       POOLER_POOL_MODE: transaction
       DB_POOL_SIZE: 5
+      # The image defaults to 100000, above the hard limit on GitHub's runners, where the
+      # entrypoint's `ulimit -n` then fails and supavisor crash-loops. Upstream uses 10000 for realtime.
+      RLIMIT_NOFILE: "10000"
     command:
       [
         "/bin/sh",
