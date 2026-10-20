@@ -18,9 +18,6 @@ export function uiRoutes(): Hono<AuthEnv> {
   app.get("/_hs/trash", (c) =>
     renderPage(c, <EmptyPage title="Trash" section="trash" message="Trash is empty." />),
   );
-  app.get("/_hs/boxes", (c) =>
-    renderPage(c, <EmptyPage title="Boxes" section="boxes" message="No boxes registered." />),
-  );
 
   return app;
 }
