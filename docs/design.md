@@ -246,6 +246,11 @@ list + schedule + back up now + restore, delete), Trash, Boxes (list, register, 
 "New managed box" when enabled), Settings (change password, S3). Errors render inline, never as a
 stack trace.
 
+Known limitation: Studio stores SQL snippets in one folder (`SNIPPETS_MANAGEMENT_FOLDER`, a named
+volume) regardless of project, so saved snippets appear in every project's SQL editor and run
+against whichever project is open. Acceptable for a single admin; scoping
+`/api/platform/projects/:ref/content*` per project is post-v1.
+
 ## 10. Managed boxes (O4 + O2)
 
 Off unless `HATTISAR_MANAGED_BOXES=true`. Then compose profile `managed-boxes` runs
