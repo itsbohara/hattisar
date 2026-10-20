@@ -138,7 +138,7 @@ function post(path: string, fields: Record<string, string> = {}): Promise<Respon
   return Promise.resolve(app.request(path, { method: "POST", body: new URLSearchParams(fields) }));
 }
 
-function whileRestoring<T>(target: Project, run: () => Promise<T>) {
+function holdingAsRestore<T>(target: Project, run: () => Promise<T>) {
   const operation = { action: "restore", holds: "it is being restored", status: target.status };
   return holdingProject(db, target, operation, run);
 }
@@ -491,7 +491,7 @@ describe("while a backup or restore holds the project", () => {
 
   it("refuses to delete or rotate during a restore", async () => {
     const target = seed();
-    await whileRestoring(target, async () => {
+    await holdingAsRestore(target, async () => {
       expect(await softDeleteProject(deps, target, box)).toEqual({
         ok: false,
         problem: "Can't delete my-app while it is being restored. Try again when it finishes.",
@@ -523,7 +523,7 @@ describe("while a backup or restore holds the project", () => {
       "Can&#39;t purge my-app while a backup of it is running. Try again when it finishes.",
     );
     markBackupDone(db, backup.id, 1);
-    await whileRestoring(deleted, async () => {
+    await holdingAsRestore(deleted, async () => {
       expect((await purgeProject(deps, deleted, box)).ok).toBe(false);
     });
     expect(sql).toEqual([]);

@@ -97,30 +97,30 @@ export async function restoreIntoProject(
   if (typeof settings === "string") return { ok: false, problem: settings };
   const conn = boxCredentials(box, deps.secretKey);
   if (typeof conn === "string") return { ok: false, problem: conn };
-  return holdingProject(deps.db, project, RESTORE, () =>
+  return holdingProject(deps.db, project, RESTORE, (current) =>
     inWorkDir(deps.dataDir, async (dir) => {
       const fetched = await fetchArchive(deps, settings, backup, dir);
       if (typeof fetched === "string") return { ok: false, problem: fetched };
       try {
         await projectDeps.admin(conn, (client) =>
           client.query(
-            `DROP DATABASE IF EXISTS ${pg.escapeIdentifier(project.dbName)} WITH (FORCE)`,
+            `DROP DATABASE IF EXISTS ${pg.escapeIdentifier(current.dbName)} WITH (FORCE)`,
           ),
         );
-        await createProjectDatabase(projectDeps.admin, conn, project);
+        await createProjectDatabase(projectDeps.admin, conn, current);
       } catch (error) {
         const message = safeErrorMessage(error, conn.password);
         return {
           ok: false,
-          problem: `Could not recreate database ${project.dbName}: ${message}. Restore again to bring it back.`,
+          problem: `Could not recreate database ${current.dbName}: ${message}. Restore again to bring it back.`,
         };
       }
-      const restored = await restoreInto(deps, conn, project, fetched);
+      const restored = await restoreInto(deps, conn, current, fetched);
       if (restored.ok) return restored;
       // Leads the message: pg_restore's stderr tail after it can run to kilobytes.
       return {
         ok: false,
-        problem: `The previous data of ${project.ref} was replaced and its database now holds part of the backup. Restore again to finish. ${restored.problem}`,
+        problem: `The previous data of ${current.ref} was replaced and its database now holds part of the backup. Restore again to finish. ${restored.problem}`,
       };
     }),
   );
@@ -146,8 +146,8 @@ export async function restoreIntoNewProject(
     const created = await createProject(projectDeps, form);
     if (!created.ok) return created;
     const { project } = created;
-    const restored = await holdingProject(deps.db, project, RESTORE, () =>
-      restoreInto(deps, conn, project, fetched),
+    const restored = await holdingProject(deps.db, project, RESTORE, (current) =>
+      restoreInto(deps, conn, current, fetched),
     );
     return restored.ok ? { ok: true, project } : { ok: false, project, problem: restored.problem };
   });
