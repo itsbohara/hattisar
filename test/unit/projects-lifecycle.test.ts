@@ -129,7 +129,7 @@ describe("deleting a project", () => {
     expect(project()?.status).toBe("active");
   });
 
-  it("revokes, terminates, renames and disables login in one transaction", async () => {
+  it("revokes, terminates and renames in one transaction, leaving the role able to log in", async () => {
     seed();
     const response = await post("/_hs/projects/my-app/delete", { confirm: "my-app" });
     expect(response.status).toBe(302);
@@ -140,7 +140,6 @@ describe("deleting a project", () => {
       expect.stringMatching(/^select pg_terminate_backend\(pid\) from pg_stat_activity/),
       "select datname from pg_database where starts_with(datname, $1)",
       expect.stringMatching(/^ALTER DATABASE "my_app" RENAME TO "my_app__deleted_\d{8}"$/),
-      'ALTER ROLE "hs_my_app_owner" NOLOGIN',
       "COMMIT",
     ]);
     expect(project()).toMatchObject({ status: "deleted", deletedAt: expect.any(String) });
@@ -209,7 +208,6 @@ describe("restoring a project", () => {
       "BEGIN",
       'ALTER DATABASE "my_app__deleted_20261020" RENAME TO "my_app"',
       'GRANT CONNECT ON DATABASE "my_app" TO "hs_my_app_owner"',
-      'ALTER ROLE "hs_my_app_owner" LOGIN',
       "COMMIT",
     ]);
     expect(project()).toMatchObject({ status: "active", deletedAt: null, deletedDbName: null });

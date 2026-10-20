@@ -27,7 +27,9 @@ async function inTransaction(client: pg.Client, run: () => Promise<void>): Promi
   }
 }
 
-// One transaction, so a failed rename leaves the owner able to connect as before.
+// One transaction, so a failed rename leaves the owner able to connect as before. The role keeps
+// LOGIN on purpose (§7): a NOLOGIN role fails Supavisor's auth, and its auth-failure breakers would
+// then refuse pooler logins for every project on the shared box.
 export async function softDeleteProject(
   deps: ProjectServiceDeps,
   project: Project,
@@ -56,7 +58,6 @@ export async function softDeleteProject(
           taken.rows.map((row) => row.datname),
         );
         await client.query(`ALTER DATABASE ${db} RENAME TO ${pg.escapeIdentifier(deletedDbName)}`);
-        await client.query(`ALTER ROLE ${role} NOLOGIN`);
       }),
     );
   } catch (error) {
@@ -86,7 +87,6 @@ export async function restoreProject(
       inTransaction(client, async () => {
         await client.query(`ALTER DATABASE ${deletedDb} RENAME TO ${db}`);
         await client.query(`GRANT CONNECT ON DATABASE ${db} TO ${role}`);
-        await client.query(`ALTER ROLE ${role} LOGIN`);
       }),
     );
   } catch (error) {
