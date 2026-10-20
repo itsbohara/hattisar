@@ -15,8 +15,6 @@ export interface E1Facts {
   availableExtensions: string[];
   adminUser: string;
   superuser: boolean;
-  createdb: boolean;
-  createrole: boolean;
 }
 
 export function e1Problems(facts: E1Facts): string[] {
@@ -33,23 +31,14 @@ export function e1Problems(facts: E1Facts): string[] {
       problems.push(`Extension not available: ${extension}`);
     }
   }
-  if (!facts.superuser && !(facts.createdb && facts.createrole)) {
-    problems.push(
-      `Admin user ${facts.adminUser} is not a superuser and lacks CREATEDB and CREATEROLE`,
-    );
-  }
+  if (!facts.superuser) problems.push(`Admin user ${facts.adminUser} is not a superuser`);
   return problems;
 }
 
 async function readFacts(conn: BoxConnection): Promise<E1Facts> {
   return withAdminClient(conn, async (client) => {
-    const admin = await client.query<{
-      version: string;
-      rolsuper: boolean;
-      rolcreatedb: boolean;
-      rolcreaterole: boolean;
-    }>(
-      `select current_setting('server_version_num') as version, rolsuper, rolcreatedb, rolcreaterole
+    const admin = await client.query<{ version: string; rolsuper: boolean }>(
+      `select current_setting('server_version_num') as version, rolsuper
          from pg_roles where rolname = current_user`,
     );
     const roles = await client.query<{ rolname: string }>(
@@ -67,8 +56,6 @@ async function readFacts(conn: BoxConnection): Promise<E1Facts> {
       availableExtensions: extensions.rows.map((r) => r.name),
       adminUser: conn.user,
       superuser: row?.rolsuper ?? false,
-      createdb: row?.rolcreatedb ?? false,
-      createrole: row?.rolcreaterole ?? false,
     };
   });
 }

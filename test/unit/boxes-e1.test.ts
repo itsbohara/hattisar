@@ -8,8 +8,6 @@ const compatible: E1Facts = {
   availableExtensions: ["pgcrypto", "uuid-ossp", "pg_stat_statements"],
   adminUser: "supabase_admin",
   superuser: true,
-  createdb: true,
-  createrole: true,
 };
 
 describe("e1Problems", () => {
@@ -25,8 +23,6 @@ describe("e1Problems", () => {
         availableExtensions: ["pgcrypto"],
         adminUser: "app",
         superuser: false,
-        createdb: true,
-        createrole: false,
       }),
     ).toEqual([
       "Postgres 15 or newer is required; this server is version 14",
@@ -36,12 +32,14 @@ describe("e1Problems", () => {
       "Missing role: service_role",
       "Extension not available: uuid-ossp",
       "Extension not available: pg_stat_statements",
-      "Admin user app is not a superuser and lacks CREATEDB and CREATEROLE",
+      "Admin user app is not a superuser",
     ]);
   });
 
-  it("accepts a non-superuser admin with CREATEDB and CREATEROLE", () => {
-    expect(e1Problems({ ...compatible, superuser: false })).toEqual([]);
+  it("rejects a non-superuser admin", () => {
+    expect(e1Problems({ ...compatible, superuser: false })).toEqual([
+      "Admin user supabase_admin is not a superuser",
+    ]);
   });
 
   it("accepts exactly Postgres 15", () => {
