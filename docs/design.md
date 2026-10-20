@@ -94,8 +94,8 @@ sidebar entries for Authentication, Storage, Edge Functions and Realtime; the sc
 
 ### 3.2 hattisar's `/query`
 
-Read JSON body `{query, parameters?}`. Build the project's admin connection string
-`postgresql://<box admin user>:<pw>@<box host>:<box port>/<db_name>` (URL-encode user and
+Read JSON body `{query, parameters?}`. Build the project's **Studio connection string**
+`postgresql://<owner role>:<owner pw>@<box host>:<box port>/<db_name>` (URL-encode user and
 password; append `?sslmode=<box sslmode>` unless it is `disable`), encrypt (§1), `POST ${PG_META_URL}/query` with headers `Content-Type:
 application/json`, `x-connection-encrypted`, body `{query}` plus `parameters` only if present.
 Response mirroring, same as Studio: pg-meta OK → 200 with its JSON; pg-meta error → its status with
@@ -120,7 +120,8 @@ Numbered migrations in `src/registry/migrations/`, applied at boot, tracked in
 - `backup_schedules(project_id PK, frequency CHECK in ('off','daily','weekly'),
   keep_daily, keep_weekly)`
 - `backups(id, project_id, kind CHECK in ('manual','scheduled'), s3_key, size_bytes,
-  status CHECK in ('running','done','failed'), error NULL, created_at, finished_at NULL)`
+  status CHECK in ('running','done','failed'), error NULL, created_at, finished_at NULL,
+  bucket)` — `bucket` (migration 002) is where the object was written; delete/restore/retention use it.
 
 ### Secrets at rest
 AES-256-GCM. Key = SHA-256 of `HATTISAR_SECRET_KEY` (required, ≥ 32 chars, boot fails otherwise).
@@ -179,8 +180,14 @@ escape helpers, never string concatenation):
 5. Insert registry row.
 Any failure → drop what was created (db, role), no registry row, error shown.
 
-**Isolation (I1):** the owner role cannot connect to any other project's database. Studio uses the
-box admin.
+**Isolation (I1):** the owner role cannot connect to any other project's database.
+
+**Studio connects as the owner role**, the same role apps use (as on Supabase Cloud, where Studio
+and apps share `postgres`). Every pg-meta connection hattisar builds — its own `/query`, the
+relay header, `types/typescript` — uses the owner. If Studio used the box admin, tables created in
+Studio would be owned by `supabase_admin` and the app's role would get `permission denied`
+(verified). Consequence: Studio actions that need superuser (non-trusted extensions, role
+management) fail with a permission error; hattisar's own admin operations still use the box admin.
 
 **Connection strings (J1)** on the project page, password masked with reveal + copy:
 - box with pooler fields: session `postgresql://<owner>.<tenant>:<pw>@<public_host>:<session_port>/<db>`
