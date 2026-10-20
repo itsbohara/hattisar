@@ -418,3 +418,162 @@ button:disabled {
 .backup-schedule .hint {
   flex-basis: 100%;
 }
+
+.card + .card {
+  margin-top: 1.25rem;
+}
+
+.card h3 {
+  font-size: 1rem;
+  margin: 0 0 1rem;
+}
+
+.settings {
+  display: grid;
+  grid-template-columns: 11rem minmax(0, 1fr);
+  gap: 2rem;
+  align-items: start;
+}
+
+.settings-nav {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.settings-nav-link {
+  padding: 0.45rem 0.75rem;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.settings-nav-link:hover {
+  color: var(--text);
+}
+
+.settings-nav-link[aria-current="page"] {
+  color: var(--text);
+  background: var(--surface);
+  border-color: var(--border);
+  font-weight: 500;
+}
+
+.settings-content {
+  display: grid;
+  gap: 1.25rem;
+  max-width: 44rem;
+}
+
+.settings-content .card {
+  max-width: none;
+  margin: 0;
+}
+
+.settings-head {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.settings-head h2,
+.settings-head p {
+  margin: 0;
+}
+
+.settings-username {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.settings-status {
+  color: var(--muted);
+}
+
+.settings-status::before {
+  content: "";
+  display: inline-block;
+  margin-right: 0.45rem;
+  vertical-align: 0.05em;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  border: 1.5px solid var(--muted);
+}
+
+.settings-status-ok {
+  color: var(--text);
+}
+
+.settings-status-ok::before {
+  background: var(--ok);
+  border-color: var(--ok);
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem 1.25rem;
+  align-items: start;
+}
+
+.form-grid-full {
+  grid-column: 1 / -1;
+}
+
+.form-actions-split {
+  flex-direction: row-reverse;
+  justify-content: space-between;
+  padding-top: 0.25rem;
+}
+
+@media (max-width: 720px) {
+  .settings {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1.25rem;
+  }
+
+  .settings-nav {
+    display: flex;
+    overflow-x: auto;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 0.5rem;
+  }
+
+  .settings-nav-link {
+    white-space: nowrap;
+  }
+
+  .form-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.logout .button-quiet {
+  white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+  .topbar {
+    flex-wrap: wrap;
+    gap: 0.5rem 1rem;
+    padding: 0.6rem 1rem;
+  }
+
+  .brand {
+    flex: 1;
+  }
+
+  .nav {
+    order: 1;
+    flex-basis: 100%;
+    overflow-x: auto;
+  }
+
+  .nav-link {
+    white-space: nowrap;
+  }
+
+  .main {
+    padding: 1.5rem 1rem;
+  }
+}
