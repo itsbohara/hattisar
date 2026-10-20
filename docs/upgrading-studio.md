@@ -53,6 +53,8 @@ facts in design §1 in `apps/studio`:
   that query through Studio's own env connection. hattisar must 404 or redirect each one.
 - `pages/api/platform/projects/*` and `pages/api/v1/projects/*` — the project shapes hattisar
   imitates (design §3.1) and the `databases` / `types/typescript` routes it answers itself.
+- `lib/api/self-hosted/settings.ts` `getProjectSettings` — the stub shape the `settings` route
+  spreads (design §3.1): hattisar overrides only a few fields and passes the rest through.
 - The encryption (`crypto-js` AES, passphrase mode) and the env names in `docker/compose.yml`.
 
 A route that builds its connection from Studio's env fails closed — it lands on
