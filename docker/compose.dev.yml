@@ -2,7 +2,10 @@ services:
   hattisar:
     build:
       target: dev
-    command: ["pnpm", "dev"]
+    # node_modules comes from the image, which `stack:up --build` rebuilds when the lockfile changes.
+    # pnpm's own check compares the mounted package.json's mtime with the cached install and, after
+    # a checkout touches the file, tries to reinstall into the root-owned /app and crash-loops.
+    command: ["pnpm", "--config.verify-deps-before-run=false", "dev"]
     # Development and the tests run with managed boxes on (stack:up enables the managed-boxes
     # profile); production compose leaves them off.
     environment:
