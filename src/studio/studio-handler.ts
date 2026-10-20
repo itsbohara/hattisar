@@ -25,6 +25,8 @@ export interface StudioDeps {
 const PROJECT_NOT_FOUND = { message: "Project not found" };
 
 export function createStudioHandler({ config, projects, pgMetaLog }: StudioDeps) {
+  const pgMetaTimeoutMs = config.pgMetaTimeoutSeconds * 1000;
+
   function trace(c: Context, project: Project): void {
     if (!config.debug) return;
     const entry = {
@@ -92,13 +94,20 @@ export function createStudioHandler({ config, projects, pgMetaLog }: StudioDeps)
           config.pgMetaUrl,
           project,
           config.pgMetaCryptoKey,
+          pgMetaTimeoutMs,
         );
         return Response.json(result.body, { status: result.status });
       }
       case "pg-meta-query": {
         trace(c, project);
         const body = await c.req.json().catch(() => undefined);
-        const result = await runQuery(config.pgMetaUrl, project, config.pgMetaCryptoKey, body);
+        const result = await runQuery(
+          config.pgMetaUrl,
+          project,
+          config.pgMetaCryptoKey,
+          body,
+          pgMetaTimeoutMs,
+        );
         return Response.json(result.body, { status: result.status });
       }
       case "pg-meta":
