@@ -12,9 +12,6 @@ export function uiRoutes(): Hono<AuthEnv> {
 
   app.get(APP_CSS_PATH, (c) => c.body(APP_CSS, 200, { "content-type": "text/css; charset=utf-8" }));
 
-  app.get("/_hs/projects", (c) =>
-    renderPage(c, <EmptyPage title="Projects" section="projects" message="No projects yet." />),
-  );
   app.get("/_hs/trash", (c) =>
     renderPage(c, <EmptyPage title="Trash" section="trash" message="Trash is empty." />),
   );
