@@ -54,7 +54,7 @@ Order matters; first match wins.
 
 | Path | Behaviour |
 |---|---|
-| `/_hs/healthz` | 200 `ok`, no auth. |
+| `/_hs/healthz` | 200 `{"ok":true}`, no auth. |
 | `/_hs/login`, `/_hs/static/*` | No auth. |
 | everything else | Requires a session (§6). API paths (`/api/*`) → 401 JSON; pages → 302 `/_hs/login`. |
 | `/` | 302 `/_hs/projects` |
@@ -62,7 +62,8 @@ Order matters; first match wins.
 | `/api/ai/*` | 404 `{"error":{"message":"AI features are disabled in hattisar"}}` |
 | `GET /api/platform/projects` | Active projects the user may access, Studio shape (§3.1). |
 | `GET /api/platform/projects/:ref` | One project, Studio shape + `connectionString: ""`, `restUrl: ""`. Unknown/deleted/forbidden → 404. |
-| `/api/platform/projects/:ref/run-lints`, `/api/v1/projects/:ref/database/migrations`, `/api/mcp`, `/api/mcp/*` | 404 `{"error":{"message":"Not available in hattisar"}}` |
+| `GET /api/platform/projects/:ref/run-lints` | 200 `[]` — any error status makes Studio retry with backoff for ~12 s before the Table Editor refreshes (measured). Advisors therefore show no lints. |
+| `/api/v1/projects/:ref/database/migrations`, `/api/mcp`, `/api/mcp/*` | 404 `{"error":{"message":"Not available in hattisar"}}` |
 | `GET /api/platform/projects/:ref/databases` | hattisar answers: Studio's shape with `identifier` = ref, `db_name`, `db_host`/`db_port` = box public host/port, `db_user` = the project's owner role (admin user until projects have owners), other fields as Studio's. |
 | `GET /api/v1/projects/:ref/types/typescript` | hattisar calls `${PG_META_URL}/generators/typescript` with the same query Studio uses and the project's `x-connection-encrypted`; mirrors Studio's response shape. |
 | `/api/platform/projects/:ref/*` | Unknown/forbidden ref → 404; else pass through. |
@@ -73,7 +74,8 @@ Order matters; first match wins.
 | `/project/:ref`, `/project/:ref/*` | Unknown/forbidden ref → 302 `/_hs/projects`; else pass through. |
 | `/projects`, `/organizations`, `/org/*` | 302 `/_hs/projects` |
 | `/new`, `/new/*` | 302 `/_hs/projects/new` |
-| anything else | Pass through to Studio, streaming, method/body/query preserved, `Host` rewritten. |
+| path starting with `//` | 404. |
+| anything else | Pass through to Studio, streaming, method/body/query preserved, `Host` rewritten. The upstream URL is always Studio's origin with the request path set on it — never a URL resolved from the request path. `hs_session` and any client `x-connection-encrypted` are stripped from what Studio receives. |
 
 **Invariant — no silent default DB.** No request reaches postgres-meta (directly or via Studio's
 pg-meta routes) without hattisar having set `x-connection-encrypted` for the ref in the URL. A
@@ -153,8 +155,9 @@ Failure lists every unmet item. A box with projects (any status) cannot be remov
   N=2^15, r=8, p=1, 16-byte salt, 64-byte key; constant-time compare.
 - Session: 32 random bytes, base64url, cookie `hs_session` (`HttpOnly`, `SameSite=Lax`, `Path=/`,
   `Secure` when `HATTISAR_COOKIE_SECURE=true`), stored as SHA-256 hash, 7-day expiry.
-- State-changing `/_hs/*` requests (non-GET) require `Origin` or `Referer` to match the request
-  host, else 403.
+- Every state-changing request (non-GET/HEAD) — `/_hs/*` **and** the proxied `/api/*`, which can
+  run SQL — requires `Origin` or `Referer` to match the request host, else 403. The reverse proxy in
+  front of hattisar must preserve `Host`.
 - Login: 5 failures per username per 15 min → 429 until window passes (in-memory).
 - Change password (Settings): current + new (≥ 12) + confirm; on success all other sessions of
   that user are deleted.
