@@ -7,5 +7,6 @@ services:
     # macOS-built native modules never reach the Linux container.
     volumes:
       - ../src:/app/src:ro
+      - ../sql:/app/sql:ro
       - ../package.json:/app/package.json:ro
       - ../tsconfig.json:/app/tsconfig.json:ro

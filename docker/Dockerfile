@@ -14,6 +14,7 @@ RUN corepack enable && corepack install && pnpm install --frozen-lockfile
 FROM deps AS dev
 COPY tsconfig.json ./
 COPY src ./src
+COPY sql ./sql
 USER node
 VOLUME /data
 EXPOSE 8000
@@ -28,6 +29,7 @@ FROM os AS runtime
 COPY --from=build /app/package.json ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
+COPY sql ./sql
 USER node
 VOLUME /data
 EXPOSE 8000
