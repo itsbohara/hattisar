@@ -1,3 +1,5 @@
+# Copied from supabase/supabase docker/volumes/pooler/pooler.exs (Apache-2.0); see docker/NOTICE.
+
 {:ok, _} = Application.ensure_all_started(:supavisor)
 
 {:ok, version} =
