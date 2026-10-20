@@ -109,6 +109,18 @@ export function markBackupFailed(
   ).run(error, now, id);
 }
 
+export function failRunningBackups(
+  db: Registry,
+  error: string,
+  now: string = new Date().toISOString(),
+): number {
+  return db
+    .prepare<[string, string]>(
+      "UPDATE backups SET status = 'failed', error = ?, finished_at = ? WHERE status = 'running'",
+    )
+    .run(error, now).changes;
+}
+
 export function deleteBackup(db: Registry, id: number): void {
   db.prepare<[number]>("DELETE FROM backups WHERE id = ?").run(id);
 }

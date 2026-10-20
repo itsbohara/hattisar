@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   deleteBackup,
+  failRunningBackups,
   getBackup,
   getBackupSchedule,
   insertBackup,
@@ -396,6 +397,19 @@ describe("backups", () => {
     ]);
     deleteBackup(db, first.id);
     expect(listBackups(db, projectId).map((b) => b.id)).toEqual([second.id]);
+  });
+
+  it("fails every running backup with the given error", () => {
+    const running = insertBackup(db, { projectId, kind: "manual", s3Key: "a.dump" }, T0);
+    const done = insertBackup(db, { projectId, kind: "manual", s3Key: "b.dump" }, T0);
+    markBackupDone(db, done.id, 10, T1);
+    expect(failRunningBackups(db, "interrupted by restart", T2)).toBe(1);
+    expect(getBackup(db, running.id)).toMatchObject({
+      status: "failed",
+      error: "interrupted by restart",
+      finishedAt: T2,
+    });
+    expect(getBackup(db, done.id)).toMatchObject({ status: "done", error: null, finishedAt: T1 });
   });
 
   it("rejects unknown frequency, kind and status", () => {
