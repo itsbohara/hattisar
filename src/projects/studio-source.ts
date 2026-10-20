@@ -39,6 +39,7 @@ export class RegistryProjectSource implements ProjectSource {
         port: box.port,
         adminUser: box.adminUser,
         adminPassword: decryptSecret(box.adminPasswordEnc, this.secretKey),
+        sslmode: box.sslmode,
         publicHost: box.publicHost,
         publicPort: box.publicPort,
       },

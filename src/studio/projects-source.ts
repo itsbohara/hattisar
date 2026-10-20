@@ -3,6 +3,7 @@ export interface Box {
   port: number;
   adminUser: string;
   adminPassword: string;
+  sslmode: string;
   publicHost: string;
   publicPort: number;
 }

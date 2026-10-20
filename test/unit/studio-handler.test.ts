@@ -129,6 +129,19 @@ describe("pg-meta pass-through", () => {
     expect(seen[0]?.url).toBe("/api/platform/pg-meta/spike-b/tables?included_schemas=public");
   });
 
+  it("carries the box's sslmode in the connection it sets", async () => {
+    registry.prepare("UPDATE boxes SET sslmode = 'require'").run();
+    try {
+      await request("/api/platform/pg-meta/spike-b/tables");
+    } finally {
+      registry.prepare("UPDATE boxes SET sslmode = 'disable'").run();
+    }
+    const header = seen[0]?.headers["x-connection-encrypted"] as string;
+    expect(CryptoJS.AES.decrypt(header, cryptoKey).toString(CryptoJS.enc.Utf8)).toBe(
+      "postgresql://supabase_admin:pw@db:5432/spike_b?sslmode=require",
+    );
+  });
+
   it.each(["nope", "gone"])(
     "answers an unknown or deleted ref (%s) with 404 and never reaches Studio",
     async (ref) => {
