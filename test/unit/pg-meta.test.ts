@@ -28,7 +28,8 @@ async function listen(stall: "headers" | "body"): Promise<string> {
 }
 
 afterEach(async () => {
-  server?.closeAllConnections();
+  if (server === undefined) return;
+  server.closeAllConnections();
   await new Promise((resolve) => server?.close(resolve));
   server = undefined;
 });
@@ -67,7 +68,8 @@ describe.each(["headers", "body"] as const)("postgres-meta stalling on %s", (sta
 describe("postgres-meta unreachable", () => {
   it("keeps answering 500 for errors other than the timeout", async () => {
     const url = await listen("headers");
-    server?.close();
+    await new Promise((resolve) => server?.close(resolve));
+    server = undefined;
     const query = await runQuery(url, project, cryptoKey, { query: "select 1" }, TIMEOUT_MS);
     const types = await generateTypescriptTypes(url, project, cryptoKey, TIMEOUT_MS);
     expect(query.status).toBe(500);
