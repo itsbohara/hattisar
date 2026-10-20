@@ -1,8 +1,13 @@
 import { type Box, getBoxById, listBoxes } from "../registry/boxes.js";
 import type { Registry } from "../registry/db.js";
 import { getProjectByRef, listProjects, type Project } from "../registry/projects.js";
-import { decryptSecret } from "../registry/secrets.js";
-import type { ProjectSource, Project as StudioProject } from "../studio/projects-source.js";
+import { decryptSecret, SecretError } from "../registry/secrets.js";
+import {
+  type ProjectSource,
+  type ProjectSummary,
+  type Project as StudioProject,
+  UnreadableSecretError,
+} from "../studio/projects-source.js";
 
 // Only active projects exist for Studio: a deleted one answers like an unknown ref.
 export class RegistryProjectSource implements ProjectSource {
@@ -11,11 +16,11 @@ export class RegistryProjectSource implements ProjectSource {
     private readonly secretKey: Buffer,
   ) {}
 
-  async list(_user: string): Promise<StudioProject[]> {
+  async list(_user: string): Promise<ProjectSummary[]> {
     const boxes = new Map(listBoxes(this.db).map((box) => [box.id, box]));
     return listProjects(this.db, "active").flatMap((project) => {
       const box = boxes.get(project.boxId);
-      return box ? [this.toStudio(project, box)] : [];
+      return box ? [toSummary(project, box)] : [];
     });
   }
 
@@ -23,26 +28,36 @@ export class RegistryProjectSource implements ProjectSource {
     const project = getProjectByRef(this.db, ref);
     if (project?.status !== "active") return undefined;
     const box = getBoxById(this.db, project.boxId);
-    return box && this.toStudio(project, box);
+    return box && { ...toSummary(project, box), ownerPassword: () => this.decrypt(project) };
   }
 
-  private toStudio(project: Project, box: Box): StudioProject {
-    return {
-      id: project.id,
-      ref: project.ref,
-      name: project.name,
-      dbName: project.dbName,
-      ownerRole: project.ownerRole,
-      ownerPassword: decryptSecret(project.ownerPasswordEnc, this.secretKey),
-      boxName: box.name,
-      box: {
-        host: box.host,
-        port: box.port,
-        sslmode: box.sslmode,
-        publicHost: box.publicHost,
-        publicPort: box.publicPort,
-      },
-      insertedAt: project.createdAt,
-    };
+  private decrypt(project: Project): string {
+    try {
+      return decryptSecret(project.ownerPasswordEnc, this.secretKey);
+    } catch (error) {
+      if (!(error instanceof SecretError)) throw error;
+      throw new UnreadableSecretError(
+        `The owner password of project ${project.ref} cannot be decrypted. Rotate it on its hattisar project page.`,
+      );
+    }
   }
+}
+
+function toSummary(project: Project, box: Box): ProjectSummary {
+  return {
+    id: project.id,
+    ref: project.ref,
+    name: project.name,
+    dbName: project.dbName,
+    ownerRole: project.ownerRole,
+    boxName: box.name,
+    box: {
+      host: box.host,
+      port: box.port,
+      sslmode: box.sslmode,
+      publicHost: box.publicHost,
+      publicPort: box.publicPort,
+    },
+    insertedAt: project.createdAt,
+  };
 }

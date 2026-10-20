@@ -1,5 +1,4 @@
 import pg from "pg";
-import { busyProblem, busyReason } from "../backups/service.js";
 import { type BoxConnection, safeErrorMessage } from "../boxes/admin-client.js";
 import { boxConnection } from "../boxes/service.js";
 import { type Box, getBoxById } from "../registry/boxes.js";
@@ -10,12 +9,25 @@ import {
   markProjectRestored,
   type Project,
 } from "../registry/projects.js";
+import { busyReason, holdingProject, type ProjectOperation } from "./locks.js";
 import { deletedDbNameFor } from "./naming.js";
 import type { ProjectServiceDeps } from "./service.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 export type LifecycleResult = { ok: true } | { ok: false; problem: string };
+
+const DELETE: ProjectOperation = {
+  action: "delete",
+  holds: "it is being deleted",
+  status: "active",
+};
+const UNDELETE: ProjectOperation = {
+  action: "restore",
+  holds: "it is being restored from Trash",
+  status: "deleted",
+};
+const PURGE: ProjectOperation = { action: "purge", holds: "it is being purged", status: "deleted" };
 
 const RENAME_ATTEMPTS = 3;
 const OBJECT_IN_USE = "55006";
@@ -95,8 +107,15 @@ export async function softDeleteProject(
   box: Box,
   now: Date = new Date(),
 ): Promise<LifecycleResult> {
-  const busy = busyProblem(deps.db, project, "delete");
-  if (busy !== undefined) return { ok: false, problem: busy };
+  return holdingProject(deps.db, project, DELETE, (current) => softDelete(deps, current, box, now));
+}
+
+async function softDelete(
+  deps: ProjectServiceDeps,
+  project: Project,
+  box: Box,
+  now: Date,
+): Promise<LifecycleResult> {
   const db = pg.escapeIdentifier(project.dbName);
   const role = pg.escapeIdentifier(project.ownerRole);
   let deletedDbName = "";
@@ -125,6 +144,14 @@ export async function softDeleteProject(
 }
 
 export async function restoreProject(
+  deps: ProjectServiceDeps,
+  project: Project,
+  box: Box,
+): Promise<LifecycleResult> {
+  return holdingProject(deps.db, project, UNDELETE, (current) => undelete(deps, current, box));
+}
+
+async function undelete(
   deps: ProjectServiceDeps,
   project: Project,
   box: Box,
@@ -166,10 +193,16 @@ export async function purgeProject(
   project: Project,
   box: Box,
 ): Promise<LifecycleResult> {
+  return holdingProject(deps.db, project, PURGE, (current) => purge(deps, current, box));
+}
+
+async function purge(
+  deps: ProjectServiceDeps,
+  project: Project,
+  box: Box,
+): Promise<LifecycleResult> {
   const { deletedDbName } = project;
   if (deletedDbName === null) return { ok: false, problem: "Project is not deleted" };
-  const busy = busyProblem(deps.db, project, "purge");
-  if (busy !== undefined) return { ok: false, problem: busy };
   const result = await onBox(deps, box, "purge", async (conn) => {
     if ((await deps.onLifecycle?.(box, project, "purging")) === "skip-sql") return;
     await deps.admin(conn, async (client) => {

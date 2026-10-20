@@ -41,6 +41,7 @@ describe("loadConfig", () => {
       studioUrl: "http://studio:3000",
       pgMetaUrl: "http://meta:8080",
       pgMetaCryptoKey: required.PG_META_CRYPTO_KEY,
+      pgMetaTimeoutSeconds: 120,
       postgresPassword: required.POSTGRES_PASSWORD,
       pooler: { tenantId: "hattisar", portSession: 54322, portTransaction: 6543 },
       debug: false,
@@ -108,6 +109,19 @@ describe("loadConfig", () => {
       "HATTISAR_BACKUP_HOUR_UTC must be an integer between 0 and 23",
     );
   });
+
+  it("reads HATTISAR_PG_META_TIMEOUT_SECONDS", () => {
+    expect(load({ HATTISAR_PG_META_TIMEOUT_SECONDS: "30" }).pgMetaTimeoutSeconds).toBe(30);
+  });
+
+  it.each(["0", "-5", "1.5", "abc", "86401"])(
+    "rejects HATTISAR_PG_META_TIMEOUT_SECONDS=%s",
+    (value) => {
+      expect(errorOf({ HATTISAR_PG_META_TIMEOUT_SECONDS: value }).message).toBe(
+        "HATTISAR_PG_META_TIMEOUT_SECONDS must be an integer between 1 and 86400",
+      );
+    },
+  );
 
   it("rejects a non-boolean flag", () => {
     expect(errorOf({ HATTISAR_MANAGED_BOXES: "yes" }).message).toBe(

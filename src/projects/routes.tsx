@@ -8,6 +8,7 @@ import { getBackupSchedule, listBackups } from "../registry/backups.js";
 import { type Box, getBoxById, getSharedBox, listBoxes } from "../registry/boxes.js";
 import type { Registry } from "../registry/db.js";
 import { getProjectByRef, listProjects, type Project } from "../registry/projects.js";
+import { SecretError } from "../registry/secrets.js";
 import { renderPage } from "../ui/layout.js";
 import {
   NEW_BOX_OPTION,
@@ -17,7 +18,7 @@ import {
   type ProjectPageNotice,
   ProjectsPage,
 } from "../ui/pages/projects.js";
-import { ownerConnectionStrings } from "./connection-strings.js";
+import { type ConnectionString, ownerConnectionStrings } from "./connection-strings.js";
 import { softDeleteProject } from "./lifecycle.js";
 import {
   createProject,
@@ -61,6 +62,19 @@ export interface ProjectPageDeps {
   backupHourUtc: number;
 }
 
+// A secret that will not decrypt leaves the page usable: rotating is how it gets repaired.
+function connectionStrings(
+  { project, box }: ProjectAndBox,
+  secretKey: Buffer,
+): ConnectionString[] | undefined {
+  try {
+    return ownerConnectionStrings(box, project, ownerPassword(project, secretKey));
+  } catch (error) {
+    if (error instanceof SecretError) return undefined;
+    throw error;
+  }
+}
+
 export function renderProjectDetail(
   c: Context<AuthEnv>,
   { db, secretKey, backupHourUtc }: ProjectPageDeps,
@@ -68,7 +82,7 @@ export function renderProjectDetail(
   notice?: ProjectPageNotice,
   status: 200 | 400 | 502 = 200,
 ) {
-  const strings = ownerConnectionStrings(box, project, ownerPassword(project, secretKey));
+  const strings = connectionStrings({ project, box }, secretKey);
   return renderPage(
     c,
     <ProjectPage

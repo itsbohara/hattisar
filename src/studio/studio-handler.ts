@@ -6,11 +6,17 @@ import { connectionHeaders, generateTypescriptTypes, type PgMetaLog, runQuery } 
 import {
   AI_DISABLED_BODY,
   NOT_AVAILABLE_BODY,
+  SETTINGS_UNAVAILABLE_BODY,
   studioDatabases,
   studioProject,
   studioProjectDetail,
+  studioSettings,
 } from "./platform-routes.js";
-import type { Project, ProjectSource } from "./projects-source.js";
+import {
+  type ProjectSource,
+  type ProjectSummary,
+  UnreadableSecretError,
+} from "./projects-source.js";
 import { proxyToStudio } from "./proxy.js";
 import { classifyRequest } from "./routes.js";
 
@@ -23,7 +29,9 @@ export interface StudioDeps {
 const PROJECT_NOT_FOUND = { message: "Project not found" };
 
 export function createStudioHandler({ config, projects, pgMetaLog }: StudioDeps) {
-  function trace(c: Context, project: Project): void {
+  const pgMetaTimeoutMs = config.pgMetaTimeoutSeconds * 1000;
+
+  function trace(c: Context, project: ProjectSummary): void {
     if (!config.debug) return;
     const entry = {
       at: new Date().toISOString(),
@@ -68,38 +76,63 @@ export function createStudioHandler({ config, projects, pgMetaLog }: StudioDeps)
         : c.json(PROJECT_NOT_FOUND, 404);
     }
 
-    switch (route.kind) {
-      case "platform-project":
-        return c.json(studioProjectDetail(project));
-      case "project-databases":
-        return c.json(studioDatabases(project));
-      case "run-lints":
-        return c.json([]);
-      case "project-types": {
-        trace(c, project);
-        const result = await generateTypescriptTypes(
-          config.pgMetaUrl,
-          project,
-          config.pgMetaCryptoKey,
-        );
-        return Response.json(result.body, { status: result.status });
+    try {
+      switch (route.kind) {
+        case "platform-project":
+          return c.json(studioProjectDetail(project));
+        case "project-databases":
+          return c.json(studioDatabases(project));
+        case "project-settings": {
+          // Never the stub as-is: it describes Studio's own default database.
+          const upstream = await proxyToStudio(config.studioUrl, c.req.raw);
+          const stub: unknown = upstream.ok
+            ? await upstream.json().catch(() => undefined)
+            : undefined;
+          if (!isRecord(stub)) return c.json(SETTINGS_UNAVAILABLE_BODY, 502);
+          return c.json(studioSettings(project, stub));
+        }
+        case "run-lints":
+          return c.json([]);
+        case "project-types": {
+          trace(c, project);
+          const result = await generateTypescriptTypes(
+            config.pgMetaUrl,
+            project,
+            config.pgMetaCryptoKey,
+            pgMetaTimeoutMs,
+          );
+          return Response.json(result.body, { status: result.status });
+        }
+        case "pg-meta-query": {
+          trace(c, project);
+          const body = await c.req.json().catch(() => undefined);
+          const result = await runQuery(
+            config.pgMetaUrl,
+            project,
+            config.pgMetaCryptoKey,
+            body,
+            pgMetaTimeoutMs,
+          );
+          return Response.json(result.body, { status: result.status });
+        }
+        case "pg-meta":
+          trace(c, project);
+          return proxyToStudio(
+            config.studioUrl,
+            c.req.raw,
+            connectionHeaders(project, config.pgMetaCryptoKey),
+          );
+        case "project-api-pass":
+        case "studio-project":
+          return proxyToStudio(config.studioUrl, c.req.raw);
       }
-      case "pg-meta-query": {
-        trace(c, project);
-        const body = await c.req.json().catch(() => undefined);
-        const result = await runQuery(config.pgMetaUrl, project, config.pgMetaCryptoKey, body);
-        return Response.json(result.body, { status: result.status });
-      }
-      case "pg-meta":
-        trace(c, project);
-        return proxyToStudio(
-          config.studioUrl,
-          c.req.raw,
-          connectionHeaders(project, config.pgMetaCryptoKey),
-        );
-      case "project-api-pass":
-      case "studio-project":
-        return proxyToStudio(config.studioUrl, c.req.raw);
+    } catch (error) {
+      if (error instanceof UnreadableSecretError) return c.json({ message: error.message }, 500);
+      throw error;
     }
   };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

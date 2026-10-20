@@ -11,7 +11,11 @@ import { loadConfig } from "../../src/config.js";
 import { projectRoutes } from "../../src/projects/routes.js";
 import { getSharedBox, insertBox } from "../../src/registry/boxes.js";
 import { openRegistry, type Registry } from "../../src/registry/db.js";
-import { getProjectByRef, markProjectDeleted } from "../../src/registry/projects.js";
+import {
+  getProjectByRef,
+  markProjectDeleted,
+  setProjectOwnerPassword,
+} from "../../src/registry/projects.js";
 import { decryptSecret, deriveSecretKey, encryptSecret } from "../../src/registry/secrets.js";
 import { insertUser } from "../../src/registry/users.js";
 
@@ -286,5 +290,33 @@ describe("rotating the owner password", () => {
     expect(response.status).toBe(502);
     expect(await response.text()).toContain("Could not rotate the password: boom");
     expect(ownerPassword("my-app")).toBe(before);
+  });
+});
+
+describe("a project whose owner password will not decrypt", () => {
+  async function createUnreadable(): Promise<void> {
+    await create();
+    const project = getProjectByRef(db, "my-app");
+    const otherKey = deriveSecretKey("q".repeat(32));
+    setProjectOwnerPassword(db, project?.id ?? 0, encryptSecret("lost", otherKey));
+  }
+
+  it("still renders its page, explaining the missing connection strings", async () => {
+    await createUnreadable();
+    const response = await app.request("/_hs/projects/my-app");
+    expect(response.status).toBe(200);
+    const html = await response.text();
+    expect(html).toContain("cannot be decrypted");
+    expect(html).not.toContain("postgresql://");
+    expect(html).toContain('action="/_hs/projects/my-app/rotate"');
+  });
+
+  it("rotates to a fresh password without reading the old one", async () => {
+    await createUnreadable();
+    const response = await post("/_hs/projects/my-app/rotate", {});
+    expect(response.status).toBe(302);
+    const after = ownerPassword("my-app");
+    expect(refreshed.at(-1)).toEqual({ ref: "my-app", password: after });
+    expect(await (await app.request("/_hs/projects/my-app")).text()).toContain(after);
   });
 });

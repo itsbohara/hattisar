@@ -1,5 +1,4 @@
 import pg from "pg";
-import { busyProblem } from "../backups/service.js";
 import type { AdminClientRunner, BoxConnection } from "../boxes/admin-client.js";
 import { safeErrorMessage } from "../boxes/admin-client.js";
 import { boxConnection } from "../boxes/service.js";
@@ -14,6 +13,7 @@ import {
 } from "../registry/projects.js";
 import { decryptSecret, encryptSecret } from "../registry/secrets.js";
 import { baselineSql } from "./baseline.js";
+import { holdingProject, type ProjectOperation } from "./locks.js";
 import { dbNameFor, ownerRoleFor, refProblem } from "./naming.js";
 import { generateOwnerPassword, scramVerifier } from "./owner-password.js";
 import type { PoolerRefresher } from "./pooler.js";
@@ -208,13 +208,25 @@ export function renameProjectDisplay(
   return { ok: true };
 }
 
+const ROTATE: ProjectOperation = {
+  action: "rotate the password of",
+  holds: "its password is being rotated",
+  status: "active",
+};
+
 export async function rotateOwnerPassword(
   deps: ProjectServiceDeps,
   project: Project,
   box: Box,
 ): Promise<{ ok: true } | { ok: false; problem: string }> {
-  const busy = busyProblem(deps.db, project, "rotate the password of");
-  if (busy !== undefined) return { ok: false, problem: busy };
+  return holdingProject(deps.db, project, ROTATE, (current) => rotate(deps, current, box));
+}
+
+async function rotate(
+  deps: ProjectServiceDeps,
+  project: Project,
+  box: Box,
+): Promise<{ ok: true } | { ok: false; problem: string }> {
   const conn = boxConnection(box, deps.secretKey);
   const password = generateOwnerPassword();
   try {

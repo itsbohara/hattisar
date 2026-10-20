@@ -21,6 +21,7 @@ Studio image `supabase/studio:2026.10.12-sha-3699278`, read from `apps/studio` s
 | `/api/platform/projects/<ref>/run-lints`, `/api/v1/projects/<ref>/database/migrations`, `/api/mcp*` | Query through Studio's env connection (`lib/api/self-hosted/{lints,migrations,mcp}.ts` → `executeQuery`). Not redirectable. |
 | `/api/v1/projects/<ref>/types/typescript` | `GET ${PG_META_URL}/generators/typescript?...` **without** a connection header → meta's default DB. |
 | `/api/platform/projects/<ref>/databases` | Returns hard-coded connection info for `postgres`. |
+| `GET /api/platform/projects/<ref>/settings` | Returns one hard-coded project (`lib/api/self-hosted/settings.ts` `getProjectSettings`): flat `db_host`/`db_port` from env, `db_name`/`db_user` = `postgres`, `ssl_enforced: false`, plus `ref`, `service_api_keys`, `jwt_secret`, `app_config`. |
 
 **Fail closed.** Studio's `POSTGRES_DB` and meta's `PG_META_DB_NAME` are set to
 `hattisar_no_project`, a database that exists on no box. Any route hattisar does not redirect —
@@ -65,6 +66,7 @@ Order matters; first match wins.
 | `GET /api/platform/projects/:ref/run-lints` | 200 `[]` — any error status makes Studio retry with backoff for ~12 s before the Table Editor refreshes (measured). Advisors therefore show no lints. |
 | `/api/v1/projects/:ref/database/migrations`, `/api/mcp`, `/api/mcp/*` | 404 `{"error":{"message":"Not available in hattisar"}}` |
 | `GET /api/platform/projects/:ref/databases` | hattisar answers: Studio's shape with `identifier` = ref, `db_name`, `db_host`/`db_port` = box public host/port, `db_user` = the project's owner role (admin user until projects have owners), other fields as Studio's. |
+| `GET /api/platform/projects/:ref/settings` | hattisar fetches Studio's stub for the same request and overrides only `ref`, `name`, `db_host`/`db_port` (box public host/port), `db_name`, `db_user` (owner role) and, when the box's sslmode is `require`/`verify-ca`/`verify-full`, `ssl_enforced: true`; every other field is Studio's. Stub unreachable, non-2xx or not a JSON object → 502, never the default. Unknown/deleted/forbidden → 404. |
 | `GET /api/v1/projects/:ref/types/typescript` | hattisar calls `${PG_META_URL}/generators/typescript` with the same query Studio uses and the project's `x-connection-encrypted`; mirrors Studio's response shape. |
 | `/api/platform/projects/:ref/*` | Unknown/forbidden ref → 404; else pass through. |
 | `/api/v1/projects/:ref/*` | Unknown/forbidden ref → 404; else pass through. |
@@ -84,7 +86,20 @@ pg-meta request hattisar cannot resolve is a 404, never a pass-through.
 HTML responses from Studio get `<link rel="stylesheet" href="/_hs/static/studio.css">` and
 `<script src="/_hs/static/studio.js" defer></script>` injected before `</head>`. The CSS hides
 sidebar entries for Authentication, Storage, Edge Functions and Realtime; the script adds a
-"← hattisar" link to the top bar. Content-Length is dropped on rewritten responses.
+"← hattisar" link to the top bar and redirects the Connect sheet (below). Content-Length is dropped
+on rewritten responses.
+
+Studio's Connect sheet is replaced by hattisar's project page. In self-hosted mode the sheet's
+connection strings come from `buildConnectionStringPooler` in the browser bundle, which takes only
+`db_host` and `db_port` (from `/databases`) and hard-codes the rest: user `postgres` (pooler tabs
+`postgres.[POOLER_TENANT_ID]`), database `postgres`, transaction port `6543`. The Supavisor config
+query that feeds the pooler tabs in cloud (`/platform/projects/{ref}/config/supavisor`) is gated on
+`IS_PLATFORM` and never sent, so no route hattisar answers can correct the sheet. Instead
+`studio.js` watches for Studio's `showConnect=true` query parameter on `/project/<ref>/*` — on page
+load, on `popstate`, and by wrapping `history.pushState`/`replaceState`, which is how Studio opens
+the sheet without a reload — drops `showConnect`, `connectTab` and `method` from the current
+history entry (so Back does not redirect again) and goes to `/_hs/projects/<ref>`, whose connection
+strings are the project's own. This relies on Studio opening the sheet through `showConnect`.
 
 ### 3.1 Studio project shape
 
@@ -129,6 +144,13 @@ Numbered migrations in `src/registry/migrations/`, applied at boot, tracked in
 AES-256-GCM. Key = SHA-256 of `HATTISAR_SECRET_KEY` (required, ≥ 32 chars, boot fails otherwise).
 Stored as `v1:<iv b64>:<tag b64>:<ciphertext b64>`, 12-byte random IV. Every `*_enc` column and
 the S3 secret key use it. Plaintext secrets never appear in logs or error messages.
+Owner passwords are decrypted only when one project's connection is built, never for a list: a
+project whose secret will not decrypt (corrupt, or `HATTISAR_SECRET_KEY` changed) still appears in
+Studio's list and answers its routes that need no connection, while its pg-meta and type requests
+answer 500 `{message}` saying the password cannot be decrypted. Its hattisar page renders with the
+connection strings replaced by that explanation. Rotating repairs a corrupt owner secret. After a
+`HATTISAR_SECRET_KEY` change, projects on non-shared boxes cannot rotate until the box's own
+credentials are re-entered, because only the shared box is re-seeded from env at boot.
 
 ## 5. Boxes
 
@@ -198,7 +220,8 @@ management) fail with a permission error; hattisar's own admin operations still 
 - other boxes: `postgresql://<owner>:<pw>@<public_host>:<public_port>/<db>`.
 - shared/dev-only boxes show a "development only" badge.
 
-**Rotate owner password:** `ALTER ROLE … PASSWORD …`, store encrypted, show new strings.
+**Rotate owner password:** `ALTER ROLE … PASSWORD …`, store encrypted, show new strings. Never
+reads the old password, so it works when the stored one will not decrypt.
 
 **Soft delete (M2)** — confirm by typing the ref: `REVOKE CONNECT … FROM <owner>`; terminate
 backends on the db; `ALTER DATABASE <db> RENAME TO <db>__deleted_<YYYYMMDD>` (suffix `_2`, `_3`…
@@ -217,6 +240,16 @@ create anything there. Production projects belong on dedicated boxes.
 `HATTISAR_PURGE_AFTER_DAYS` (default 7, checked hourly): `DROP DATABASE … WITH (FORCE)`, `DROP
 ROLE`, delete registry rows (backups in S3 are kept; retention never touches a purged project's
 objects). Managed boxes: §10.
+
+**One lifecycle operation at a time per project.** Soft delete, restore from Trash, purge (manual
+and hourly), password rotation and both kinds of backup restore (§8; for a new project, the restore
+step) hold the project for their whole run in an in-process lock — sufficient because hattisar is
+one process over one SQLite registry. Any of these, or a manual or scheduled backup, started while
+another holds the project or a backup of it is running is refused at once, naming what holds it
+("Can't delete <ref> while it is being restored. Try again when it finishes."); nothing waits.
+Once it holds the lock an operation re-reads the project and refuses if its status no longer
+allows it, e.g. a restore into a project that was deleted meanwhile. The hourly purge skips a busy
+project and retries next hour.
 
 ## 8. Backups
 
@@ -241,7 +274,8 @@ go in `PGPASSWORD` env, never argv. Dumps are custom format (`-Fc`), connecting 
 - **Restore:** from a backup into (a) the same project — confirm by typing the ref; terminate
   backends, drop and recreate the database with the §7 steps 2–4 (same owner, same password), then
   `pg_restore --no-owner --no-privileges --role=<owner> -d <db>`; or (b) a new project — the full
-  §7 create flow, then the same restore. A failed restore leaves the error on the page.
+  §7 create flow, then the same restore. A failed restore leaves the error on the page. Leftover `restore-*` work directories are
+  removed at boot.
 - Docs state plainly: dumps restore to the last dump, not a point in time; production boxes also
   need box-level PITR (WAL-G / pgBackRest).
 
@@ -309,6 +343,7 @@ removes container and volume.
 | `STUDIO_URL` | `http://studio:3000` | |
 | `PG_META_URL` | `http://meta:8080` | |
 | `PG_META_CRYPTO_KEY` | — | shared with meta |
+| `HATTISAR_PG_META_TIMEOUT_SECONDS` | `120` | hattisar's own `/query` and `/generators/typescript` calls; 504 when exceeded; the timeout only stops hattisar waiting, postgres-meta keeps running the statement until its own query timeout |
 | `POSTGRES_PASSWORD` | — | shared box admin |
 | `POOLER_TENANT_ID`, `POOLER_PORT_SESSION` (54322), `POOLER_PORT_TRANSACTION` (6543) | | shared box pooler |
 | `POOLER_SECRET_KEY_BASE`, `POOLER_VAULT_ENC_KEY`, `POOLER_JWT_SECRET` | — | Supavisor's own secrets; generated by `scripts/dev-env.sh` |

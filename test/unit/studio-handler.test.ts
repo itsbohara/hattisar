@@ -4,7 +4,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import CryptoJS from "crypto-js";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "../../src/app.js";
 import { loadConfig } from "../../src/config.js";
 import { insertBox } from "../../src/registry/boxes.js";
@@ -54,7 +54,43 @@ function seedProjects(db: Registry): void {
   }
   const gone = db.prepare("SELECT id FROM projects WHERE ref = 'gone'").get() as { id: number };
   markProjectDeleted(db, gone.id, "gone__deleted_20261020");
+  const east = insertBox(db, {
+    name: "east",
+    kind: "registered",
+    devOnly: false,
+    host: "east-db",
+    port: 5432,
+    adminUser: "postgres",
+    adminPasswordEnc: encryptSecret("pw", secretKey),
+    sslmode: "require",
+    publicHost: "east.example.test",
+    publicPort: 5433,
+    poolerTenant: null,
+    poolerSessionPort: null,
+    poolerTransactionPort: null,
+    containerName: null,
+  });
+  insertProject(db, {
+    ref: "spike-c",
+    name: "spike-c",
+    boxId: east.id,
+    dbName: "spike_c",
+    ownerRole: "hs_spike_c_owner",
+    ownerPasswordEnc: encryptSecret("owner-pw", secretKey),
+  });
 }
+
+const STUDIO_SETTINGS = {
+  app_config: { db_schema: "public", endpoint: "localhost:8000" },
+  db_host: "localhost",
+  db_name: "postgres",
+  db_port: 5432,
+  db_user: "postgres",
+  name: "Default Project",
+  ref: "default",
+  service_api_keys: [{ api_key: "anon", name: "anon key", tags: "anon" }],
+  ssl_enforced: false,
+};
 
 let studio: Server;
 let studioUrl: string;
@@ -63,6 +99,7 @@ let app: ReturnType<typeof createApp>;
 let dataDir: string;
 let registry: Registry;
 let cookie: string;
+let settingsResponse: { status: number; body: string };
 
 beforeAll(async () => {
   studio = createServer((req, res) => {
@@ -76,6 +113,9 @@ beforeAll(async () => {
         const html = "<html><head></head><body></body>";
         res.writeHead(200, { "content-type": "text/html", "content-length": html.length });
         res.end(html);
+      } else if (req.url?.endsWith("/settings")) {
+        res.writeHead(settingsResponse.status, { "content-type": "application/json" });
+        res.end(settingsResponse.body);
       } else if (req.url === "/moved") {
         res.writeHead(307, { location: "/elsewhere" });
         res.end();
@@ -110,6 +150,10 @@ afterAll(() => {
   rmSync(dataDir, { recursive: true, force: true });
 });
 
+beforeEach(() => {
+  settingsResponse = { status: 200, body: JSON.stringify(STUDIO_SETTINGS) };
+});
+
 function request(path: string, init?: RequestInit): Promise<Response> {
   seen = [];
   const headers = new Headers(init?.headers);
@@ -134,11 +178,11 @@ describe("pg-meta pass-through", () => {
   });
 
   it("carries the box's sslmode in the connection it sets", async () => {
-    registry.prepare("UPDATE boxes SET sslmode = 'require'").run();
+    registry.prepare("UPDATE boxes SET sslmode = 'require' WHERE name = 'shared'").run();
     try {
       await request("/api/platform/pg-meta/spike-b/tables");
     } finally {
-      registry.prepare("UPDATE boxes SET sslmode = 'disable'").run();
+      registry.prepare("UPDATE boxes SET sslmode = 'disable' WHERE name = 'shared'").run();
     }
     const header = seen[0]?.headers["x-connection-encrypted"] as string;
     expect(CryptoJS.AES.decrypt(header, cryptoKey).toString(CryptoJS.enc.Utf8)).toBe(
@@ -161,6 +205,7 @@ describe("registry-backed platform routes", () => {
     const response = await request("/api/platform/projects");
     expect(await response.json()).toEqual([
       expect.objectContaining({ ref: "spike-b", region: "shared", status: "ACTIVE_HEALTHY" }),
+      expect.objectContaining({ ref: "spike-c", region: "east", status: "ACTIVE_HEALTHY" }),
     ]);
   });
 
@@ -176,6 +221,125 @@ describe("registry-backed platform routes", () => {
       }),
     ]);
   });
+});
+
+describe("a project whose owner password will not decrypt", () => {
+  const unreadable = {
+    message:
+      "The owner password of project broken cannot be decrypted. Rotate it on its hattisar project page.",
+  };
+
+  beforeAll(() => {
+    const shared = registry.prepare("SELECT id FROM boxes WHERE name = 'shared'").get() as {
+      id: number;
+    };
+    insertProject(registry, {
+      ref: "broken",
+      name: "broken",
+      boxId: shared.id,
+      dbName: "broken",
+      ownerRole: "hs_broken_owner",
+      ownerPasswordEnc: encryptSecret("owner-pw", deriveSecretKey("k".repeat(32))),
+    });
+  });
+
+  afterAll(() => {
+    registry.prepare("DELETE FROM projects WHERE ref = 'broken'").run();
+  });
+
+  it("still lists every project", async () => {
+    const response = await request("/api/platform/projects");
+    expect(response.status).toBe(200);
+    const listed = (await response.json()) as { ref: string }[];
+    expect(listed.map((project) => project.ref)).toEqual(["broken", "spike-b", "spike-c"]);
+  });
+
+  it.each([
+    ["GET", "/api/platform/pg-meta/broken/tables"],
+    ["POST", "/api/platform/pg-meta/broken/query"],
+    ["GET", "/api/v1/projects/broken/types/typescript"],
+  ])("answers %s %s with a readable error and never reaches Studio", async (method, path) => {
+    const response = await request(path, {
+      method,
+      body: method === "POST" ? JSON.stringify({ query: "select 1" }) : undefined,
+      headers: { "content-type": "application/json" },
+    });
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual(unreadable);
+    expect(seen).toHaveLength(0);
+  });
+
+  it("answers the routes that need no password", async () => {
+    expect((await request("/api/platform/projects/broken")).status).toBe(200);
+    expect((await request("/api/platform/projects/broken/databases")).status).toBe(200);
+    expect((await request("/api/platform/projects/broken/settings")).status).toBe(200);
+  });
+
+  it("leaves other projects connecting", async () => {
+    const response = await request("/api/platform/pg-meta/spike-b/tables");
+    expect(response.status).toBe(200);
+    const header = seen[0]?.headers["x-connection-encrypted"] as string;
+    expect(CryptoJS.AES.decrypt(header, cryptoKey).toString(CryptoJS.enc.Utf8)).toBe(
+      "postgresql://hs_spike_b_owner:owner-pw@db:5432/spike_b",
+    );
+  });
+});
+
+describe("project settings", () => {
+  it.each([
+    [
+      "spike-b",
+      {
+        db_host: "db.example.test",
+        db_port: 54322,
+        db_name: "spike_b",
+        db_user: "hs_spike_b_owner",
+      },
+      false,
+    ],
+    [
+      "spike-c",
+      {
+        db_host: "east.example.test",
+        db_port: 5433,
+        db_name: "spike_c",
+        db_user: "hs_spike_c_owner",
+      },
+      true,
+    ],
+  ])("answers %s with its own connection over Studio's stub", async (ref, connection, ssl) => {
+    const response = await request(`/api/platform/projects/${ref}/settings`);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      ...STUDIO_SETTINGS,
+      ...connection,
+      ref,
+      name: ref,
+      ssl_enforced: ssl,
+    });
+    expect(seen.map((s) => s.url)).toEqual([`/api/platform/projects/${ref}/settings`]);
+  });
+
+  it.each([
+    ["an error status", { status: 500, body: JSON.stringify(STUDIO_SETTINGS) }],
+    ["a body that is not JSON", { status: 200, body: "<html>" }],
+    ["a body that is not an object", { status: 200, body: "[]" }],
+  ])("answers 502 when Studio's stub comes back with %s", async (_, stub) => {
+    settingsResponse = stub;
+    const response = await request("/api/platform/projects/spike-b/settings");
+    expect(response.status).toBe(502);
+    expect(JSON.stringify(await response.json())).not.toContain("postgres");
+  });
+
+  it.each(["nope", "gone"])(
+    "answers an unknown or deleted ref (%s) with 404 and never reaches Studio",
+    async (ref) => {
+      const response = await request(`/api/platform/projects/${ref}/settings`);
+      expect(response.status).toBe(404);
+      expect(await response.json()).toEqual({ message: "Project not found" });
+      expect(seen).toHaveLength(0);
+    },
+  );
 });
 
 it("answers a missing hattisar static file with 404, signed in or not", async () => {

@@ -1,7 +1,9 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import type { Dirent } from "node:fs";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import pg from "pg";
 import { type BoxConnection, safeErrorMessage } from "../boxes/admin-client.js";
+import { holdingProject, type ProjectOperation } from "../projects/locks.js";
 import {
   createProject,
   createProjectDatabase,
@@ -15,14 +17,15 @@ import type { Project } from "../registry/projects.js";
 import { restoreArchive, writeRestoreList } from "./pg-restore.js";
 import { downloadBackupObject, s3ErrorMessage } from "./s3.js";
 import { loadS3Settings, type S3Settings } from "./s3-settings.js";
-import {
-  type BackupDeps,
-  type BackupOutcome,
-  boxCredentials,
-  busyReason,
-  NOT_CONFIGURED,
-  whileRestoring,
-} from "./service.js";
+import { type BackupDeps, type BackupOutcome, boxCredentials, NOT_CONFIGURED } from "./service.js";
+
+const WORK_DIR_PREFIX = "restore-";
+
+const RESTORE: ProjectOperation = {
+  action: "restore a backup into",
+  holds: "it is being restored",
+  status: "active",
+};
 
 export type NewProjectRestore =
   | { ok: true; project: Project }
@@ -40,11 +43,33 @@ function restorable(deps: BackupDeps, backup: Backup): S3Settings | string {
 }
 
 async function inWorkDir<T>(dataDir: string, run: (dir: string) => Promise<T>): Promise<T> {
-  const dir = await mkdtemp(join(dataDir, "restore-"));
+  const dir = await mkdtemp(join(dataDir, WORK_DIR_PREFIX));
   try {
     return await run(dir);
   } finally {
     await rm(dir, { recursive: true, force: true });
+  }
+}
+
+export async function removeStaleRestoreDirs(dataDir: string): Promise<void> {
+  let entries: Dirent[];
+  try {
+    entries = await readdir(dataDir, { withFileTypes: true });
+  } catch (error) {
+    console.warn(
+      `hattisar: could not list ${dataDir} for stale restore directories: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return;
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !entry.name.startsWith(WORK_DIR_PREFIX)) continue;
+    try {
+      await rm(join(dataDir, entry.name), { recursive: true, force: true });
+    } catch (error) {
+      console.warn(
+        `hattisar: could not remove stale ${entry.name}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 }
 
@@ -95,38 +120,32 @@ export async function restoreIntoProject(
 ): Promise<BackupOutcome> {
   const settings = restorable(deps, backup);
   if (typeof settings === "string") return { ok: false, problem: settings };
-  if (busyReason(deps.db, project) !== undefined) {
-    return {
-      ok: false,
-      problem: `${project.ref} is busy with a backup or restore. Try again later.`,
-    };
-  }
   const conn = boxCredentials(box, deps.secretKey);
   if (typeof conn === "string") return { ok: false, problem: conn };
-  return whileRestoring(project.id, () =>
+  return holdingProject(deps.db, project, RESTORE, (current) =>
     inWorkDir(deps.dataDir, async (dir) => {
       const fetched = await fetchArchive(deps, settings, backup, dir);
       if (typeof fetched === "string") return { ok: false, problem: fetched };
       try {
         await projectDeps.admin(conn, (client) =>
           client.query(
-            `DROP DATABASE IF EXISTS ${pg.escapeIdentifier(project.dbName)} WITH (FORCE)`,
+            `DROP DATABASE IF EXISTS ${pg.escapeIdentifier(current.dbName)} WITH (FORCE)`,
           ),
         );
-        await createProjectDatabase(projectDeps.admin, conn, project);
+        await createProjectDatabase(projectDeps.admin, conn, current);
       } catch (error) {
         const message = safeErrorMessage(error, conn.password);
         return {
           ok: false,
-          problem: `Could not recreate database ${project.dbName}: ${message}. Restore again to bring it back.`,
+          problem: `Could not recreate database ${current.dbName}: ${message}. Restore again to bring it back.`,
         };
       }
-      const restored = await restoreInto(deps, conn, project, fetched);
+      const restored = await restoreInto(deps, conn, current, fetched);
       if (restored.ok) return restored;
       // Leads the message: pg_restore's stderr tail after it can run to kilobytes.
       return {
         ok: false,
-        problem: `The previous data of ${project.ref} was replaced and its database now holds part of the backup. Restore again to finish. ${restored.problem}`,
+        problem: `The previous data of ${current.ref} was replaced and its database now holds part of the backup. Restore again to finish. ${restored.problem}`,
       };
     }),
   );
@@ -152,8 +171,8 @@ export async function restoreIntoNewProject(
     const created = await createProject(projectDeps, form);
     if (!created.ok) return created;
     const { project } = created;
-    const restored = await whileRestoring(project.id, () =>
-      restoreInto(deps, conn, project, fetched),
+    const restored = await holdingProject(deps.db, project, RESTORE, (current) =>
+      restoreInto(deps, conn, current, fetched),
     );
     return restored.ok ? { ok: true, project } : { ok: false, project, problem: restored.problem };
   });

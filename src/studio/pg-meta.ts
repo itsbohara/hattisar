@@ -47,6 +47,19 @@ function errorResult(status: number, message: string, formattedError?: string): 
   return { status, body: { message, formattedError: formattedError ?? message } };
 }
 
+function isTimeout(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "TimeoutError";
+}
+
+function failureStatus(error: unknown): number {
+  return isTimeout(error) ? 504 : 500;
+}
+
+function failureMessage(error: unknown, timeoutMs: number): string {
+  if (isTimeout(error)) return `postgres-meta did not answer within ${timeoutMs / 1000} s`;
+  return error instanceof Error ? error.message : "pg-meta request failed";
+}
+
 function errorField(body: unknown, field: string): string | undefined {
   if (typeof body !== "object" || body === null) return undefined;
   const value = (body as Record<string, unknown>)[field];
@@ -59,10 +72,12 @@ export async function runQuery(
   project: Project,
   cryptoKey: string,
   requestBody: unknown,
+  timeoutMs: number,
 ): Promise<QueryResult> {
   const query = errorField(requestBody, "query");
   if (query === undefined) return errorResult(400, "Request body must be {query, parameters?}");
   const parameters = (requestBody as Record<string, unknown>).parameters;
+  const connection = encryptedConnection(project, cryptoKey);
 
   let response: Response;
   let body: unknown;
@@ -71,13 +86,14 @@ export async function runQuery(
       method: "POST",
       headers: {
         "content-type": "application/json",
-        [CONNECTION_HEADER]: encryptedConnection(project, cryptoKey),
+        [CONNECTION_HEADER]: connection,
       },
       body: JSON.stringify(parameters === undefined ? { query } : { query, parameters }),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     body = await response.json();
   } catch (error) {
-    return errorResult(500, error instanceof Error ? error.message : "pg-meta request failed");
+    return errorResult(failureStatus(error), failureMessage(error, timeoutMs));
   }
 
   if (response.ok) return { status: 200, body };
@@ -91,20 +107,22 @@ export async function generateTypescriptTypes(
   pgMetaUrl: string,
   project: Project,
   cryptoKey: string,
+  timeoutMs: number,
 ): Promise<QueryResult> {
   const url = new URL("/generators/typescript", pgMetaUrl);
   url.searchParams.set("included_schemas", EXPOSED_SCHEMAS);
+  const connection = encryptedConnection(project, cryptoKey);
 
   let response: Response;
   let text: string;
   try {
     response = await fetch(url, {
-      headers: { [CONNECTION_HEADER]: encryptedConnection(project, cryptoKey) },
+      headers: { [CONNECTION_HEADER]: connection },
+      signal: AbortSignal.timeout(timeoutMs),
     });
     text = await response.text();
   } catch (error) {
-    const message = error instanceof Error ? error.message : "pg-meta request failed";
-    return { status: 500, body: { message } };
+    return { status: failureStatus(error), body: { message: failureMessage(error, timeoutMs) } };
   }
 
   if (response.ok) return { status: 200, body: { types: text } };

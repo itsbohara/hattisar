@@ -36,6 +36,19 @@ test("the projects page opens a project in Studio's table editor", async ({ page
   await expectHattisarChrome(page);
 });
 
+test("Studio's Connect button opens hattisar's project page", async ({ page }) => {
+  await page.goto(`/project/${REF}/editor`);
+  await page.getByRole("button", { name: "Connect", exact: true }).first().click();
+  await expect(page).toHaveURL(`/_hs/projects/${REF}`);
+  await page.goBack();
+  await expect(page).toHaveURL(`/project/${REF}/editor`);
+});
+
+test("a Studio URL with showConnect opens hattisar's project page", async ({ page }) => {
+  await page.goto(`/project/${REF}/editor?showConnect=true&connectTab=direct&method=session`);
+  await expect(page).toHaveURL(`/_hs/projects/${REF}`);
+});
+
 for (const [path, target] of [
   ["/org/x", "/_hs/projects"],
   ["/org/x/general", "/_hs/projects"],

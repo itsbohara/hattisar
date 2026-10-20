@@ -1,6 +1,7 @@
 import { serve } from "@hono/node-server";
 import { backupDeps, createApp, projectServiceDeps } from "./app.js";
 import { seedAdmin } from "./auth/seed.js";
+import { removeStaleRestoreDirs } from "./backups/restore.js";
 import { runScheduledBackups } from "./backups/scheduled.js";
 import { failInterruptedBackups } from "./backups/service.js";
 import { seedSharedBox } from "./boxes/shared.js";
@@ -37,6 +38,7 @@ async function seededRegistry(config: Config): Promise<Registry> {
     await seedAdmin(registry, config);
     seedSharedBox(registry, config, deriveSecretKey(config.secretKey));
     failInterruptedBackups(registry);
+    await removeStaleRestoreDirs(config.dataDir);
     return registry;
   } catch (error) {
     registry.close();

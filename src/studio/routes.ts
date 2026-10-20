@@ -5,6 +5,7 @@ export type Route =
   | { kind: "ai-disabled" }
   | { kind: "not-available" }
   | { kind: "project-databases"; ref: string }
+  | { kind: "project-settings"; ref: string }
   | { kind: "project-types"; ref: string }
   | { kind: "run-lints"; ref: string }
   | { kind: "platform-projects" }
@@ -67,6 +68,9 @@ export function classifyRequest(method: string, rawPath: string): Route {
     }
     if (method === "GET" && api === "platform" && rest === "/databases") {
       return { kind: "project-databases", ref };
+    }
+    if (method === "GET" && api === "platform" && rest === "/settings") {
+      return { kind: "project-settings", ref };
     }
     if (method === "GET" && api === "v1" && rest === "/types/typescript") {
       return { kind: "project-types", ref };

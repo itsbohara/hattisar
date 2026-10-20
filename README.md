@@ -115,6 +115,7 @@ Set in `docker/.env` (template: [`docker/env.example`](docker/env.example)).
 | `STUDIO_URL` | `http://studio:3000` | |
 | `PG_META_URL` | `http://meta:8080` | |
 | `PG_META_CRYPTO_KEY` | — | Shared by hattisar, Studio and postgres-meta. |
+| `HATTISAR_PG_META_TIMEOUT_SECONDS` | `120` | How long hattisar waits for postgres-meta on SQL editor queries and type generation before answering 504. The timeout only stops hattisar waiting; postgres-meta keeps running the statement until its own query timeout. |
 | `POSTGRES_PASSWORD` | — | Admin password of the shared box. |
 | `POOLER_TENANT_ID` | — | Shared box pooler tenant; part of the pooler user name. |
 | `POOLER_PORT_SESSION` | `54322` | Shared box pooler, session mode. |

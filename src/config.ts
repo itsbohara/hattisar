@@ -20,6 +20,7 @@ export interface Config {
   studioUrl: string;
   pgMetaUrl: string;
   pgMetaCryptoKey: string;
+  pgMetaTimeoutSeconds: number;
   postgresPassword: string;
   pooler: {
     tenantId: string;
@@ -142,6 +143,7 @@ export function loadConfig(env: Env = process.env): Config {
     studioUrl: read.url("STUDIO_URL", "http://studio:3000"),
     pgMetaUrl: read.url("PG_META_URL", "http://meta:8080"),
     pgMetaCryptoKey: read.required("PG_META_CRYPTO_KEY"),
+    pgMetaTimeoutSeconds: read.integer("HATTISAR_PG_META_TIMEOUT_SECONDS", 120, 1, 86400),
     postgresPassword: read.required("POSTGRES_PASSWORD"),
     pooler: {
       tenantId: read.required("POOLER_TENANT_ID"),

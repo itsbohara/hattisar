@@ -1,5 +1,6 @@
 import type { BoxConnection } from "../boxes/admin-client.js";
 import { boxConnection } from "../boxes/service.js";
+import { busyProblem } from "../projects/locks.js";
 import {
   type Backup,
   type BackupKind,
@@ -31,38 +32,6 @@ export type BackupOutcome = { ok: true } | { ok: false; problem: string };
 
 export const NOT_CONFIGURED = "Configure S3 storage in Settings first.";
 
-// Projects whose database a restore is replacing; a backup taken meanwhile would dump a half-restored
-// database. In memory only: a restart kills the restore along with it.
-const restoring = new Set<number>();
-
-export function isRestoring(projectId: number): boolean {
-  return restoring.has(projectId);
-}
-
-export async function whileRestoring<T>(projectId: number, run: () => Promise<T>): Promise<T> {
-  restoring.add(projectId);
-  try {
-    return await run();
-  } finally {
-    restoring.delete(projectId);
-  }
-}
-
-// Deleting, purging or re-keying the project under a running pg_dump or pg_restore would break it.
-export function busyReason(db: Registry, project: Project): string | undefined {
-  if (isRestoring(project.id)) return "it is being restored";
-  if (listBackups(db, project.id).some((backup) => backup.status === "running")) {
-    return "a backup of it is running";
-  }
-  return undefined;
-}
-
-export function busyProblem(db: Registry, project: Project, action: string): string | undefined {
-  const reason = busyReason(db, project);
-  if (reason === undefined) return undefined;
-  return `Can't ${action} ${project.ref} while ${reason}. Try again when it finishes.`;
-}
-
 export function boxCredentials(box: Box, secretKey: Buffer): BoxConnection | string {
   try {
     return boxConnection(box, secretKey);
@@ -92,9 +61,8 @@ export async function runBackup(
   if (existing.some((backup) => backup.status === "running")) {
     return { ok: false, problem: `A backup of ${project.ref} is already running.` };
   }
-  if (isRestoring(project.id)) {
-    return { ok: false, problem: `${project.ref} is being restored. Try again when it finishes.` };
-  }
+  const busy = busyProblem(deps.db, project, "back up");
+  if (busy !== undefined) return { ok: false, problem: busy };
   const key = backupKey(settings.prefix, project.ref, kind, now);
   if (existing.some((backup) => backup.s3Key === key)) {
     return { ok: false, problem: "A backup was taken this second. Try again in a moment." };

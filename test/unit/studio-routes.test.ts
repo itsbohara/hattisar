@@ -18,8 +18,14 @@ describe("classifyRequest", () => {
     [
       "GET",
       "/api/platform/projects/spike-b/settings",
+      { kind: "project-settings", ref: "spike-b" },
+    ],
+    [
+      "PATCH",
+      "/api/platform/projects/spike-b/settings",
       { kind: "project-api-pass", ref: "spike-b" },
     ],
+    ["GET", "/api/v1/projects/spike-b/settings", { kind: "project-api-pass", ref: "spike-b" }],
     ["POST", "/api/platform/projects/spike-b/run-lints", { kind: "not-available" }],
     ["GET", "/api/platform/projects/spike-b/run-lints", { kind: "run-lints", ref: "spike-b" }],
     ["GET", "/api/v1/projects/spike-b/database/migrations", { kind: "not-available" }],
