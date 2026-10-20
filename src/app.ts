@@ -16,7 +16,6 @@ import { trashRoutes } from "./projects/trash-routes.js";
 import type { Registry } from "./registry/db.js";
 import { deriveSecretKey } from "./registry/secrets.js";
 import { PgMetaLog } from "./studio/pg-meta.js";
-import { STUDIO_CSS_PATH, STUDIO_JS_PATH } from "./studio/proxy.js";
 import { createStudioHandler } from "./studio/studio-handler.js";
 import { renderPage } from "./ui/layout.js";
 import { ErrorPage } from "./ui/pages/error.js";
@@ -59,10 +58,6 @@ export function createApp(config: Config, registry: Registry): Hono<AuthEnv> {
   app.use(requireSameOrigin());
   app.use(requireSession(registry));
 
-  app.get(STUDIO_CSS_PATH, (c) => c.body("", 200, { "content-type": "text/css; charset=utf-8" }));
-  app.get(STUDIO_JS_PATH, (c) =>
-    c.body("", 200, { "content-type": "text/javascript; charset=utf-8" }),
-  );
   app.route(
     "/",
     authRoutes({
