@@ -7,6 +7,7 @@ export default defineConfig({
   // The routing spec reads hattisar's process-wide pg-meta log; a parallel test's requests would
   // land in its window and fail it.
   workers: 1,
+  reporter: process.env.CI ? [["list"], ["html", { open: "never" }]] : "list",
   use: {
     baseURL: process.env.HATTISAR_URL ?? "http://localhost:8000",
     trace: "retain-on-failure",
