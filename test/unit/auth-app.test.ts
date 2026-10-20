@@ -100,11 +100,19 @@ describe("unauthenticated requests", () => {
     ["/_hs/login", "text/html"],
     ["/_hs/static/app.css", "text/css"],
     ["/_hs/static/studio.css", "text/css"],
+    ["/_hs/static/studio.js", "text/javascript"],
   ])("serves %s without a session", async (path, type) => {
     const response = await get(path);
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toContain(type);
   });
+
+  it.each(["/_hs/static/studio.css", "/_hs/static/studio.js"])(
+    "serves a non-empty %s",
+    async (path) => {
+      expect((await (await get(path)).text()).length).toBeGreaterThan(0);
+    },
+  );
 });
 
 describe("login", () => {
@@ -154,6 +162,13 @@ describe("login", () => {
 });
 
 describe("signed-in requests", () => {
+  it("keeps hattisar's own pages out of the browser cache", async () => {
+    const cookie = signInToRegistry(db);
+    for (const path of ["/_hs/projects", "/_hs/settings"]) {
+      expect((await get(path, cookie)).headers.get("cache-control")).toBe("no-store");
+    }
+  });
+
   it("renders the shell with the nav", async () => {
     const response = await get("/_hs/projects", signInToRegistry(db));
     expect(response.status).toBe(200);
