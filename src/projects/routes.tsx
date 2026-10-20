@@ -12,6 +12,7 @@ import {
   ProjectsPage,
 } from "../ui/pages/projects.js";
 import { ownerConnectionStrings } from "./connection-strings.js";
+import { softDeleteProject } from "./lifecycle.js";
 import {
   createProject,
   ownerPassword,
@@ -22,7 +23,7 @@ import {
 
 const PROJECTS_PAGE = "/_hs/projects";
 
-function text(form: Record<string, unknown>, name: string): string {
+export function text(form: Record<string, unknown>, name: string): string {
   const value = form[name];
   return typeof value === "string" ? value.trim() : "";
 }
@@ -113,6 +114,18 @@ export function projectRoutes(deps: ProjectServiceDeps): Hono<AuthEnv> {
     if (!found) return c.notFound();
     const result = await rotateOwnerPassword(deps, found.project, found.box);
     if (result.ok) return c.redirect(`${PROJECTS_PAGE}/${found.project.ref}?rotated`, 302);
+    return renderDetail(c, found, { kind: "error", message: result.problem }, 502);
+  });
+
+  app.post(`${PROJECTS_PAGE}/:ref/delete`, async (c) => {
+    const found = accessible(c);
+    if (!found) return c.notFound();
+    if (text(await c.req.parseBody(), "confirm") !== found.project.ref) {
+      const message = `Type the ref ${found.project.ref} to confirm deleting the project.`;
+      return renderDetail(c, found, { kind: "error", message }, 400);
+    }
+    const result = await softDeleteProject(deps, found.project, found.box);
+    if (result.ok) return c.redirect("/_hs/trash", 302);
     return renderDetail(c, found, { kind: "error", message: result.problem }, 502);
   });
 

@@ -3,6 +3,7 @@ import { slugify } from "../../projects/naming.js";
 import type { Box } from "../../registry/boxes.js";
 import type { Project } from "../../registry/projects.js";
 import { Layout } from "../layout.js";
+import { ConfirmRefInput } from "./trash.js";
 
 export const DEV_ONLY_WARNING =
   "Best for development only — shares one Postgres with other projects";
@@ -271,6 +272,19 @@ export function ProjectPage({
           <input name="name" required maxlength={100} value={project.name} aria-label="Name" />
           <button type="submit" class="button">
             Save
+          </button>
+        </form>
+      </section>
+      <section class="card card-wide">
+        <h2>Delete project</h2>
+        <p class="hint">
+          Moves the project to Trash: the owner can no longer connect and Studio stops showing it.
+          It can be restored until it is purged. Type <code>{project.ref}</code> to confirm.
+        </p>
+        <form method="post" action={`${base}/delete`} class="form-inline">
+          <ConfirmRefInput ref={project.ref} />
+          <button type="submit" class="button-quiet button-danger">
+            Delete project
           </button>
         </form>
       </section>

@@ -368,6 +368,11 @@ select {
   flex: 1;
 }
 
+.form-inline .confirm-input {
+  flex: 0 1 12rem;
+  min-width: 8rem;
+}
+
 .form {
   grid-template-columns: minmax(0, 1fr);
 }
