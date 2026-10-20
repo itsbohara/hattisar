@@ -45,11 +45,12 @@ export async function connectionStrings(
   return [...html.matchAll(/data-url="([^"]+)"/g)].map((match) => match[1] as string);
 }
 
-// Removes a project hattisar created, until hattisar can purge one itself.
+// Removes a project a test left behind, active or soft-deleted, without going through hattisar.
 export function dropProject(ref: string): void {
   const db = ref.replaceAll("-", "_");
   sharedBoxSql(
-    `DROP DATABASE IF EXISTS :"db" WITH (FORCE);
+    `SELECT format('DROP DATABASE %I WITH (FORCE)', datname) FROM pg_database
+      WHERE datname = :'db' OR starts_with(datname, :'db' || '__deleted_') \\gexec
      DROP ROLE IF EXISTS :"role";`,
     { db, role: `hs_${db}_owner` },
   );
