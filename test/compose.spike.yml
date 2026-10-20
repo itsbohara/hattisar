@@ -1,0 +1,10 @@
+# Integration-only override: two spike projects on the shared box. Never part of production compose.
+services:
+  hattisar:
+    environment:
+      HATTISAR_DEBUG: "true"
+      HATTISAR_SPIKE_PROJECTS: >-
+        [{"ref":"spike-a","name":"Spike A","dbName":"spike_a","boxName":"shared",
+          "box":{"host":"db","port":5432,"adminUser":"supabase_admin","adminPassword":"${POSTGRES_PASSWORD}"}},
+         {"ref":"spike-b","name":"Spike B","dbName":"spike_b","boxName":"shared",
+          "box":{"host":"db","port":5432,"adminUser":"supabase_admin","adminPassword":"${POSTGRES_PASSWORD}"}}]
