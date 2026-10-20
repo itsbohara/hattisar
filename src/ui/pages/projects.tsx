@@ -1,9 +1,10 @@
 import type { ConnectionString } from "../../projects/connection-strings.js";
 import { slugify } from "../../projects/naming.js";
+import type { Backup } from "../../registry/backups.js";
 import type { Box } from "../../registry/boxes.js";
 import type { Project } from "../../registry/projects.js";
 import { Layout } from "../layout.js";
-import { ConfirmRefInput } from "./trash.js";
+import { ConfirmRefInput, utc } from "./trash.js";
 
 export const DEV_ONLY_WARNING =
   "Best for development only — shares one Postgres with other projects";
@@ -202,6 +203,97 @@ function ConnectionStrings({ strings }: { strings: ConnectionString[] }) {
   );
 }
 
+const BYTE_UNITS = ["B", "KB", "MB", "GB", "TB"];
+
+export function formatBytes(bytes: number): string {
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < BYTE_UNITS.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${unit === 0 ? value : value.toFixed(1)} ${BYTE_UNITS[unit]}`;
+}
+
+function BackupStatus({ backup }: { backup: Backup }) {
+  if (backup.status !== "failed") return <>{backup.status}</>;
+  return (
+    <>
+      <span class="status-failed">failed</span>
+      {backup.error && <small class="hint backup-error">{backup.error}</small>}
+    </>
+  );
+}
+
+function Backups({
+  base,
+  backups,
+  s3Configured,
+}: {
+  base: string;
+  backups: Backup[];
+  s3Configured: boolean;
+}) {
+  return (
+    <section class="card card-wide">
+      <h2>Backups</h2>
+      <div class="form-inline">
+        <a class="button-quiet" href={`${base}/dump`}>
+          Download dump
+        </a>
+        <form method="post" action={`${base}/backups`}>
+          <button type="submit" class="button" disabled={!s3Configured}>
+            Back up now
+          </button>
+        </form>
+      </div>
+      <p class="hint">
+        {s3Configured ? (
+          "Backups are pg_dump archives: a restore returns the database to when the dump was taken, not to any point in time."
+        ) : (
+          <>
+            Configure S3 storage in <a href="/_hs/settings">Settings</a> to keep backups.
+          </>
+        )}
+      </p>
+      {backups.length > 0 && (
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Taken</th>
+              <th>Kind</th>
+              <th>Size</th>
+              <th>Status</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {backups.map((backup) => (
+              <tr data-backup={String(backup.id)}>
+                <td>{utc(new Date(backup.createdAt))}</td>
+                <td>{backup.kind}</td>
+                <td>{backup.sizeBytes === null ? "" : formatBytes(backup.sizeBytes)}</td>
+                <td>
+                  <BackupStatus backup={backup} />
+                </td>
+                <td class="row-actions">
+                  {backup.status !== "running" && (
+                    <form method="post" action={`${base}/backups/${backup.id}/delete`}>
+                      <button type="submit" class="button-quiet button-danger">
+                        Delete
+                      </button>
+                    </form>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
+  );
+}
+
 export interface ProjectPageNotice {
   kind: "ok" | "error";
   message: string;
@@ -211,11 +303,15 @@ export function ProjectPage({
   project,
   box,
   strings,
+  backups,
+  s3Configured,
   notice,
 }: {
   project: Project;
   box: Box;
   strings: ConnectionString[];
+  backups: Backup[];
+  s3Configured: boolean;
   notice?: ProjectPageNotice;
 }) {
   const base = `/_hs/projects/${project.ref}`;
@@ -266,6 +362,7 @@ export function ProjectPage({
           <small class="hint">Apps using the current password lose access.</small>
         </form>
       </section>
+      <Backups base={base} backups={backups} s3Configured={s3Configured} />
       <section class="card card-wide">
         <h2>Display name</h2>
         <form method="post" action={`${base}/name`} class="form-inline">

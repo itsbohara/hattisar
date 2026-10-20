@@ -8,7 +8,7 @@ export interface TrashRow {
   purgeAt: Date;
 }
 
-function utc(date: Date): string {
+export function utc(date: Date): string {
   return `${date.toISOString().slice(0, 16).replace("T", " ")} UTC`;
 }
 

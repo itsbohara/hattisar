@@ -385,3 +385,22 @@ select {
 .card-roomy {
   max-width: 44rem;
 }
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.form-inline form {
+  margin: 0;
+}
+
+.status-failed {
+  color: var(--danger);
+}
+
+.backup-error {
+  display: block;
+  max-width: 32rem;
+  overflow-wrap: anywhere;
+}
