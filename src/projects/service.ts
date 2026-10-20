@@ -19,11 +19,17 @@ import type { PoolerRefresher } from "./pooler.js";
 
 const MAX_NAME_LENGTH = 100;
 
-export type LifecycleEvent = "deleted" | "restoring" | "purged";
+export type LifecycleEvent = "deleted" | "restoring" | "purging" | "purged";
 
-// Seam for managed boxes (§10): "restoring" fires before the box is touched so a stopped box can
-// be started first; "deleted" and "purged" fire after the box and registry have changed.
-export type LifecycleHook = (box: Box, project: Project, event: LifecycleEvent) => Promise<void>;
+// Seam for managed boxes (§10): "restoring" and "purging" fire before the box is touched so a
+// stopped box can be started first; "deleted" and "purged" fire after the box and registry have
+// changed. "purging" may answer "skip-sql" when "purged" will remove the whole box, database and
+// role with it, so a stopped box is not started only to drop them.
+export type LifecycleHook = (
+  box: Box,
+  project: Project,
+  event: LifecycleEvent,
+) => Promise<"skip-sql" | undefined>;
 
 export interface ProjectServiceDeps {
   db: Registry;
@@ -49,15 +55,20 @@ function nameProblem(name: string): string | undefined {
   return undefined;
 }
 
-export function validateProjectForm(db: Registry, form: ProjectForm): { box: Box } | string[] {
+export function projectFieldProblems(db: Registry, form: Pick<ProjectForm, "name" | "ref">) {
   const problems = [nameProblem(form.name), refProblem(form.ref)].filter(
     (problem) => problem !== undefined,
   );
-  const box = getBoxById(db, form.boxId);
-  if (box === undefined) problems.push("Choose a box");
   if (problems.length === 0 && getProjectByRef(db, form.ref) !== undefined) {
     problems.push(`Ref ${form.ref} is already taken`);
   }
+  return problems;
+}
+
+export function validateProjectForm(db: Registry, form: ProjectForm): { box: Box } | string[] {
+  const problems = projectFieldProblems(db, form);
+  const box = getBoxById(db, form.boxId);
+  if (box === undefined) problems.push("Choose a box");
   return problems.length > 0 || box === undefined ? problems : { box };
 }
 

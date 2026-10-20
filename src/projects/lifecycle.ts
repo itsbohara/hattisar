@@ -165,8 +165,9 @@ export async function purgeProject(
 ): Promise<LifecycleResult> {
   const { deletedDbName } = project;
   if (deletedDbName === null) return { ok: false, problem: "Project is not deleted" };
-  const result = await onBox(deps, box, "purge", (conn) =>
-    deps.admin(conn, async (client) => {
+  const result = await onBox(deps, box, "purge", async (conn) => {
+    if ((await deps.onLifecycle?.(box, project, "purging")) === "skip-sql") return;
+    await deps.admin(conn, async (client) => {
       const foreign = await client.query<{ place: string }>(FOREIGN_DEPENDENCIES, [
         project.ownerRole,
         deletedDbName,
@@ -181,11 +182,19 @@ export async function purgeProject(
         `DROP DATABASE IF EXISTS ${pg.escapeIdentifier(deletedDbName)} WITH (FORCE)`,
       );
       await client.query(`DROP ROLE IF EXISTS ${pg.escapeIdentifier(project.ownerRole)}`);
-    }),
-  );
+    });
+  });
   if (!result.ok) return result;
   deleteProject(deps.db, project.id);
-  await deps.onLifecycle?.(box, project, "purged");
+  try {
+    await deps.onLifecycle?.(box, project, "purged");
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    return {
+      ok: false,
+      problem: `Purged ${project.ref}, but cleaning up box ${box.name} failed (${reason}). Remove the box on the Boxes page to finish.`,
+    };
+  }
   return result;
 }
 

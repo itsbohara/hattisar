@@ -167,15 +167,18 @@ export async function editBox(deps: BoxServiceDeps, box: Box, form: BoxForm): Pr
   return { ok: true, box: getBoxById(deps.db, box.id) as Box };
 }
 
-export function removeBox(db: Registry, box: Box): { ok: true } | { ok: false; problem: string } {
+export type RemoveResult = { ok: true } | { ok: false; problem: string };
+
+export function boxInUseProblem(db: Registry, box: Box): string | undefined {
   const projects = listProjectsOnBox(db, box.id).length;
-  if (projects > 0) {
-    const noun = projects === 1 ? "project" : "projects";
-    return {
-      ok: false,
-      problem: `Box ${box.name} still has ${projects} ${noun} (including any in Trash). Delete and purge them before removing the box.`,
-    };
-  }
+  if (projects === 0) return undefined;
+  const noun = projects === 1 ? "project" : "projects";
+  return `Box ${box.name} still has ${projects} ${noun} (including any in Trash). Delete and purge them before removing the box.`;
+}
+
+export function removeBox(db: Registry, box: Box): RemoveResult {
+  const problem = boxInUseProblem(db, box);
+  if (problem !== undefined) return { ok: false, problem };
   deleteBox(db, box.id);
   return { ok: true };
 }

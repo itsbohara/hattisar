@@ -307,7 +307,38 @@ describe("purging a project", () => {
       'DROP ROLE IF EXISTS "hs_my_app_owner"',
     ]);
     expect(project()).toBeUndefined();
-    expect(events.map((e) => e.event)).toEqual(["deleted", "purged"]);
+    expect(events.map((e) => e.event)).toEqual(["deleted", "purging", "purged"]);
+  });
+
+  it("runs no SQL when the purging hook answers skip-sql, and still deletes the row", async () => {
+    seed();
+    await softDeleted("my-app", new Date("2026-10-20T08:00:00.000Z"));
+    sql = [];
+    deps.onLifecycle = async (_box, project, event) => {
+      events.push({ ref: project.ref, event });
+      return event === "purging" ? "skip-sql" : undefined;
+    };
+    const result = await purgeProject(deps, project() as Project, box);
+    expect(result).toEqual({ ok: true });
+    expect(sql).toEqual([]);
+    expect(project()).toBeUndefined();
+    expect(events.map((e) => e.event)).toEqual(["deleted", "purging", "purged"]);
+  });
+
+  it("reports a failing purged hook after the row is gone", async () => {
+    seed();
+    await softDeleted("my-app", new Date("2026-10-20T08:00:00.000Z"));
+    deps.onLifecycle = async (_box, _project, event) => {
+      if (event === "purged") throw new Error("container busy");
+      return undefined;
+    };
+    const result = await purgeProject(deps, project() as Project, box);
+    expect(result).toEqual({
+      ok: false,
+      problem:
+        "Purged my-app, but cleaning up box shared failed (container busy). Remove the box on the Boxes page to finish.",
+    });
+    expect(project()).toBeUndefined();
   });
 
   it("drops nothing and keeps the row when the role has objects elsewhere", async () => {
