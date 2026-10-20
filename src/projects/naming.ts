@@ -19,6 +19,15 @@ export function ownerRoleFor(dbName: string): string {
   return `hs_${dbName}_owner`;
 }
 
+export function deletedDbNameFor(dbName: string, at: Date, taken: Iterable<string>): string {
+  const base = `${dbName}__deleted_${at.toISOString().slice(0, 10).replaceAll("-", "")}`;
+  const names = new Set(taken);
+  if (!names.has(base)) return base;
+  let n = 2;
+  while (names.has(`${base}_${n}`)) n += 1;
+  return `${base}_${n}`;
+}
+
 // Serialised into the new-project page's inline script: it must stay self-contained.
 export function slugify(name: string): string {
   return name

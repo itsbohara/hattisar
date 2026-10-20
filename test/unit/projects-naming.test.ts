@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { dbNameFor, ownerRoleFor, refProblem, slugify } from "../../src/projects/naming.js";
+import {
+  dbNameFor,
+  deletedDbNameFor,
+  ownerRoleFor,
+  refProblem,
+  slugify,
+} from "../../src/projects/naming.js";
 
 describe("refProblem", () => {
   it.each(["abc", "my-app", "a12", "a".repeat(40), "default"])("accepts %s", (ref) => {
@@ -52,5 +58,27 @@ describe("slugify", () => {
     ["", ""],
   ])("turns %j into %j", (name, slug) => {
     expect(slugify(name)).toBe(slug);
+  });
+});
+
+describe("deletedDbNameFor", () => {
+  const at = new Date("2026-10-20T23:30:00.000Z");
+
+  it("suffixes the UTC deletion date", () => {
+    expect(deletedDbNameFor("my_app", at, [])).toBe("my_app__deleted_20261020");
+  });
+
+  it("counts up from _2 past names already on the box", () => {
+    const taken = ["my_app__deleted_20261020", "my_app__deleted_20261020_2"];
+    expect(deletedDbNameFor("my_app", at, taken)).toBe("my_app__deleted_20261020_3");
+  });
+
+  it("stays within Postgres's 63-byte identifier limit for the longest ref", () => {
+    const db = "a".repeat(40);
+    const taken = [
+      `${db}__deleted_20261020`,
+      ...Array.from({ length: 98 }, (_, i) => `${db}__deleted_20261020_${i + 2}`),
+    ];
+    expect(deletedDbNameFor(db, at, taken)).toHaveLength(62);
   });
 });

@@ -19,11 +19,18 @@ import type { PoolerRefresher } from "./pooler.js";
 
 const MAX_NAME_LENGTH = 100;
 
+export type LifecycleEvent = "deleted" | "restoring" | "purged";
+
+// Seam for managed boxes (§10): "restoring" fires before the box is touched so a stopped box can
+// be started first; "deleted" and "purged" fire after the box and registry have changed.
+export type LifecycleHook = (box: Box, project: Project, event: LifecycleEvent) => Promise<void>;
+
 export interface ProjectServiceDeps {
   db: Registry;
   secretKey: Buffer;
   admin: AdminClientRunner;
   refreshPooler: PoolerRefresher;
+  onLifecycle?: LifecycleHook;
 }
 
 export interface ProjectForm {
