@@ -272,6 +272,15 @@ host port = first free in `HATTISAR_MANAGED_PORT_RANGE` (default `55000-55999`),
 `public_port` = the host port). The New-project form offers "New dedicated box" which does this
 then creates the project on it.
 
+Implementation notes (Task 12): the proxy sits on its own internal `docker-api` network that only
+hattisar joins. Two read-only calls are unfiltered by label — listing containers to learn which host
+ports are published, and listing networks. Purging the last project on a managed box skips the DROP
+SQL and removes the container and volume (`purging` lifecycle event). "New dedicated box" names the
+box after the project ref. Known limitations: the box admin password is in the container env
+(visible to anyone with Docker access); Postgres's encryption root key lives in the container, not
+the volume, so recreating a container by hand (e.g. an image upgrade) loses Vault-encrypted data —
+upgrading managed boxes is post-v1.
+
 hattisar only lists/starts/stops/removes containers and volumes carrying `hattisar.managed=true`;
 every Docker call filters on it. A managed box whose only project is soft-deleted is stopped;
 restore starts it; purge removes container and volume. Removing a managed box with no projects
