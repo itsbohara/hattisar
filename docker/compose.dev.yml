@@ -3,6 +3,10 @@ services:
     build:
       target: dev
     command: ["pnpm", "dev"]
+    # Development and the tests run with managed boxes on (stack:up enables the managed-boxes
+    # profile); production compose leaves them off.
+    environment:
+      HATTISAR_MANAGED_BOXES: "true"
     # Lets `up --wait` accept the one-shot bucket job exiting; absent without the s3-test profile.
     depends_on:
       s3-bucket:
