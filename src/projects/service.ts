@@ -49,7 +49,7 @@ function nameProblem(name: string): string | undefined {
   return undefined;
 }
 
-function validate(db: Registry, form: ProjectForm): { box: Box } | string[] {
+export function validateProjectForm(db: Registry, form: ProjectForm): { box: Box } | string[] {
   const problems = [nameProblem(form.name), refProblem(form.ref)].filter(
     (problem) => problem !== undefined,
   );
@@ -66,36 +66,23 @@ interface Created {
   database: boolean;
 }
 
-interface Names {
+export interface ProjectNames {
   dbName: string;
   ownerRole: string;
 }
 
-async function provision(
+// §7 steps 2–4, for an owner role that already exists. Also how a restore recreates a database.
+export async function createProjectDatabase(
   admin: AdminClientRunner,
   conn: BoxConnection,
-  box: Box,
-  names: Names,
-  password: string,
-  created: Created,
+  names: ProjectNames,
+  onCreated: () => void = () => {},
 ): Promise<void> {
   const db = pg.escapeIdentifier(names.dbName);
   const role = pg.escapeIdentifier(names.ownerRole);
   await admin(conn, async (client) => {
-    const existing = await client.query("select 1 from pg_database where datname = $1", [
-      names.dbName,
-    ]);
-    if (existing.rowCount !== 0) {
-      throw new UnavailableError(
-        `A database named ${names.dbName} already exists on box ${box.name}`,
-      );
-    }
-    await client.query(
-      `CREATE ROLE ${role} LOGIN PASSWORD ${pg.escapeLiteral(scramVerifier(password))}`,
-    );
-    created.role = true;
     await client.query(`CREATE DATABASE ${db} OWNER ${role}`);
-    created.database = true;
+    onCreated();
     await client.query(`REVOKE CONNECT, TEMPORARY ON DATABASE ${db} FROM PUBLIC`);
     await client.query(`GRANT CONNECT ON DATABASE ${db} TO ${role}`);
   });
@@ -108,11 +95,38 @@ async function provision(
   );
 }
 
+async function provision(
+  admin: AdminClientRunner,
+  conn: BoxConnection,
+  box: Box,
+  names: ProjectNames,
+  password: string,
+  created: Created,
+): Promise<void> {
+  await admin(conn, async (client) => {
+    const existing = await client.query("select 1 from pg_database where datname = $1", [
+      names.dbName,
+    ]);
+    if (existing.rowCount !== 0) {
+      throw new UnavailableError(
+        `A database named ${names.dbName} already exists on box ${box.name}`,
+      );
+    }
+    await client.query(
+      `CREATE ROLE ${pg.escapeIdentifier(names.ownerRole)} LOGIN PASSWORD ${pg.escapeLiteral(scramVerifier(password))}`,
+    );
+    created.role = true;
+  });
+  await createProjectDatabase(admin, conn, names, () => {
+    created.database = true;
+  });
+}
+
 // Drops only what this attempt created: a role that already existed belongs to someone else.
 async function compensate(
   admin: AdminClientRunner,
   conn: BoxConnection,
-  names: Names,
+  names: ProjectNames,
   created: Created,
 ): Promise<string | undefined> {
   if (!created.role && !created.database) return undefined;
@@ -140,12 +154,12 @@ export async function createProject(
   deps: ProjectServiceDeps,
   form: ProjectForm,
 ): Promise<CreateResult> {
-  const valid = validate(deps.db, form);
+  const valid = validateProjectForm(deps.db, form);
   if (Array.isArray(valid)) return { ok: false, problems: valid };
   const { box } = valid;
   const conn = boxConnection(box, deps.secretKey);
   const dbName = dbNameFor(form.ref);
-  const names: Names = { dbName, ownerRole: ownerRoleFor(dbName) };
+  const names: ProjectNames = { dbName, ownerRole: ownerRoleFor(dbName) };
   const password = generateOwnerPassword();
   const created: Created = { role: false, database: false };
 
