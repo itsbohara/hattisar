@@ -62,10 +62,13 @@ afterAll(() => {
   rmSync(dataDir, { recursive: true, force: true });
 });
 
-async function get(path: string): Promise<{ response: Response; logged: string }> {
+async function send(path: string, method = "GET"): Promise<{ response: Response; logged: string }> {
   const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
   try {
-    const response = await app.request(path, { headers: { cookie } });
+    const response = await app.request(`http://hattisar.test${path}`, {
+      method,
+      headers: { cookie, origin: "http://hattisar.test" },
+    });
     return { response, logged: spy.mock.calls.flat().join("\n") };
   } finally {
     spy.mockRestore();
@@ -74,19 +77,25 @@ async function get(path: string): Promise<{ response: Response; logged: string }
 
 describe("unexpected errors", () => {
   it("answers an API path with a JSON 500", async () => {
-    const { response, logged } = await get("/api/platform/projects");
-    expect(response.status).toBe(500);
-    expect(await response.json()).toEqual({ error: { message: "Internal error" } });
-    expect(logged).toContain("hattisar: SecretError on GET /api/platform/projects");
+    registry.exec("ALTER TABLE projects RENAME TO projects_away");
+    let sent: Awaited<ReturnType<typeof send>>;
+    try {
+      sent = await send("/api/platform/projects");
+    } finally {
+      registry.exec("ALTER TABLE projects_away RENAME TO projects");
+    }
+    expect(sent.response.status).toBe(500);
+    expect(await sent.response.json()).toEqual({ error: { message: "Internal error" } });
+    expect(sent.logged).toContain("hattisar: SqliteError on GET /api/platform/projects");
   });
 
   it("renders a page path inline without a stack trace", async () => {
-    const { response, logged } = await get("/_hs/projects/my-app");
+    const { response, logged } = await send("/_hs/projects/my-app/rotate", "POST");
     expect(response.status).toBe(500);
     const html = await response.text();
     expect(html).toContain("Something went wrong");
     expect(html).not.toMatch(/\bat \S+ \(/);
-    expect(logged).toContain("SecretError on GET /_hs/projects/my-app");
+    expect(logged).toContain("SecretError on POST /_hs/projects/my-app/rotate");
     expect(logged).not.toContain("could not be decrypted");
     expect(logged).not.toContain(SECRET);
   });

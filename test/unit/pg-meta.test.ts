@@ -7,7 +7,7 @@ import type { Project } from "../../src/studio/projects-source.js";
 const project = {
   dbName: "spike_b",
   ownerRole: "hs_spike_b_owner",
-  ownerPassword: "secret",
+  ownerPassword: () => "secret",
   box: { host: "db", port: 5432, sslmode: "disable" },
 } as Project;
 

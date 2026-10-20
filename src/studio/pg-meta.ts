@@ -77,6 +77,7 @@ export async function runQuery(
   const query = errorField(requestBody, "query");
   if (query === undefined) return errorResult(400, "Request body must be {query, parameters?}");
   const parameters = (requestBody as Record<string, unknown>).parameters;
+  const connection = encryptedConnection(project, cryptoKey);
 
   let response: Response;
   let body: unknown;
@@ -85,7 +86,7 @@ export async function runQuery(
       method: "POST",
       headers: {
         "content-type": "application/json",
-        [CONNECTION_HEADER]: encryptedConnection(project, cryptoKey),
+        [CONNECTION_HEADER]: connection,
       },
       body: JSON.stringify(parameters === undefined ? { query } : { query, parameters }),
       signal: AbortSignal.timeout(timeoutMs),
@@ -110,12 +111,13 @@ export async function generateTypescriptTypes(
 ): Promise<QueryResult> {
   const url = new URL("/generators/typescript", pgMetaUrl);
   url.searchParams.set("included_schemas", EXPOSED_SCHEMAS);
+  const connection = encryptedConnection(project, cryptoKey);
 
   let response: Response;
   let text: string;
   try {
     response = await fetch(url, {
-      headers: { [CONNECTION_HEADER]: encryptedConnection(project, cryptoKey) },
+      headers: { [CONNECTION_HEADER]: connection },
       signal: AbortSignal.timeout(timeoutMs),
     });
     text = await response.text();

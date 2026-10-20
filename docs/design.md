@@ -144,6 +144,11 @@ Numbered migrations in `src/registry/migrations/`, applied at boot, tracked in
 AES-256-GCM. Key = SHA-256 of `HATTISAR_SECRET_KEY` (required, ≥ 32 chars, boot fails otherwise).
 Stored as `v1:<iv b64>:<tag b64>:<ciphertext b64>`, 12-byte random IV. Every `*_enc` column and
 the S3 secret key use it. Plaintext secrets never appear in logs or error messages.
+Owner passwords are decrypted only when one project's connection is built, never for a list: a
+project whose secret will not decrypt (corrupt, or `HATTISAR_SECRET_KEY` changed) still appears in
+Studio's list and answers its routes that need no connection, while its pg-meta and type requests
+answer 500 `{message}` saying the password cannot be decrypted. Its hattisar page renders with the
+connection strings replaced by that explanation; rotating repairs it.
 
 ## 5. Boxes
 
@@ -213,7 +218,8 @@ management) fail with a permission error; hattisar's own admin operations still 
 - other boxes: `postgresql://<owner>:<pw>@<public_host>:<public_port>/<db>`.
 - shared/dev-only boxes show a "development only" badge.
 
-**Rotate owner password:** `ALTER ROLE … PASSWORD …`, store encrypted, show new strings.
+**Rotate owner password:** `ALTER ROLE … PASSWORD …`, store encrypted, show new strings. Never
+reads the old password, so it works when the stored one will not decrypt.
 
 **Soft delete (M2)** — confirm by typing the ref: `REVOKE CONNECT … FROM <owner>`; terminate
 backends on the db; `ALTER DATABASE <db> RENAME TO <db>__deleted_<YYYYMMDD>` (suffix `_2`, `_3`…

@@ -9,7 +9,7 @@ export function studioConnectionString(
 ): string {
   const { host, port, sslmode } = project.box;
   const user = encodeURIComponent(project.ownerRole);
-  const password = encodeURIComponent(project.ownerPassword);
+  const password = encodeURIComponent(project.ownerPassword());
   const params = sslmode === "disable" ? "" : `?sslmode=${encodeURIComponent(sslmode)}`;
   return `postgresql://${user}:${password}@${host}:${port}/${project.dbName}${params}`;
 }

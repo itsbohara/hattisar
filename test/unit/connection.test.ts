@@ -5,7 +5,7 @@ function project(ownerRole: string, ownerPassword: string, sslmode = "disable") 
   return {
     dbName: "spike_b",
     ownerRole,
-    ownerPassword,
+    ownerPassword: () => ownerPassword,
     box: {
       host: "db",
       port: 5432,

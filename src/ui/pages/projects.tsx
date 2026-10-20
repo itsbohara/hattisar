@@ -412,7 +412,7 @@ export function ProjectPage({
 }: {
   project: Project;
   box: Box;
-  strings: ConnectionString[];
+  strings: ConnectionString[] | undefined;
   backups: Backup[];
   schedule: BackupSchedule;
   backupHourUtc: number;
@@ -459,7 +459,14 @@ export function ProjectPage({
       </section>
       <section class="card card-wide">
         <h2>Connection strings</h2>
-        <ConnectionStrings strings={strings} />
+        {strings ? (
+          <ConnectionStrings strings={strings} />
+        ) : (
+          <p class="alert alert-error" role="alert">
+            The stored owner password cannot be decrypted, so the connection strings cannot be
+            shown. Rotate the password to set a new one.
+          </p>
+        )}
         <form method="post" action={`${base}/rotate`} class="form-inline">
           <button type="submit" class="button-quiet button-danger">
             Rotate password

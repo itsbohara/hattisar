@@ -223,6 +223,68 @@ describe("registry-backed platform routes", () => {
   });
 });
 
+describe("a project whose owner password will not decrypt", () => {
+  const unreadable = {
+    message:
+      "The owner password of project broken cannot be decrypted. Rotate it on its hattisar project page.",
+  };
+
+  beforeAll(() => {
+    const shared = registry.prepare("SELECT id FROM boxes WHERE name = 'shared'").get() as {
+      id: number;
+    };
+    insertProject(registry, {
+      ref: "broken",
+      name: "broken",
+      boxId: shared.id,
+      dbName: "broken",
+      ownerRole: "hs_broken_owner",
+      ownerPasswordEnc: encryptSecret("owner-pw", deriveSecretKey("k".repeat(32))),
+    });
+  });
+
+  afterAll(() => {
+    registry.prepare("DELETE FROM projects WHERE ref = 'broken'").run();
+  });
+
+  it("still lists every project", async () => {
+    const response = await request("/api/platform/projects");
+    expect(response.status).toBe(200);
+    const listed = (await response.json()) as { ref: string }[];
+    expect(listed.map((project) => project.ref)).toEqual(["broken", "spike-b", "spike-c"]);
+  });
+
+  it.each([
+    ["GET", "/api/platform/pg-meta/broken/tables"],
+    ["POST", "/api/platform/pg-meta/broken/query"],
+    ["GET", "/api/v1/projects/broken/types/typescript"],
+  ])("answers %s %s with a readable error and never reaches Studio", async (method, path) => {
+    const response = await request(path, {
+      method,
+      body: method === "POST" ? JSON.stringify({ query: "select 1" }) : undefined,
+      headers: { "content-type": "application/json" },
+    });
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual(unreadable);
+    expect(seen).toHaveLength(0);
+  });
+
+  it("answers the routes that need no password", async () => {
+    expect((await request("/api/platform/projects/broken")).status).toBe(200);
+    expect((await request("/api/platform/projects/broken/databases")).status).toBe(200);
+    expect((await request("/api/platform/projects/broken/settings")).status).toBe(200);
+  });
+
+  it("leaves other projects connecting", async () => {
+    const response = await request("/api/platform/pg-meta/spike-b/tables");
+    expect(response.status).toBe(200);
+    const header = seen[0]?.headers["x-connection-encrypted"] as string;
+    expect(CryptoJS.AES.decrypt(header, cryptoKey).toString(CryptoJS.enc.Utf8)).toBe(
+      "postgresql://hs_spike_b_owner:owner-pw@db:5432/spike_b",
+    );
+  });
+});
+
 describe("project settings", () => {
   it.each([
     [
