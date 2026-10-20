@@ -8,7 +8,7 @@ const composeFiles = [
   "test/compose.test.yml",
 ].flatMap((file) => ["-f", file]);
 
-export function compose(args: string[], input?: string): string {
+export function compose(args: string[], input?: string | Buffer): string {
   return execFileSync("docker", ["compose", ...composeFiles, ...args], {
     cwd: root,
     encoding: "utf8",
@@ -63,6 +63,17 @@ export function registrySql(sql: string, ...params: (string | number)[]): void {
     db.prepare(process.argv[1]).run(...JSON.parse(process.argv[2]));
   `;
   compose(["exec", "-T", "hattisar", "node", "-e", script, sql, JSON.stringify(params)]);
+}
+
+export function registryRows<T>(sql: string, ...params: (string | number)[]): T[] {
+  const script = `
+    const Database = require("better-sqlite3");
+    const db = new Database("/data/hattisar.db", { readonly: true });
+    console.log(JSON.stringify(db.prepare(process.argv[1]).all(...JSON.parse(process.argv[2]))));
+  `;
+  return JSON.parse(
+    compose(["exec", "-T", "hattisar", "node", "-e", script, sql, JSON.stringify(params)]),
+  ) as T[];
 }
 
 export function dbLogSince(since: string): string {
