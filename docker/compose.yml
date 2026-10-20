@@ -1,0 +1,172 @@
+name: hattisar
+
+services:
+  db:
+    image: supabase/postgres:17.6.1.136
+    restart: unless-stopped
+    volumes:
+      - ./volumes/db/roles.sql:/docker-entrypoint-initdb.d/init-scripts/99-roles.sql:Z
+      - ./volumes/db/_supabase.sql:/docker-entrypoint-initdb.d/migrations/97-_supabase.sql:Z
+      - ./volumes/db/pooler.sql:/docker-entrypoint-initdb.d/migrations/99-pooler.sql:Z
+      - db-data:/var/lib/postgresql/data
+      # pgsodium decryption key must persist between restarts
+      - db-config:/etc/postgresql-custom
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-h", "localhost"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    environment:
+      POSTGRES_HOST: /var/run/postgresql
+      PGPORT: 5432
+      POSTGRES_PORT: 5432
+      PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: postgres
+      POSTGRES_DB: postgres
+    command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
+
+  meta:
+    image: supabase/postgres-meta:v0.100.0
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"fetch('http://localhost:8080/health').then((r) => {if (r.status !== 200) throw new Error(r.status)})\"",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    environment:
+      PG_META_PORT: 8080
+      PG_META_DB_HOST: db
+      PG_META_DB_PORT: 5432
+      PG_META_DB_NAME: postgres
+      PG_META_DB_USER: postgres
+      PG_META_DB_PASSWORD: ${POSTGRES_PASSWORD}
+      CRYPTO_KEY: ${PG_META_CRYPTO_KEY:?PG_META_CRYPTO_KEY is required}
+
+  studio:
+    image: supabase/studio:2026.10.12-sha-3699278
+    restart: unless-stopped
+    depends_on:
+      meta:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"fetch('http://localhost:3000/api/platform/profile').then((r) => {if (r.status !== 200) throw new Error(r.status)})\"",
+        ]
+      interval: 5s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    environment:
+      HOSTNAME: "0.0.0.0"
+      STUDIO_PG_META_URL: http://meta:8080
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_USER_READ_WRITE: postgres
+      PG_META_CRYPTO_KEY: ${PG_META_CRYPTO_KEY}
+      DEFAULT_ORGANIZATION_NAME: hattisar
+      DEFAULT_PROJECT_NAME: hattisar
+      ENABLED_FEATURES_LOGS_ALL: "false"
+
+  supavisor:
+    image: supabase/supavisor:2.9.13
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - ${POOLER_PORT_SESSION:-54322}:5432
+      - ${POOLER_PORT_TRANSACTION:-6543}:6543
+    volumes:
+      - ./volumes/pooler/pooler.exs:/etc/pooler/pooler.exs:ro,z
+    healthcheck:
+      test: ["CMD", "curl", "-sSfL", "--head", "-o", "/dev/null", "http://127.0.0.1:4000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    environment:
+      PORT: 4000
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      DATABASE_URL: ecto://supabase_admin:${POSTGRES_PASSWORD}@db:5432/_supabase
+      CLUSTER_POSTGRES: "true"
+      SECRET_KEY_BASE: ${POOLER_SECRET_KEY_BASE:?POOLER_SECRET_KEY_BASE is required}
+      VAULT_ENC_KEY: ${POOLER_VAULT_ENC_KEY:?POOLER_VAULT_ENC_KEY is required}
+      API_JWT_SECRET: ${POOLER_JWT_SECRET:?POOLER_JWT_SECRET is required}
+      METRICS_JWT_SECRET: ${POOLER_JWT_SECRET}
+      REGION: local
+      ERL_AFLAGS: -proto_dist inet_tcp
+      POOLER_TENANT_ID: ${POOLER_TENANT_ID:?POOLER_TENANT_ID is required}
+      POOLER_DEFAULT_POOL_SIZE: 20
+      POOLER_MAX_CLIENT_CONN: 100
+      POOLER_POOL_MODE: transaction
+      DB_POOL_SIZE: 5
+    command:
+      [
+        "/bin/sh",
+        "-c",
+        "/app/bin/migrate && /app/bin/supavisor eval \"$$(cat /etc/pooler/pooler.exs)\" && /app/bin/server",
+      ]
+
+  hattisar:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      meta:
+        condition: service_healthy
+      studio:
+        condition: service_healthy
+    ports:
+      - ${HATTISAR_PORT:-8000}:8000
+    volumes:
+      - hattisar-data:/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"fetch('http://localhost:8000/_hs/healthz').then((r) => {if (r.status !== 200) throw new Error(r.status)})\"",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    environment:
+      HATTISAR_SECRET_KEY: ${HATTISAR_SECRET_KEY:?HATTISAR_SECRET_KEY is required}
+      HATTISAR_ADMIN_USERNAME: ${HATTISAR_ADMIN_USERNAME:-}
+      HATTISAR_ADMIN_PASSWORD: ${HATTISAR_ADMIN_PASSWORD:-}
+      HATTISAR_PUBLIC_HOST: ${HATTISAR_PUBLIC_HOST:-}
+      HATTISAR_PORT: ${HATTISAR_PORT:-}
+      HATTISAR_COOKIE_SECURE: ${HATTISAR_COOKIE_SECURE:-}
+      HATTISAR_PURGE_AFTER_DAYS: ${HATTISAR_PURGE_AFTER_DAYS:-}
+      HATTISAR_BACKUP_HOUR_UTC: ${HATTISAR_BACKUP_HOUR_UTC:-}
+      HATTISAR_MANAGED_BOXES: ${HATTISAR_MANAGED_BOXES:-}
+      HATTISAR_MANAGED_PORT_RANGE: ${HATTISAR_MANAGED_PORT_RANGE:-}
+      HATTISAR_PG_BIN_DIR: ${HATTISAR_PG_BIN_DIR:-}
+      STUDIO_URL: ${STUDIO_URL:-}
+      PG_META_URL: ${PG_META_URL:-}
+      PG_META_CRYPTO_KEY: ${PG_META_CRYPTO_KEY}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POOLER_TENANT_ID: ${POOLER_TENANT_ID}
+      POOLER_PORT_SESSION: ${POOLER_PORT_SESSION:-}
+      POOLER_PORT_TRANSACTION: ${POOLER_PORT_TRANSACTION:-}
+
+volumes:
+  db-data:
+  db-config:
+  hattisar-data:

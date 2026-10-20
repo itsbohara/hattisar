@@ -1,0 +1,11 @@
+services:
+  hattisar:
+    build:
+      target: dev
+    command: ["pnpm", "dev"]
+    # Only source and package files are mounted: node_modules stays in the image so
+    # macOS-built native modules never reach the Linux container.
+    volumes:
+      - ../src:/app/src:ro
+      - ../package.json:/app/package.json:ro
+      - ../tsconfig.json:/app/tsconfig.json:ro
