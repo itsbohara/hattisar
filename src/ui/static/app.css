@@ -404,3 +404,17 @@ button:disabled {
   max-width: 32rem;
   overflow-wrap: anywhere;
 }
+
+.backup-schedule {
+  flex-wrap: wrap;
+  align-items: end;
+  margin: 1rem 0;
+}
+
+.backup-schedule input {
+  width: 6rem;
+}
+
+.backup-schedule .hint {
+  flex-basis: 100%;
+}

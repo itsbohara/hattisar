@@ -1,6 +1,6 @@
 import type { ConnectionString } from "../../projects/connection-strings.js";
 import { slugify } from "../../projects/naming.js";
-import type { Backup } from "../../registry/backups.js";
+import type { Backup, BackupSchedule } from "../../registry/backups.js";
 import type { Box } from "../../registry/boxes.js";
 import type { Project } from "../../registry/projects.js";
 import { Layout } from "../layout.js";
@@ -18,7 +18,7 @@ function studioHref(ref: string): string {
   return `/project/${ref}/editor`;
 }
 
-function Problems({ problems }: { problems: string[] }) {
+export function Problems({ problems }: { problems: string[] }) {
   if (problems.length === 0) return null;
   return (
     <div class="alert alert-error" role="alert">
@@ -88,9 +88,10 @@ export interface NewProjectValues {
 }
 
 // The ref follows the name until the user types into it.
-const SLUG_SCRIPT = `(() => {
+export function slugScript(formId: string): string {
+  return `(() => {
   const slugify = ${slugify.toString()};
-  const form = document.getElementById("new-project");
+  const form = document.getElementById(${JSON.stringify(formId)});
   const name = form.elements.name;
   const ref = form.elements.ref;
   let edited = ref.value !== "";
@@ -101,6 +102,37 @@ const SLUG_SCRIPT = `(() => {
     edited = ref.value !== "";
   });
 })();`;
+}
+
+// Name, ref and box: the fields of every form that creates a project.
+export function ProjectFields({ boxes, values }: { boxes: Box[]; values: NewProjectValues }) {
+  return (
+    <>
+      <label class="field">
+        <span>Name</span>
+        <input name="name" required maxlength={100} value={values.name} />
+      </label>
+      <label class="field">
+        <span>Ref</span>
+        <input name="ref" required pattern="[a-z][a-z0-9\-]{2,39}" value={values.ref} />
+        <small class="hint">
+          Lowercase letters, digits and hyphens; 3–40 characters. Names the database and can't be
+          changed later.
+        </small>
+      </label>
+      <label class="field">
+        <span>Box</span>
+        <select name="boxId">
+          {boxes.map((box) => (
+            <option value={String(box.id)} selected={box.id === values.boxId}>
+              {box.devOnly ? `${box.name} — ${DEV_ONLY_WARNING}` : box.name}
+            </option>
+          ))}
+        </select>
+      </label>
+    </>
+  );
+}
 
 export function NewProjectPage({
   boxes,
@@ -117,28 +149,7 @@ export function NewProjectPage({
       <section class="card card-roomy">
         <form method="post" action="/_hs/projects" class="form" id="new-project">
           <Problems problems={problems} />
-          <label class="field">
-            <span>Name</span>
-            <input name="name" required maxlength={100} value={values.name} />
-          </label>
-          <label class="field">
-            <span>Ref</span>
-            <input name="ref" required pattern="[a-z][a-z0-9\-]{2,39}" value={values.ref} />
-            <small class="hint">
-              Lowercase letters, digits and hyphens; 3–40 characters. Names the database and can't
-              be changed later.
-            </small>
-          </label>
-          <label class="field">
-            <span>Box</span>
-            <select name="boxId">
-              {boxes.map((box) => (
-                <option value={String(box.id)} selected={box.id === values.boxId}>
-                  {box.devOnly ? `${box.name} — ${DEV_ONLY_WARNING}` : box.name}
-                </option>
-              ))}
-            </select>
-          </label>
+          <ProjectFields boxes={boxes} values={values} />
           <div class="form-actions">
             <button type="submit" class="button">
               Create project
@@ -149,7 +160,7 @@ export function NewProjectPage({
           </div>
         </form>
       </section>
-      <script dangerouslySetInnerHTML={{ __html: SLUG_SCRIPT }} />
+      <script dangerouslySetInnerHTML={{ __html: slugScript("new-project") }} />
     </Layout>
   );
 }
@@ -225,13 +236,78 @@ function BackupStatus({ backup }: { backup: Backup }) {
   );
 }
 
+const FREQUENCIES = ["off", "daily", "weekly"] as const;
+
+function hourLabel(hourUtc: number): string {
+  return `${String(hourUtc).padStart(2, "0")}:00 UTC`;
+}
+
+function BackupScheduleForm({
+  base,
+  schedule,
+  backupHourUtc,
+}: {
+  base: string;
+  schedule: BackupSchedule;
+  backupHourUtc: number;
+}) {
+  return (
+    <form method="post" action={`${base}/schedule`} class="form-inline backup-schedule">
+      <label class="field">
+        <span>Schedule</span>
+        <select name="frequency">
+          {FREQUENCIES.map((frequency) => (
+            <option value={frequency} selected={frequency === schedule.frequency}>
+              {frequency}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label class="field">
+        <span>Keep daily</span>
+        <input
+          name="keepDaily"
+          type="number"
+          required
+          min={1}
+          max={1000}
+          value={String(schedule.keepDaily)}
+        />
+      </label>
+      <label class="field">
+        <span>Keep weekly</span>
+        <input
+          name="keepWeekly"
+          type="number"
+          required
+          min={0}
+          max={1000}
+          value={String(schedule.keepWeekly)}
+        />
+      </label>
+      <button type="submit" class="button-quiet">
+        Save schedule
+      </button>
+      <small class="hint">
+        Daily backups run at {hourLabel(backupHourUtc)}, weekly ones on Mondays at that hour. Of the
+        scheduled backups, the newest "keep daily" are kept, then the newest of each older week up
+        to "keep weekly" weeks. Manual backups are kept until deleted.
+      </small>
+    </form>
+  );
+}
+
 function Backups({
   base,
   backups,
+  schedule,
+  backupHourUtc,
   s3Configured,
 }: {
   base: string;
   backups: Backup[];
+  schedule: BackupSchedule;
+  backupHourUtc: number;
   s3Configured: boolean;
 }) {
   return (
@@ -256,6 +332,7 @@ function Backups({
           </>
         )}
       </p>
+      <BackupScheduleForm base={base} schedule={schedule} backupHourUtc={backupHourUtc} />
       {backups.length > 0 && (
         <table class="table">
           <thead>
@@ -277,6 +354,11 @@ function Backups({
                   <BackupStatus backup={backup} />
                 </td>
                 <td class="row-actions">
+                  {backup.status === "done" && (
+                    <a class="button-quiet" href={`${base}/backups/${backup.id}/restore`}>
+                      Restore…
+                    </a>
+                  )}
                   {backup.status !== "running" && (
                     <form method="post" action={`${base}/backups/${backup.id}/delete`}>
                       <button type="submit" class="button-quiet button-danger">
@@ -304,6 +386,8 @@ export function ProjectPage({
   box,
   strings,
   backups,
+  schedule,
+  backupHourUtc,
   s3Configured,
   notice,
 }: {
@@ -311,6 +395,8 @@ export function ProjectPage({
   box: Box;
   strings: ConnectionString[];
   backups: Backup[];
+  schedule: BackupSchedule;
+  backupHourUtc: number;
   s3Configured: boolean;
   notice?: ProjectPageNotice;
 }) {
@@ -362,7 +448,13 @@ export function ProjectPage({
           <small class="hint">Apps using the current password lose access.</small>
         </form>
       </section>
-      <Backups base={base} backups={backups} s3Configured={s3Configured} />
+      <Backups
+        base={base}
+        backups={backups}
+        schedule={schedule}
+        backupHourUtc={backupHourUtc}
+        s3Configured={s3Configured}
+      />
       <section class="card card-wide">
         <h2>Display name</h2>
         <form method="post" action={`${base}/name`} class="form-inline">
