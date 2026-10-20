@@ -21,12 +21,18 @@ import type { Registry } from "../registry/db.js";
 import { renderPage } from "../ui/layout.js";
 import type { NewProjectValues } from "../ui/pages/projects.js";
 import { RestorePage } from "../ui/pages/restore.js";
-import { type S3FormState, SettingsPage } from "../ui/pages/settings.js";
+import { type S3FormState, STORAGE_SETTINGS, StorageSettingsPage } from "../ui/pages/settings.js";
 import { dumpFilename } from "./naming.js";
 import { startDump } from "./pg-dump.js";
 import { restoreIntoNewProject, restoreIntoProject } from "./restore.js";
 import { testS3Connection } from "./s3.js";
-import { type S3Form, saveS3Settings, storedS3Form, validateS3Form } from "./s3-settings.js";
+import {
+  isS3Configured,
+  type S3Form,
+  saveS3Settings,
+  storedS3Form,
+  validateS3Form,
+} from "./s3-settings.js";
 import { type BackupDeps, removeBackup, runBackup } from "./service.js";
 
 const PROJECTS_PAGE = "/_hs/projects";
@@ -122,7 +128,9 @@ export function backupRoutes(deps: BackupDeps, projectDeps: ProjectServiceDeps):
   }
 
   function renderSettings(c: Context<AuthEnv>, s3: S3FormState, status: 200 | 400 | 502 = 200) {
-    return renderPage(c, <SettingsPage s3={s3} />, status);
+    const { values, secretSet } = storedS3Form(db);
+    const stored = isS3Configured(db) && secretSet ? values : undefined;
+    return renderPage(c, <StorageSettingsPage s3={s3} stored={stored} />, status);
   }
 
   app.get(`${PROJECTS_PAGE}/:ref/dump`, async (c) => {
@@ -220,6 +228,8 @@ export function backupRoutes(deps: BackupDeps, projectDeps: ProjectServiceDeps):
     const message = `Project ${result.project.ref} was created, but the backup could not be fully restored into it: it holds part of the backup or none of it. ${result.problem}`;
     return renderProjectDetail(c, deps, created, { kind: "error", message }, 502);
   });
+
+  app.get(STORAGE_SETTINGS, (c) => renderSettings(c, storedS3Form(db)));
 
   app.post(S3_SETTINGS, async (c) => {
     const form = s3FormFrom(await c.req.parseBody());

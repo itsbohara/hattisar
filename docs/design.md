@@ -287,8 +287,13 @@ Studio" → `/project/<ref>/editor`), New project (name, ref with live slug hint
 option labelled; dev-only boxes carry the warning "Best for development only — shares one Postgres
 with other projects"), Project detail (connection strings, rotate password, download dump, backups
 list + schedule + back up now + restore, delete), Trash, Boxes (list, register, edit, remove,
-"New managed box" when enabled), Settings (change password, S3). Errors render inline, never as a
-stack trace.
+"New managed box" when enabled), Settings. Errors render inline, never as a stack trace.
+
+Settings has a section nav: `/_hs/settings` → 302 `/_hs/settings/storage`. Account
+(`/_hs/settings/account`) shows the signed-in username and the change-password form, posting to
+`/_hs/settings/password`. Backup storage (`/_hs/settings/storage`) shows whether S3 is configured
+(bucket, endpoint host) above the S3 form, which posts to `/_hs/settings/s3` and, for "Test
+connection", `/_hs/settings/s3/test`. Each POST re-renders the section it belongs to.
 
 Known limitation: Studio stores SQL snippets in one folder (`SNIPPETS_MANAGEMENT_FOLDER`, a named
 volume) regardless of project, so saved snippets appear in every project's SQL editor and run

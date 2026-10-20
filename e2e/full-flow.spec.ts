@@ -37,7 +37,7 @@ test("a project's table survives being dropped by backing up to S3 and restoring
   await page.getByRole("button", { name: "Log in" }).click();
   await expect(page).toHaveURL("/_hs/projects");
 
-  await page.goto("/_hs/settings");
+  await page.goto("/_hs/settings/storage");
   for (const [name, value] of Object.entries(s3Fields(s3TestService(), { prefix: "e2e" }))) {
     if (name === "forcePathStyle") await page.locator(`input[name="${name}"]`).check();
     else await page.locator(`input[name="${name}"]`).fill(value);

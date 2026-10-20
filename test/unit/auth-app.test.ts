@@ -164,7 +164,7 @@ describe("login", () => {
 describe("signed-in requests", () => {
   it("keeps hattisar's own pages out of the browser cache", async () => {
     const cookie = signInToRegistry(db);
-    for (const path of ["/_hs/projects", "/_hs/settings"]) {
+    for (const path of ["/_hs/projects", "/_hs/settings/account", "/_hs/settings/storage"]) {
       expect((await get(path, cookie)).headers.get("cache-control")).toBe("no-store");
     }
   });
@@ -230,8 +230,8 @@ describe("change password", () => {
     const response = await change(current);
     expect(response.status).toBe(200);
     expect(await response.text()).toContain("Password changed.");
-    expect((await get("/_hs/settings", current)).status).toBe(200);
-    expect((await get("/_hs/settings", other)).status).toBe(302);
+    expect((await get("/_hs/settings/account", current)).status).toBe(200);
+    expect((await get("/_hs/settings/account", other)).status).toBe(302);
     expect((await logIn()).status).toBe(401);
     expect((await logIn("a-new-password")).status).toBe(302);
   });

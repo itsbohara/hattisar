@@ -139,7 +139,7 @@ describe("S3 settings", () => {
     const response = await postForm(baseUrl, "/_hs/settings/s3", s3Fields(s3), cookie);
     expect(response.status).toBe(200);
     expect(await response.text()).toContain("S3 settings saved.");
-    const page = await (await fetchWith(baseUrl, cookie, "/_hs/settings")).text();
+    const page = await (await fetchWith(baseUrl, cookie, "/_hs/settings/storage")).text();
     expect(page).toContain(`value="${s3.accessKey}"`);
     expect(page).toContain("Leave blank to keep the saved key.");
     expect(page).not.toContain(s3.secretKey);

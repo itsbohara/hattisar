@@ -54,7 +54,7 @@ export function Layout({
           <a class="brand" href="/_hs/projects">
             hattisar
           </a>
-          <nav class="nav">
+          <nav class="nav" aria-label="Main">
             {NAV.map((item) => (
               <a
                 href={item.href}
