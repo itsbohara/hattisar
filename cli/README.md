@@ -3,15 +3,19 @@
 Command line client for a [hattisar](https://github.com/itsbohara/hattisar) server's JSON API.
 Node 24 or newer, no dependencies.
 
+Not on npm yet: build it from the repository with `pnpm build:cli` and run
+`node cli/dist/main.js`. Once published, `npm install -g hattisar` or `npx hattisar` will do.
+
 ```sh
-npm install -g hattisar
 hattisar login https://hattisar.example.com   # paste an API token from Settings → API tokens
 hattisar projects create "My App"
 psql "$(hattisar projects url my-app)"
 ```
 
 The token is read from a hidden prompt, or from stdin when stdin is not a terminal
-(`hattisar login <url> < token.txt`). It is never accepted as an argument.
+(`hattisar login <url> < token.txt`). It is never accepted as an argument. Logging in over plain
+`http:` to anything but localhost prints a warning, and a server that redirects is refused with the
+URL to log in with instead.
 
 ## Commands
 
@@ -30,7 +34,8 @@ hattisar backups restore <ref> <backup-id> --confirm <ref>
 hattisar boxes list
 ```
 
-Every command takes `--help` and `--json`; `--json` prints the API's JSON.
+Every command takes `--help` and `--json`. `--json` prints the API's JSON as returned, except
+that `projects url --json` prints the chosen connection object and `logout` prints no JSON.
 
 `projects url` prints one URL with the real password: the session pooler on the shared box, the
 direct connection elsewhere. `--transaction` picks the transaction pooler instead. Migrations stay

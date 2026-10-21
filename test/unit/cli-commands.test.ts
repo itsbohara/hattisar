@@ -59,6 +59,7 @@ vi.mock("../../src/backups/pg-restore.js", async (importOriginal) => ({
 }));
 
 const ORIGIN = "http://hattisar.test";
+const HTTP_WARNING = "warning: http sends the token unencrypted\n";
 const SECRET = "s".repeat(32);
 const secretKey = deriveSecretKey(SECRET);
 
@@ -139,6 +140,10 @@ async function cli(argv: string[], options: CliOptions = {}) {
   return result;
 }
 
+const noRequests: Io["fetch"] = () => {
+  throw new Error("sent a request it should not have");
+};
+
 const login = () => cli(["login", `${ORIGIN}/`], { stdin: `${token}\n` });
 
 async function loggedInWithProject(ref = "my-app", extra: string[] = []) {
@@ -152,7 +157,7 @@ describe("login", () => {
     expect(await login()).toEqual({
       code: 0,
       stdout: `Logged in to ${ORIGIN} as admin\n`,
-      stderr: "",
+      stderr: HTTP_WARNING,
     });
     const file = join(configDir, "config.json");
     expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({ url: ORIGIN, token });
@@ -166,7 +171,7 @@ describe("login", () => {
     expect(result).toEqual({
       code: 3,
       stdout: "",
-      stderr: "hattisar: Missing or invalid API token\n",
+      stderr: `${HTTP_WARNING}hattisar: Missing or invalid API token\n`,
     });
     expect(existsSync(join(configDir, "config.json"))).toBe(false);
   });
@@ -209,7 +214,9 @@ describe("login", () => {
     writeFileSync(configDir, "not a directory");
     const result = await cli(["login", ORIGIN], { stdin: token });
     expect(result.code).toBe(1);
-    expect(result.stderr).toMatch(/^hattisar: cannot write \S+config\.json: E[A-Z]+\n$/);
+    expect(result.stderr).toMatch(
+      /^warning: .*\nhattisar: cannot write \S+config\.json: E[A-Z]+\n$/,
+    );
   });
 
   it("reports a server that does not answer JSON", async () => {
@@ -220,8 +227,64 @@ describe("login", () => {
     expect(result).toEqual({
       code: 1,
       stdout: "",
-      stderr: `hattisar: unexpected response from ${ORIGIN}\n`,
+      stderr: `${HTTP_WARNING}hattisar: unexpected response from ${ORIGIN}\n`,
     });
+    expect(existsSync(join(configDir, "config.json"))).toBe(false);
+  });
+
+  it.each([
+    ["a second line", (t: string) => `${t}\nsecond\n`],
+    ["a carriage return", (t: string) => `${t}\rx`],
+    ["no hs_ prefix", (t: string) => t.slice(3)],
+  ])("refuses a token with %s without sending or echoing it", async (_, mangle) => {
+    const result = await cli(["login", "http://127.0.0.1:9"], {
+      stdin: mangle(token),
+      fetch: noRequests,
+    });
+    expect(result).toEqual({ code: 3, stdout: "", stderr: "hattisar: the token is not valid\n" });
+    expect(existsSync(join(configDir, "config.json"))).toBe(false);
+  });
+
+  it("trims whitespace around a pasted token", async () => {
+    expect(await cli(["login", ORIGIN], { stdin: `  ${token} \r\n` })).toMatchObject({ code: 0 });
+    expect(JSON.parse(readFileSync(join(configDir, "config.json"), "utf8"))).toEqual({
+      url: ORIGIN,
+      token,
+    });
+  });
+
+  it.each([
+    ["http://hattisar.test", true],
+    ["https://hattisar.test", false],
+    ["http://localhost:8000", false],
+    ["http://127.0.0.1:8000", false],
+    ["http://[::1]:8000", false],
+  ])("warns that %s sends the token unencrypted: %s", async (url, warns) => {
+    const me: Io["fetch"] = async () => Response.json({ username: "admin" });
+    const result = await cli(["login", url], { stdin: token, fetch: me });
+    expect(result).toEqual({
+      code: 0,
+      stdout: `Logged in to ${url} as admin\n`,
+      stderr: warns ? HTTP_WARNING : "",
+    });
+  });
+
+  it("refuses a server that redirects, naming where to log in instead", async () => {
+    const requests: Request[] = [];
+    const redirecting: Io["fetch"] = async (request) => {
+      requests.push(request);
+      return new Response(null, {
+        status: 301,
+        headers: { location: "https://user:pw@hattisar.test/_hs/api/v1/me?next=1#x" },
+      });
+    };
+    const result = await cli(["login", ORIGIN], { stdin: token, fetch: redirecting });
+    expect(result).toEqual({
+      code: 1,
+      stdout: "",
+      stderr: `${HTTP_WARNING}hattisar: ${ORIGIN} redirected to https://hattisar.test — log in with that URL instead\n`,
+    });
+    expect(requests.map((request) => request.redirect)).toEqual(["manual"]);
     expect(existsSync(join(configDir, "config.json"))).toBe(false);
   });
 
@@ -264,6 +327,27 @@ describe("credentials from the environment", () => {
     expect(await cli(["whoami"], { env: { HATTISAR_URL: `${ORIGIN}/` } })).toMatchObject({
       code: 0,
       stdout: `admin at ${ORIGIN}\n`,
+    });
+  });
+
+  it.each([
+    ["HATTISAR_TOKEN", () => ({ HATTISAR_URL: ORIGIN, HATTISAR_TOKEN: `${token}\nsecond` })],
+    [
+      "the saved config",
+      () => {
+        mkdirSync(configDir, { recursive: true });
+        writeFileSync(
+          join(configDir, "config.json"),
+          JSON.stringify({ url: ORIGIN, token: `${token}\nx` }),
+        );
+        return {};
+      },
+    ],
+  ])("refuses a malformed token from %s without sending or echoing it", async (_, setup) => {
+    expect(await cli(["whoami"], { env: setup(), fetch: noRequests })).toEqual({
+      code: 3,
+      stdout: "",
+      stderr: "hattisar: the token is not valid\n",
     });
   });
 
@@ -435,9 +519,6 @@ describe("boxes", () => {
 
 describe("usage", () => {
   const CREDENTIALS = { HATTISAR_URL: ORIGIN, HATTISAR_TOKEN: "hs_unused" };
-  const noRequests: Io["fetch"] = () => {
-    throw new Error("a usage error sent a request");
-  };
 
   it.each([
     [[], "hattisar: missing command"],
@@ -486,7 +567,7 @@ describe("usage", () => {
 
   it("reports a server it cannot reach and exits 1", async () => {
     const refused = Object.assign(new TypeError("fetch failed"), {
-      cause: new Error("connect ECONNREFUSED 127.0.0.1:9"),
+      cause: Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:9"), { code: "ECONNREFUSED" }),
     });
     const result = await cli(["whoami"], {
       env: { HATTISAR_URL: "http://127.0.0.1:9", HATTISAR_TOKEN: token },
@@ -495,7 +576,15 @@ describe("usage", () => {
     expect(result).toEqual({
       code: 1,
       stdout: "",
-      stderr: "hattisar: cannot reach http://127.0.0.1:9: connect ECONNREFUSED 127.0.0.1:9\n",
+      stderr: "hattisar: cannot reach http://127.0.0.1:9: ECONNREFUSED\n",
     });
+  });
+
+  it("never repeats what the request layer says, since it can quote the token", async () => {
+    const result = await cli(["whoami"], {
+      env: { HATTISAR_URL: ORIGIN, HATTISAR_TOKEN: token },
+      fetch: () => Promise.reject(new TypeError(`invalid header value "Bearer ${token}"`)),
+    });
+    expect(result).toEqual({ code: 1, stdout: "", stderr: `hattisar: cannot reach ${ORIGIN}\n` });
   });
 });

@@ -1,5 +1,5 @@
 import { apiClient } from "../client.js";
-import { deleteConfig, serverUrl, writeConfig } from "../config.js";
+import { apiToken, deleteConfig, sendsTokenInClear, serverUrl, writeConfig } from "../config.js";
 import { CliError, EXIT, UsageError } from "../errors.js";
 import { printJson, printLines } from "../output.js";
 import { readSecret } from "../prompt.js";
@@ -22,8 +22,10 @@ const login: Command = {
     } catch (error) {
       throw error instanceof CliError ? new UsageError(error.message, usageLine(login)) : error;
     }
-    const token = await readSecret(io.stdin, io.stderr, "API token: ");
-    if (token === "") throw new CliError(EXIT.usage, "no token given");
+    if (sendsTokenInClear(url)) io.stderr.write("warning: http sends the token unencrypted\n");
+    const secret = await readSecret(io.stdin, io.stderr, "API token: ");
+    if (secret === "") throw new CliError(EXIT.usage, "no token given");
+    const token = apiToken(secret);
     const me = await apiClient(io.fetch, { url, token })<Me>("GET", "/me");
     writeConfig(io.configDir, { url, token });
     if (json) printJson(io.stdout, me);

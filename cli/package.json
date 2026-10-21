@@ -5,12 +5,15 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "github:itsbohara/hattisar",
+    "url": "git+https://github.com/itsbohara/hattisar.git",
     "directory": "cli"
   },
   "type": "module",
   "bin": {
     "hattisar": "dist/main.js"
+  },
+  "scripts": {
+    "prepack": "cd .. && pnpm build:cli"
   },
   "files": [
     "dist"

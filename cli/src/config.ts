@@ -48,6 +48,20 @@ export function serverUrl(value: string): string {
   return value.replace(/\/+$/, "");
 }
 
+// The value is never echoed: a token that fails this check could still be a real one.
+export function apiToken(value: string): string {
+  const token = value.trim();
+  if (!/^hs_[A-Za-z0-9_-]+$/.test(token)) throw new CliError(EXIT.auth, "the token is not valid");
+  return token;
+}
+
+const LOOPBACK = ["localhost", "127.0.0.1", "[::1]"];
+
+export function sendsTokenInClear(url: string): boolean {
+  const { protocol, hostname } = new URL(url);
+  return protocol === "http:" && !LOOPBACK.includes(hostname);
+}
+
 export function readConfig(dir: string): Partial<Credentials> {
   const path = configFile(dir);
   let text: string;
@@ -100,12 +114,12 @@ export function credentials(env: Record<string, string | undefined>, dir: string
   const savedUrl = config.url?.replace(/\/+$/, "");
   const url = env.HATTISAR_URL ? serverUrl(env.HATTISAR_URL) : savedUrl;
   // A saved token goes only to the server it was saved for, never to one HATTISAR_URL names.
-  const token = env.HATTISAR_TOKEN || (url === savedUrl ? config.token : undefined);
+  const token = env.HATTISAR_TOKEN?.trim() || (url === savedUrl ? config.token : undefined);
   if (!url || !token) {
     throw new CliError(
       EXIT.auth,
       env.HATTISAR_URL ? `not logged in to ${url}` : "not logged in — run hattisar login <url>",
     );
   }
-  return { url, token };
+  return { url, token: apiToken(token) };
 }
