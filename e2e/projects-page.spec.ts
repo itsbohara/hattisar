@@ -30,11 +30,11 @@ test("the list view is remembered and its rows open Studio", async ({ page }) =>
   await expect(page).toHaveURL("/project/spike-b/editor");
 });
 
-test("a project's menu opens its hattisar page", async ({ page }) => {
+test("a project's menu opens its General tab", async ({ page }) => {
   await page.goto("/_hs/projects");
   await page.getByLabel("Actions for Spike B").click();
   await page.getByRole("link", { name: "Project settings" }).click();
-  await expect(page).toHaveURL("/_hs/projects/spike-b");
+  await expect(page).toHaveURL("/_hs/projects/spike-b/settings");
 });
 
 test("sizes load for each project and box", async ({ page }) => {

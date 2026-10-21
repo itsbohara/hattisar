@@ -98,8 +98,8 @@ describe("backup schedule", () => {
         cookie,
       );
       expect(saved.status).toBe(302);
-      expect(saved.headers.get("location")).toBe(`/_hs/projects/${ref}?schedule-saved`);
-      const page = await (await fetchWith(baseUrl, cookie, `/_hs/projects/${ref}`)).text();
+      expect(saved.headers.get("location")).toBe(`/_hs/projects/${ref}/backups?schedule-saved`);
+      const page = await (await fetchWith(baseUrl, cookie, `/_hs/projects/${ref}/backups`)).text();
       expect(page).toMatch(/<option value="daily" selected="">daily<\/option>/);
 
       const taken = await waitFor(

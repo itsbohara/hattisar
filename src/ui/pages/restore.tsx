@@ -7,6 +7,7 @@ import {
   type NewProjectValues,
   Problems,
   ProjectFields,
+  projectTabHref,
   slugScript,
 } from "./projects.js";
 import { ConfirmRefInput, utc } from "./trash.js";
@@ -31,7 +32,7 @@ export function RestorePage({
     <Layout title="Restore backup" section="projects">
       <div class="page-head">
         <h1>Restore backup</h1>
-        <a class="button-quiet" href={`/_hs/projects/${project.ref}`}>
+        <a class="button-quiet" href={projectTabHref(project.ref, "backups")}>
           Back to {project.name}
         </a>
       </div>

@@ -294,8 +294,7 @@ reveal, live search and loading sizes. The theme follows `prefers-color-scheme` 
 /_hs/theme` stores `hs_theme=light|dark` (or clears it for System) and the server renders
 `<html data-theme>` from it, so there is no flash. Pages: Login, Projects, New project (name, ref with live slug hint, box picker — each
 option labelled; dev-only boxes carry the warning "Best for development only — shares one Postgres
-with other projects"), Project detail (connection strings, rotate password, download dump, backups
-list + schedule + back up now + restore, delete), Trash, Boxes (list, register, edit, remove,
+with other projects"), Project (three tabs, below), Trash, Boxes (list, register, edit, remove,
 "New managed box" when enabled), Settings. Errors render inline, never as a stack trace.
 
 Projects (`/_hs/projects`) shows the active projects as cards or as a list. `?view=grid|list`
@@ -305,10 +304,18 @@ list's Project and Created headers link to those sorts. Each card or row shows t
 (`ACTIVE`, or `BUSY` while §7's lock or a running backup holds it), the box's kind (`SHARED · DEV`
 for the dev-only shared box), the box, the created date and the database size. Clicking it opens
 Studio at `/project/<ref>/editor`; its ⋮ menu has Open in Studio, Project settings
-(`/_hs/projects/<ref>`) and Delete (the project page's delete form, `#delete`). Connection strings
+(`/_hs/projects/<ref>/settings`) and Delete (that tab's delete form, `#delete`). Connection strings
 stay on the project page, so the list never carries a password. A Trash link shows the deleted
 count. A Boxes panel beside the projects lists each box with its active project count and the
 total size of those databases.
+
+A project's page has a breadcrumb (Projects / name), Open in Studio, and a section nav like
+Settings' with three tabs. **Connect** (`/_hs/projects/<ref>`, the default, where Studio's Connect
+button and a new project land): connection strings and rotate password. **Backups**
+(`/_hs/projects/<ref>/backups`): download dump, back up now, schedule, the backups list with
+restore and delete. **General** (`/_hs/projects/<ref>/settings`): ref, box, database, owner role,
+display name, and Delete project in a danger section at the bottom. Each form returns to its own
+tab: a success redirects there with a `?notice` key, a failure re-renders that tab with the error.
 
 Sizes come from `GET /_hs/usage` after the page loads, so a slow box never delays the page: one
 `pg_database_size` query per box that has active projects, in parallel, through the box's admin

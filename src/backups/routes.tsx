@@ -15,7 +15,7 @@ import {
 import { listBoxes } from "../registry/boxes.js";
 import type { Registry } from "../registry/db.js";
 import { renderPage } from "../ui/layout.js";
-import type { NewProjectValues } from "../ui/pages/projects.js";
+import { type NewProjectValues, projectTabHref } from "../ui/pages/projects.js";
 import { RestorePage } from "../ui/pages/restore.js";
 import { type S3FormState, STORAGE_SETTINGS, StorageSettingsPage } from "../ui/pages/settings.js";
 import { dumpFilename } from "./naming.js";
@@ -141,7 +141,7 @@ export function backupRoutes(deps: BackupDeps, projectDeps: ProjectServiceDeps):
       await firstOutput(dump.stream);
     } catch (error) {
       const message = `Could not dump the database: ${(error as Error).message}`;
-      return renderProjectDetail(c, deps, found, { kind: "error", message }, 502);
+      return renderProjectDetail(c, deps, found, "backups", { kind: "error", message }, 502);
     }
     // A failure after this point destroys the stream, which @hono/node-server turns into an
     // aborted response: the client never sees a truncated archive as complete.
@@ -158,8 +158,16 @@ export function backupRoutes(deps: BackupDeps, projectDeps: ProjectServiceDeps):
     const found = accessibleProject(db, c);
     if (!found) return c.notFound();
     const result = await runBackup(deps, found.project, found.box, "manual");
-    if (result.ok) return c.redirect(`${PROJECTS_PAGE}/${found.project.ref}?backed-up`, 302);
-    return renderProjectDetail(c, deps, found, { kind: "error", message: result.problem }, 502);
+    if (result.ok)
+      return c.redirect(`${projectTabHref(found.project.ref, "backups")}?backed-up`, 302);
+    return renderProjectDetail(
+      c,
+      deps,
+      found,
+      "backups",
+      { kind: "error", message: result.problem },
+      502,
+    );
   });
 
   app.post(`${PROJECTS_PAGE}/:ref/backups/:id/delete`, async (c) => {
@@ -167,8 +175,16 @@ export function backupRoutes(deps: BackupDeps, projectDeps: ProjectServiceDeps):
     if (!target) return c.notFound();
     const { found, backup } = target;
     const result = await removeBackup(deps, backup);
-    if (result.ok) return c.redirect(`${PROJECTS_PAGE}/${found.project.ref}?backup-deleted`, 302);
-    return renderProjectDetail(c, deps, found, { kind: "error", message: result.problem }, 502);
+    if (result.ok)
+      return c.redirect(`${projectTabHref(found.project.ref, "backups")}?backup-deleted`, 302);
+    return renderProjectDetail(
+      c,
+      deps,
+      found,
+      "backups",
+      { kind: "error", message: result.problem },
+      502,
+    );
   });
 
   app.post(`${PROJECTS_PAGE}/:ref/schedule`, async (c) => {
@@ -176,10 +192,17 @@ export function backupRoutes(deps: BackupDeps, projectDeps: ProjectServiceDeps):
     if (!found) return c.notFound();
     const schedule = scheduleFrom(found.project.id, await c.req.parseBody());
     if (typeof schedule === "string") {
-      return renderProjectDetail(c, deps, found, { kind: "error", message: schedule }, 400);
+      return renderProjectDetail(
+        c,
+        deps,
+        found,
+        "backups",
+        { kind: "error", message: schedule },
+        400,
+      );
     }
     setBackupSchedule(db, schedule);
-    return c.redirect(`${PROJECTS_PAGE}/${found.project.ref}?schedule-saved`, 302);
+    return c.redirect(`${projectTabHref(found.project.ref, "backups")}?schedule-saved`, 302);
   });
 
   app.get(`${PROJECTS_PAGE}/:ref/backups/:id/restore`, (c) => {
@@ -197,8 +220,16 @@ export function backupRoutes(deps: BackupDeps, projectDeps: ProjectServiceDeps):
       return renderRestore(c, target, { sameProblem }, 400);
     }
     const result = await restoreIntoProject(deps, projectDeps, backup, found.project, found.box);
-    if (result.ok) return c.redirect(`${PROJECTS_PAGE}/${found.project.ref}?restored`, 302);
-    return renderProjectDetail(c, deps, found, { kind: "error", message: result.problem }, 502);
+    if (result.ok)
+      return c.redirect(`${projectTabHref(found.project.ref, "backups")}?restored`, 302);
+    return renderProjectDetail(
+      c,
+      deps,
+      found,
+      "backups",
+      { kind: "error", message: result.problem },
+      502,
+    );
   });
 
   app.post(`${PROJECTS_PAGE}/:ref/backups/:id/restore-new`, async (c) => {
@@ -215,14 +246,15 @@ export function backupRoutes(deps: BackupDeps, projectDeps: ProjectServiceDeps):
       ...values,
       boxId: values.boxId ?? Number.NaN,
     });
-    if (result.ok) return c.redirect(`${PROJECTS_PAGE}/${result.project.ref}?restored`, 302);
+    if (result.ok)
+      return c.redirect(`${projectTabHref(result.project.ref, "backups")}?restored`, 302);
     if ("problems" in result) {
       return renderRestore(c, target, { values, newProblems: result.problems }, 400);
     }
     const created = accessibleProject(db, c, result.project.ref);
     if (!created) return c.notFound();
     const message = `Project ${result.project.ref} was created, but the backup could not be fully restored into it: it holds part of the backup or none of it. ${result.problem}`;
-    return renderProjectDetail(c, deps, created, { kind: "error", message }, 502);
+    return renderProjectDetail(c, deps, created, "backups", { kind: "error", message }, 502);
   });
 
   app.get(STORAGE_SETTINGS, (c) => renderSettings(c, storedS3Form(db)));

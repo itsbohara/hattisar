@@ -92,10 +92,13 @@ function ProjectMenu({ project }: { project: Project }) {
         <a class="menu-item" href={studioHref(project.ref)}>
           Open in Studio
         </a>
-        <a class="menu-item" href={`/_hs/projects/${project.ref}`}>
+        <a class="menu-item" href={projectTabHref(project.ref, "general")}>
           Project settings
         </a>
-        <a class="menu-item menu-item-danger" href={`/_hs/projects/${project.ref}#delete`}>
+        <a
+          class="menu-item menu-item-danger"
+          href={`${projectTabHref(project.ref, "general")}#delete`}
+        >
           Delete…
         </a>
       </div>
@@ -743,43 +746,54 @@ export interface ProjectPageNotice {
   message: string;
 }
 
-export function ProjectPage({
+export type ProjectTab = "connect" | "backups" | "general";
+
+const PROJECT_TABS: { tab: ProjectTab; label: string; path: string }[] = [
+  { tab: "connect", label: "Connect", path: "" },
+  { tab: "backups", label: "Backups", path: "/backups" },
+  { tab: "general", label: "General", path: "/settings" },
+];
+
+export function projectTabHref(ref: string, tab: ProjectTab): string {
+  const path = PROJECT_TABS.find((item) => item.tab === tab)?.path ?? "";
+  return `/_hs/projects/${ref}${path}`;
+}
+
+function ConnectTab({
   project,
-  box,
   strings,
-  backups,
-  schedule,
-  backupHourUtc,
-  s3Configured,
-  notice,
 }: {
   project: Project;
-  box: Box;
   strings: ConnectionString[] | undefined;
-  backups: Backup[];
-  schedule: BackupSchedule;
-  backupHourUtc: number;
-  s3Configured: boolean;
-  notice?: ProjectPageNotice;
 }) {
-  const base = `/_hs/projects/${project.ref}`;
   return (
-    <Layout title={project.name} section="projects">
-      <div class="page-head">
-        <h1>{project.name}</h1>
-        <a class="button" href={studioHref(project.ref)}>
-          Open in Studio
-        </a>
-      </div>
-      {notice && (
-        <p
-          class={`alert ${notice.kind === "ok" ? "alert-ok" : "alert-error"}`}
-          role={notice.kind === "ok" ? "status" : "alert"}
-        >
-          {notice.message}
+    <section class="card">
+      <h2>Connection strings</h2>
+      {strings ? (
+        <ConnectionStrings strings={strings} />
+      ) : (
+        <p class="alert alert-error" role="alert">
+          The stored owner password cannot be decrypted, so the connection strings cannot be shown.
+          If the stored secret is corrupt, rotating the password sets a new one.
         </p>
       )}
-      <section class="card card-wide">
+      <form method="post" action={`/_hs/projects/${project.ref}/rotate`} class="form-inline">
+        <button type="submit" class="button-quiet button-danger">
+          Rotate password
+        </button>
+        <small class="hint">Apps using the current password lose access.</small>
+      </form>
+      <script dangerouslySetInnerHTML={{ __html: CREDENTIALS_SCRIPT }} />
+    </section>
+  );
+}
+
+function GeneralTab({ project, box }: { project: Project; box: Box }) {
+  const base = `/_hs/projects/${project.ref}`;
+  return (
+    <>
+      <section class="card">
+        <h2>Project</h2>
         <dl class="facts">
           <dt>Ref</dt>
           <dd>
@@ -798,33 +812,11 @@ export function ProjectPage({
           <dd>
             <code>{project.ownerRole}</code>
           </dd>
+          <dt>Created</dt>
+          <dd>{utc(new Date(project.createdAt))}</dd>
         </dl>
       </section>
-      <section class="card card-wide">
-        <h2>Connection strings</h2>
-        {strings ? (
-          <ConnectionStrings strings={strings} />
-        ) : (
-          <p class="alert alert-error" role="alert">
-            The stored owner password cannot be decrypted, so the connection strings cannot be
-            shown. If the stored secret is corrupt, rotating the password sets a new one.
-          </p>
-        )}
-        <form method="post" action={`${base}/rotate`} class="form-inline">
-          <button type="submit" class="button-quiet button-danger">
-            Rotate password
-          </button>
-          <small class="hint">Apps using the current password lose access.</small>
-        </form>
-      </section>
-      <Backups
-        base={base}
-        backups={backups}
-        schedule={schedule}
-        backupHourUtc={backupHourUtc}
-        s3Configured={s3Configured}
-      />
-      <section class="card card-wide">
+      <section class="card">
         <h2>Display name</h2>
         <form method="post" action={`${base}/name`} class="form-inline">
           <input name="name" required maxlength={100} value={project.name} aria-label="Name" />
@@ -833,7 +825,7 @@ export function ProjectPage({
           </button>
         </form>
       </section>
-      <section class="card card-wide" id="delete">
+      <section class="card card-danger" id="delete">
         <h2>Delete project</h2>
         <p class="hint">
           Moves the project to Trash: the owner can no longer connect and Studio stops showing it.
@@ -846,7 +838,77 @@ export function ProjectPage({
           </button>
         </form>
       </section>
-      <script dangerouslySetInnerHTML={{ __html: CREDENTIALS_SCRIPT }} />
+    </>
+  );
+}
+
+export function ProjectPage({
+  tab,
+  project,
+  box,
+  strings,
+  backups,
+  schedule,
+  backupHourUtc,
+  s3Configured,
+  notice,
+}: {
+  tab: ProjectTab;
+  project: Project;
+  box: Box;
+  strings: ConnectionString[] | undefined;
+  backups: Backup[];
+  schedule: BackupSchedule;
+  backupHourUtc: number;
+  s3Configured: boolean;
+  notice?: ProjectPageNotice;
+}) {
+  return (
+    <Layout title={project.name} section="projects" wide>
+      <nav class="breadcrumb" aria-label="Breadcrumb">
+        <a href="/_hs/projects">Projects</a>
+        <span aria-hidden="true">/</span>
+      </nav>
+      <div class="page-head">
+        <h1>{project.name}</h1>
+        <a class="button" href={studioHref(project.ref)}>
+          Open in Studio
+        </a>
+      </div>
+      <div class="settings">
+        <nav class="settings-nav" aria-label="Project sections">
+          {PROJECT_TABS.map((item) => (
+            <a
+              href={projectTabHref(project.ref, item.tab)}
+              class="settings-nav-link"
+              aria-current={item.tab === tab ? "page" : undefined}
+            >
+              {item.label}
+            </a>
+          ))}
+        </nav>
+        <div class="settings-content project-content">
+          {notice && (
+            <p
+              class={`alert ${notice.kind === "ok" ? "alert-ok" : "alert-error"}`}
+              role={notice.kind === "ok" ? "status" : "alert"}
+            >
+              {notice.message}
+            </p>
+          )}
+          {tab === "connect" && <ConnectTab project={project} strings={strings} />}
+          {tab === "backups" && (
+            <Backups
+              base={`/_hs/projects/${project.ref}`}
+              backups={backups}
+              schedule={schedule}
+              backupHourUtc={backupHourUtc}
+              s3Configured={s3Configured}
+            />
+          )}
+          {tab === "general" && <GeneralTab project={project} box={box} />}
+        </div>
+      </div>
     </Layout>
   );
 }

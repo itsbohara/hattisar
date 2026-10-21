@@ -231,8 +231,8 @@ describe("the project pages", () => {
     expect(html).toContain('class="project-grid"');
     expect(html).toContain('data-project="my-app"');
     expect(html).toContain('<a class="project-link" href="/project/my-app/editor">My App</a>');
-    expect(html).toContain('href="/_hs/projects/my-app">Project settings</a>');
-    expect(html).toContain('href="/_hs/projects/my-app#delete"');
+    expect(html).toContain('href="/_hs/projects/my-app/settings">Project settings</a>');
+    expect(html).toContain('href="/_hs/projects/my-app/settings#delete"');
     expect(html).toContain("shared · dev");
     expect(html).toContain(">Active</span>");
     expect(html).not.toContain(ownerPassword("my-app"));
@@ -309,6 +309,28 @@ describe("the project pages", () => {
     expect((await app.request("/_hs/projects/nope")).status).toBe(404);
     expect((await post("/_hs/projects/my-app/rotate", {})).status).toBe(404);
     expect(await (await app.request("/_hs/projects")).text()).not.toContain("my-app");
+  });
+
+  it.each([
+    ["/_hs/projects/my-app", "Connect", "Connection strings", "Back up now"],
+    ["/_hs/projects/my-app/backups", "Backups", "Back up now", "Connection strings"],
+    ["/_hs/projects/my-app/settings", "General", "Delete project", "Back up now"],
+  ])("renders %s as the %s tab only", async (path, label, shown, absent) => {
+    await create();
+    const html = await (await app.request(path)).text();
+    expect(html).toContain(`aria-current="page">${label}</a>`);
+    expect(html).toContain(shown);
+    expect(html).not.toContain(absent);
+    expect(html).toContain('<a href="/_hs/projects">Projects</a>');
+  });
+
+  it("returns each form to its own tab", async () => {
+    await create();
+    const renamed = await post("/_hs/projects/my-app/name", { name: "Renamed" });
+    expect(renamed.headers.get("location")).toBe("/_hs/projects/my-app/settings?renamed");
+    const refused = await post("/_hs/projects/my-app/delete", { confirm: "wrong" });
+    expect(refused.status).toBe(400);
+    expect(await refused.text()).toContain('aria-current="page">General</a>');
   });
 
   it("renames the display name and refuses an empty one", async () => {

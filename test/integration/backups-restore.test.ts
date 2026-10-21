@@ -115,7 +115,7 @@ describe("restore into the same project", () => {
     const html = await response.text();
     expect(html).toContain(`action="${restorePath(backup)}"`);
     expect(html).toContain(`action="${restorePath(backup, "restore-new")}"`);
-    const project = await (await fetchWith(baseUrl, cookie, `/_hs/projects/${ref}`)).text();
+    const project = await (await fetchWith(baseUrl, cookie, `/_hs/projects/${ref}/backups`)).text();
     expect(project).toContain(`href="${restorePath(backup)}"`);
   });
 
@@ -138,7 +138,7 @@ describe("restore into the same project", () => {
 
     const response = await postForm(baseUrl, restorePath(backup), { confirm: ref }, cookie);
     expect(response.status).toBe(302);
-    expect(response.headers.get("location")).toBe(`/_hs/projects/${ref}?restored`);
+    expect(response.headers.get("location")).toBe(`/_hs/projects/${ref}/backups?restored`);
 
     expect(await widgetIds(ref)).toEqual([1, 2]);
     const owners = await query<{ owner: string; later: string | null }>(
@@ -200,7 +200,7 @@ describe("restore into a new project", () => {
         cookie,
       );
       expect(response.status).toBe(302);
-      expect(response.headers.get("location")).toBe(`/_hs/projects/${copyRef}?restored`);
+      expect(response.headers.get("location")).toBe(`/_hs/projects/${copyRef}/backups?restored`);
     } finally {
       await postForm(baseUrl, "/_hs/settings/s3", s3Fields(s3), cookie);
     }
