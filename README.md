@@ -87,6 +87,12 @@ hattisar backups run notes-app
 hattisar projects delete notes-app --confirm notes-app
 ```
 
+To release the CLI, bump `version` in `cli/package.json` through a PR, then tag the merged commit:
+
+```sh
+git tag cli-v0.2.0 && git push origin cli-v0.2.0   # tests, publishes to npm, creates the GitHub release
+```
+
 Migrations stay with the official Supabase CLI:
 
 ```sh
