@@ -42,6 +42,7 @@ test("Studio's Connect button opens hattisar's project page", async ({ page }) =
   await expect(page).toHaveURL(`/_hs/projects/${REF}`);
   await page.goBack();
   await expect(page).toHaveURL(`/project/${REF}/editor`);
+  await expect(page.getByText("Connect to your project")).toBeHidden();
 });
 
 test("a Studio URL with showConnect opens hattisar's project page", async ({ page }) => {

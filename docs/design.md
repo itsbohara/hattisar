@@ -100,7 +100,9 @@ query that feeds the pooler tabs in cloud (`/platform/projects/{ref}/config/supa
 load, on `popstate`, and by wrapping `history.pushState`/`replaceState`, which is how Studio opens
 the sheet without a reload — drops `showConnect`, `connectTab` and `method` from the current
 history entry (so Back does not redirect again) and goes to `/_hs/projects/<ref>`, whose connection
-strings are the project's own. This relies on Studio opening the sheet through `showConnect`.
+strings are the project's own. If Back then restores the Studio page from the back/forward cache,
+with the sheet Studio had already opened, `studio.js` reloads it. This relies on Studio opening
+the sheet through `showConnect`.
 
 ### 3.1 Studio project shape
 
