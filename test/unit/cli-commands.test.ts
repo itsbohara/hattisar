@@ -1,4 +1,13 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
@@ -165,7 +174,55 @@ describe("login", () => {
   it("refuses a URL that is not http or https", async () => {
     const result = await cli(["login", "ftp://hattisar.test"], { stdin: token });
     expect(result.code).toBe(2);
-    expect(result.stderr).toContain("hattisar: ftp://hattisar.test is not an http or https URL");
+    expect(result.stderr).toContain("hattisar: the URL must be http or https\n");
+  });
+
+  it.each([
+    ["http://admin:hunter2@hattisar.test", "the URL must not contain credentials"],
+    ["http://admin@hattisar.test", "the URL must not contain credentials"],
+    ["http://hattisar.test/?next=1", "the URL must not contain a query or fragment"],
+    ["http://hattisar.test/#top", "the URL must not contain a query or fragment"],
+    ["not a url hunter2", "the URL is not valid"],
+  ])("refuses %s without echoing it", async (url, message) => {
+    const result = await cli(["login", url], { stdin: token });
+    expect(result).toMatchObject({ code: 2, stdout: "" });
+    expect(result.stderr).toContain(`hattisar: ${message}\n`);
+    expect(result.stderr).not.toContain("hunter2");
+    expect(result.stderr).not.toContain("admin");
+    expect(existsSync(join(configDir, "config.json"))).toBe(false);
+  });
+
+  it("tightens an existing looser directory and file", async () => {
+    mkdirSync(configDir, { recursive: true });
+    chmodSync(configDir, 0o755);
+    const file = join(configDir, "config.json");
+    writeFileSync(file, "{}");
+    chmodSync(file, 0o644);
+    expect(await login()).toMatchObject({ code: 0 });
+    expect(statSync(configDir).mode & 0o777).toBe(0o700);
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+    expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({ url: ORIGIN, token });
+  });
+
+  it("reports a config it cannot write in one line", async () => {
+    mkdirSync(join(dataDir, "config"), { recursive: true });
+    writeFileSync(configDir, "not a directory");
+    const result = await cli(["login", ORIGIN], { stdin: token });
+    expect(result.code).toBe(1);
+    expect(result.stderr).toMatch(/^hattisar: cannot write \S+config\.json: E[A-Z]+\n$/);
+  });
+
+  it("reports a server that does not answer JSON", async () => {
+    const result = await cli(["login", ORIGIN], {
+      stdin: token,
+      fetch: async () => new Response("<html>hello</html>", { status: 200 }),
+    });
+    expect(result).toEqual({
+      code: 1,
+      stdout: "",
+      stderr: `hattisar: unexpected response from ${ORIGIN}\n`,
+    });
+    expect(existsSync(join(configDir, "config.json"))).toBe(false);
   });
 
   it("forgets the config on logout, and logging out twice is fine", async () => {
@@ -189,6 +246,35 @@ describe("credentials from the environment", () => {
     expect(await cli(["whoami"], { env: { ...env, HATTISAR_TOKEN: token } })).toMatchObject({
       code: 0,
       stdout: `admin at ${ORIGIN}\n`,
+    });
+  });
+
+  it("never sends the saved token to another HATTISAR_URL", async () => {
+    await login();
+    let requests = 0;
+    const counting: Io["fetch"] = async () => {
+      requests += 1;
+      return new Response("{}");
+    };
+    const elsewhere = "http://elsewhere.test";
+    expect(
+      await cli(["whoami"], { env: { HATTISAR_URL: `${elsewhere}/` }, fetch: counting }),
+    ).toEqual({ code: 3, stdout: "", stderr: `hattisar: not logged in to ${elsewhere}\n` });
+    expect(requests).toBe(0);
+    expect(await cli(["whoami"], { env: { HATTISAR_URL: `${ORIGIN}/` } })).toMatchObject({
+      code: 0,
+      stdout: `admin at ${ORIGIN}\n`,
+    });
+  });
+
+  it("refuses a HATTISAR_URL with credentials", async () => {
+    const result = await cli(["whoami"], {
+      env: { HATTISAR_URL: "http://admin:hunter2@hattisar.test", HATTISAR_TOKEN: token },
+    });
+    expect(result).toEqual({
+      code: 2,
+      stdout: "",
+      stderr: "hattisar: the URL must not contain credentials\n",
     });
   });
 });
@@ -348,6 +434,11 @@ describe("boxes", () => {
 });
 
 describe("usage", () => {
+  const CREDENTIALS = { HATTISAR_URL: ORIGIN, HATTISAR_TOKEN: "hs_unused" };
+  const noRequests: Io["fetch"] = () => {
+    throw new Error("a usage error sent a request");
+  };
+
   it.each([
     [[], "hattisar: missing command"],
     [["frob"], "hattisar: unknown command frob"],
@@ -355,15 +446,30 @@ describe("usage", () => {
     [["projects", "show"], "hattisar: missing <ref>"],
     [["projects", "show", "a", "b"], "hattisar: unexpected argument b"],
     [["projects", "list", "--transaction"], "hattisar: unknown option --transaction"],
+    [["projects", "delete", "a"], "hattisar: projects delete needs --confirm <ref>"],
+    [["backups", "restore", "a", "1"], "hattisar: backups restore needs --confirm <ref>"],
     [["projects", "delete", "a", "--confirm"], "hattisar: --confirm needs a value"],
+    [["projects", "list", "--json=foo"], "hattisar: --json takes no value"],
+    [["projects", "list", "--deleted=x"], "hattisar: --deleted takes no value"],
     [["projects", "create", "a", "--box", "1", "--new-box"], "hattisar: give either --box"],
     [["backups", "restore", "a", "b", "--confirm", "a"], "hattisar: b is not a backup id"],
-  ])("exits 2 for %j", async (argv, message) => {
-    const result = await cli(argv);
+  ])("exits 2 for %j without a request", async (argv, message) => {
+    const result = await cli(argv, { env: CREDENTIALS, fetch: noRequests });
     expect(result.code).toBe(2);
     expect(result.stdout).toBe("");
     expect(result.stderr.startsWith(message)).toBe(true);
     expect(result.stderr).toContain("usage: hattisar");
+  });
+
+  it.each([
+    [["projects", "delete", "a", "--confirm", "b"], "hattisar: --confirm must be the ref a\n"],
+    [["backups", "restore", "a", "1", "--confirm", "b"], "hattisar: --confirm must be the ref a\n"],
+  ])("exits 2 for %j without a request", async (argv, stderr) => {
+    expect(await cli(argv, { env: CREDENTIALS, fetch: noRequests })).toEqual({
+      code: 2,
+      stdout: "",
+      stderr,
+    });
   });
 
   it("prints help and the version on stdout", async () => {
