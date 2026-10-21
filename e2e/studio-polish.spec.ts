@@ -49,6 +49,14 @@ test("a Studio URL with showConnect opens hattisar's project page", async ({ pag
   await expect(page).toHaveURL(`/_hs/projects/${REF}`);
 });
 
+test("Studio's logo lands on hattisar's projects page", async ({ page }) => {
+  await page.goto(`/project/${REF}/editor`);
+  await page.getByRole("link", { name: "Back to organization home" }).click();
+  await expect(page).toHaveURL("/_hs/projects");
+  await page.goBack();
+  await expect(page).toHaveURL(new RegExp(`/project/${REF}/editor`));
+});
+
 for (const [path, target] of [
   ["/org/x", "/_hs/projects"],
   ["/org/x/general", "/_hs/projects"],

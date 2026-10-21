@@ -40,14 +40,30 @@
     location.assign(`/_hs/projects/${ref}`);
   }
 
+  // Studio's logo links to /project/default, its built-in project, and navigates there without a
+  // request hattisar could redirect (design §3). A full load lets the server decide. Never on page
+  // load or within /project/default: a hattisar project with ref "default" would reload forever.
+  let lastRef = PROJECT.exec(location.pathname)?.[1];
+  function loadDefaultFromServer() {
+    const ref = PROJECT.exec(location.pathname)?.[1];
+    const entered = ref === "default" && lastRef !== "default";
+    lastRef = ref;
+    if (entered) location.reload();
+  }
+
+  function onNavigate() {
+    loadDefaultFromServer();
+    redirectConnect();
+  }
+
   history.pushState = function (...args) {
     pushState.apply(this, args);
-    redirectConnect();
+    onNavigate();
   };
   history.replaceState = function (...args) {
     replaceState.apply(this, args);
-    redirectConnect();
+    onNavigate();
   };
-  addEventListener("popstate", redirectConnect);
+  addEventListener("popstate", onNavigate);
   redirectConnect();
 })();
