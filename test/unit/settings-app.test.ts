@@ -3,13 +3,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../../src/app.js";
+import { createApiToken } from "../../src/auth/api-tokens.js";
 import { hashPassword } from "../../src/auth/password.js";
 import { saveS3Settings } from "../../src/backups/s3-settings.js";
 import { loadConfig } from "../../src/config.js";
+import { listApiTokens } from "../../src/registry/api-tokens.js";
 import { openRegistry, type Registry } from "../../src/registry/db.js";
 import { deriveSecretKey } from "../../src/registry/secrets.js";
 import { deleteSetting, setSetting } from "../../src/registry/settings.js";
-import { insertUser } from "../../src/registry/users.js";
+import { getUserByUsername, insertUser } from "../../src/registry/users.js";
 import { signInToRegistry } from "../helpers/session.js";
 
 const connection = vi.hoisted(() => ({
@@ -36,6 +38,14 @@ const s3Fields = {
   prefix: "hattisar",
 };
 
+const ENV = {
+  HATTISAR_SECRET_KEY: SECRET,
+  PG_META_CRYPTO_KEY: "unit-test-crypto-key",
+  POSTGRES_PASSWORD: "unused",
+  POOLER_TENANT_ID: "hattisar",
+  STUDIO_URL: "http://127.0.0.1:9",
+};
+
 let dataDir: string;
 let db: Registry;
 let app: ReturnType<typeof createApp>;
@@ -45,16 +55,7 @@ beforeEach(async () => {
   dataDir = mkdtempSync(join(tmpdir(), "hattisar-settings-"));
   db = openRegistry(dataDir);
   insertUser(db, { username: "admin", passwordHash: await hashPassword(PASSWORD) });
-  app = createApp(
-    loadConfig({
-      HATTISAR_SECRET_KEY: SECRET,
-      PG_META_CRYPTO_KEY: "unit-test-crypto-key",
-      POSTGRES_PASSWORD: "unused",
-      POOLER_TENANT_ID: "hattisar",
-      STUDIO_URL: "http://127.0.0.1:9",
-    }),
-    db,
-  );
+  app = createApp(loadConfig(ENV), db);
   cookie = signInToRegistry(db);
   connection.result = { ok: true };
 });
@@ -157,7 +158,7 @@ describe("storage status edge cases", () => {
 });
 
 describe("signed-out access", () => {
-  it.each(["/_hs/settings/account", "/_hs/settings/storage"])(
+  it.each(["/_hs/settings/account", "/_hs/settings/storage", "/_hs/settings/tokens"])(
     "redirects %s to login",
     async (path) => {
       const response = await app.request(`${ORIGIN}${path}`);
@@ -229,5 +230,118 @@ describe("S3 POSTs", () => {
     const html = await response.text();
     expect(currentSection(html)).toBe("/_hs/settings/storage");
     expect(html).toContain("Connection failed: Access Denied");
+  });
+});
+
+describe("API tokens", () => {
+  function adminId(): number {
+    const user = getUserByUsername(db, "admin");
+    if (!user) throw new Error("admin missing");
+    return user.id;
+  }
+
+  function newToken(html: string): string | undefined {
+    return /<input readonly="" value="(hs_[^"]+)"/.exec(html)?.[1];
+  }
+
+  it("renders the section with its nav item current and an empty state", async () => {
+    const response = await get("/_hs/settings/tokens");
+    expect(response.status).toBe(200);
+    const html = await response.text();
+    expect(currentSection(html)).toBe("/_hs/settings/tokens");
+    expect(html).toContain('action="/_hs/settings/tokens"');
+    expect(html).toContain('<option value="90" selected="">90 days</option>');
+    expect(html).toContain("No API tokens yet.");
+  });
+
+  it("shows a created token once, then lists only its prefix", async () => {
+    const response = await post("/_hs/settings/tokens", { name: "laptop", expiry: "never" });
+    expect(response.status).toBe(201);
+    const html = await response.text();
+    expect(currentSection(html)).toBe("/_hs/settings/tokens");
+    const token = newToken(html);
+    expect(token).toBeDefined();
+    expect(html).toContain("<span>New token</span>");
+    expect(html).toContain("won&#39;t be shown again");
+    expect(html).toContain(`<code>hattisar login ${ORIGIN}</code>`);
+
+    const [row] = listApiTokens(db, adminId());
+    expect(row?.name).toBe("laptop");
+    expect(row?.expiresAt).toBeNull();
+
+    const reload = await (await get("/_hs/settings/tokens")).text();
+    expect(reload).not.toContain(token);
+    expect(reload).not.toContain(row?.tokenHash);
+    expect(reload).not.toContain("New token");
+    expect(reload).toContain(`<code>${row?.prefix}…</code>`);
+    expect(reload).toContain("laptop");
+    expect(reload).not.toContain("No API tokens yet.");
+  });
+
+  it("gives an https login origin when served over TLS behind a proxy", async () => {
+    app = createApp(loadConfig({ ...ENV, HATTISAR_COOKIE_SECURE: "true" }), db);
+    const response = await post("/_hs/settings/tokens", { name: "laptop", expiry: "90" });
+    expect(response.status).toBe(201);
+    expect(await response.text()).toContain("<code>hattisar login https://hattisar.test</code>");
+  });
+
+  it("sets the chosen expiry", async () => {
+    const before = Date.now();
+    await post("/_hs/settings/tokens", { name: "ci", expiry: "30" });
+    const [row] = listApiTokens(db, adminId());
+    const days = (Date.parse(row?.expiresAt ?? "") - before) / 86_400_000;
+    expect(Math.round(days)).toBe(30);
+  });
+
+  it("marks an expired token as expired and a live one not", async () => {
+    const expired = createApiToken(
+      db,
+      adminId(),
+      "old",
+      30,
+      new Date(Date.now() - 31 * 86_400_000),
+    );
+    const live = createApiToken(db, adminId(), "new", 30);
+    if (!expired.ok || !live.ok) throw new Error("token not created");
+    const html = await (await get("/_hs/settings/tokens")).text();
+    const row = (id: number) => new RegExp(`<tr data-token="${id}">.*?</tr>`, "s").exec(html)?.[0];
+    expect(row(expired.row.id)).toContain('<span class="badge">expired</span>');
+    expect(row(live.row.id)).not.toContain("expired");
+  });
+
+  it.each([
+    ["a blank name", { name: "  ", expiry: "90" }, "Name must be 1 to 64 characters."],
+    ["an unknown expiry", { name: "laptop", expiry: "7" }, "Expiry must be 30, 90, 365 days"],
+  ])("rejects %s with 400", async (_, fields, problem) => {
+    const response = await post("/_hs/settings/tokens", fields);
+    expect(response.status).toBe(400);
+    const html = await response.text();
+    expect(currentSection(html)).toBe("/_hs/settings/tokens");
+    expect(html).toContain(problem);
+    expect(newToken(html)).toBeUndefined();
+    expect(listApiTokens(db, adminId())).toEqual([]);
+  });
+
+  it("revokes a token and redirects back", async () => {
+    const created = createApiToken(db, adminId(), "laptop", 90);
+    if (!created.ok) throw new Error(created.problem);
+    const response = await post(`/_hs/settings/tokens/${created.row.id}/revoke`, {});
+    expect(response.status).toBe(302);
+    expect(response.headers.get("location")).toBe("/_hs/settings/tokens");
+    expect(listApiTokens(db, adminId())).toEqual([]);
+  });
+
+  it("answers 404 for another user's token and leaves it alone", async () => {
+    const other = insertUser(db, { username: "other", passwordHash: "unused" });
+    const created = createApiToken(db, other.id, "theirs", 90);
+    if (!created.ok) throw new Error(created.problem);
+    const response = await post(`/_hs/settings/tokens/${created.row.id}/revoke`, {});
+    expect(response.status).toBe(404);
+    expect(listApiTokens(db, other.id)).toHaveLength(1);
+  });
+
+  it("answers 404 for a non-numeric id", async () => {
+    const response = await post("/_hs/settings/tokens/abc/revoke", {});
+    expect(response.status).toBe(404);
   });
 });

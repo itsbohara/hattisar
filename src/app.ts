@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
+import { apiRoutes } from "./api/routes.js";
 import type { AuthEnv } from "./auth/middleware.js";
 import { requireSameOrigin, requireSession } from "./auth/middleware.js";
 import { LoginRateLimiter } from "./auth/rate-limit.js";
@@ -21,6 +22,7 @@ import { trashRoutes } from "./projects/trash-routes.js";
 import type { Registry } from "./registry/db.js";
 import { deriveSecretKey } from "./registry/secrets.js";
 import { PgMetaLog } from "./studio/pg-meta.js";
+import { API_PREFIX } from "./studio/routes.js";
 import { createStudioHandler } from "./studio/studio-handler.js";
 import { renderPage } from "./ui/layout.js";
 import { ErrorPage } from "./ui/pages/error.js";
@@ -75,7 +77,7 @@ export function createApp(
     if (error instanceof HTTPException) return error.getResponse();
     const { pathname } = new URL(c.req.url);
     logUnexpected(c.req.method, pathname, error);
-    return pathname.startsWith("/api/")
+    return pathname.startsWith("/api/") || pathname.startsWith(`${API_PREFIX}/`)
       ? c.json(INTERNAL_ERROR_BODY, 500)
       : renderPage(c, ErrorPage(), 500);
   });
@@ -83,6 +85,10 @@ export function createApp(
   app.get("/_hs/healthz", (c) => c.json({ ok: true }));
   app.use(requireSameOrigin());
   app.use(requireSession(registry));
+
+  const projectDeps = projectServiceDeps(config, registry, managed);
+  const backups = backupDeps(config, registry);
+  app.route(API_PREFIX, apiRoutes({ ...projectDeps, managed }, backups));
 
   app.route(
     "/",
@@ -95,10 +101,9 @@ export function createApp(
   app.route("/", uiRoutes());
   app.route("/", boxRoutes({ db: registry, secretKey, check: checkBox, managed }));
   if (managed) app.route("/", managedBoxRoutes(managed));
-  const projectDeps = projectServiceDeps(config, registry, managed);
   app.route("/", projectRoutes({ ...projectDeps, backupHourUtc: config.backupHourUtc, managed }));
   app.route("/", trashRoutes({ ...projectDeps, purgeAfterDays: config.purgeAfterDays }));
-  app.route("/", backupRoutes(backupDeps(config, registry), projectDeps));
+  app.route("/", backupRoutes(backups, projectDeps));
   if (config.debug) {
     app.get("/_hs/debug/pg-meta-log", (c) => c.json(pgMetaLog.recent()));
   }

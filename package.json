@@ -10,6 +10,7 @@
   "scripts": {
     "dev": "tsx watch src/main.ts",
     "build": "tsc -p tsconfig.build.json && cp -R src/registry/migrations dist/registry/ && cp -R src/ui/static dist/ui/",
+    "build:cli": "rm -rf cli/dist && tsc -p cli/tsconfig.json",
     "start": "node dist/main.js",
     "lint": "biome check .",
     "typecheck": "tsc --noEmit",

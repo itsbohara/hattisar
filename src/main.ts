@@ -9,6 +9,7 @@ import { type Config, ConfigError, loadConfig } from "./config.js";
 import { Scheduler } from "./jobs.js";
 import { createManagedBoxes, type ManagedBoxes } from "./managed/service.js";
 import { purgeExpiredProjects } from "./projects/lifecycle.js";
+import { deleteExpiredApiTokens } from "./registry/api-tokens.js";
 import { openRegistry, type Registry } from "./registry/db.js";
 import { deriveSecretKey } from "./registry/secrets.js";
 import { deleteExpiredSessions } from "./registry/sessions.js";
@@ -66,6 +67,9 @@ scheduler.register("purge-deleted-projects", HOUR_MS, (now) =>
 );
 scheduler.register("purge-expired-sessions", HOUR_MS, async (now) =>
   deleteExpiredSessions(registry, now.toISOString()),
+);
+scheduler.register("purge-expired-api-tokens", HOUR_MS, async (now) =>
+  deleteExpiredApiTokens(registry, now.toISOString()),
 );
 const scheduledBackupDeps = backupDeps(config, registry);
 scheduler.register("scheduled-backups", MINUTE_MS, (now) =>

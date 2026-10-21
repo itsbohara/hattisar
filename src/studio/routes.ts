@@ -1,6 +1,7 @@
 export type Route =
   | { kind: "hattisar-public" }
   | { kind: "hattisar" }
+  | { kind: "hattisar-api" }
   | { kind: "redirect"; location: string }
   | { kind: "ai-disabled" }
   | { kind: "not-available" }
@@ -18,6 +19,7 @@ export type Route =
   | { kind: "pass" };
 
 const PROJECTS_PAGE = "/_hs/projects";
+export const API_PREFIX = "/_hs/api";
 
 // Matched case-insensitively and on the decoded path: Studio must never receive a pg-meta request
 // hattisar did not recognise, however the client spells it. Anything under the prefix without a
@@ -42,6 +44,7 @@ export function classifyRequest(method: string, rawPath: string): Route {
     return { kind: "hattisar-public" };
   }
   if (path === "/") return { kind: "redirect", location: PROJECTS_PAGE };
+  if (path === API_PREFIX || path.startsWith(`${API_PREFIX}/`)) return { kind: "hattisar-api" };
   if (path === "/_hs" || path.startsWith("/_hs/")) return { kind: "hattisar" };
   if (/^\/api\/ai(?:\/|$)/i.test(path)) return { kind: "ai-disabled" };
 

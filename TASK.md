@@ -1,7 +1,7 @@
 # hattisar — v1 Task Breakdown
 
 > **Goal:** [`GOAL.md`](./GOAL.md) · **Spec:** [`docs/design.md`](./docs/design.md) ·
-> **Rulings:** PR #1 (v1), #8 (follow-ups), #9 (Settings)
+> **Rulings:** PR #1 (v1), #8 (follow-ups), #9 (Settings), #11 (API tokens, JSON API, CLI)
 
 ## Phases
 

@@ -11,8 +11,9 @@ const APP_CSS = readStatic("app.css");
 const STUDIO_CSS = readStatic("studio.css");
 const STUDIO_JS = readStatic("studio.js");
 
-const CSS = { "content-type": "text/css; charset=utf-8" };
-const JS = { "content-type": "text/javascript; charset=utf-8" };
+// The paths never change between releases, so browsers must revalidate after a restart or upgrade.
+const CSS = { "content-type": "text/css; charset=utf-8", "cache-control": "no-cache" };
+const JS = { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-cache" };
 
 export function uiRoutes(): Hono<AuthEnv> {
   const app = new Hono<AuthEnv>();

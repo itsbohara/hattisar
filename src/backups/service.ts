@@ -6,6 +6,7 @@ import {
   type BackupKind,
   deleteBackup,
   failRunningBackups,
+  getBackup,
   insertBackup,
   listBackups,
   markBackupDone,
@@ -29,6 +30,7 @@ export interface BackupDeps {
 }
 
 export type BackupOutcome = { ok: true } | { ok: false; problem: string };
+export type BackupRun = { ok: true; backup: Backup } | { ok: false; problem: string };
 
 export const NOT_CONFIGURED = "Configure S3 storage in Settings first.";
 
@@ -54,7 +56,7 @@ export async function runBackup(
   box: Box,
   kind: BackupKind,
   now: Date = new Date(),
-): Promise<BackupOutcome> {
+): Promise<BackupRun> {
   const settings = loadS3Settings(deps.db, deps.secretKey);
   if (settings === undefined) return { ok: false, problem: NOT_CONFIGURED };
   const existing = listBackups(deps.db, project.id);
@@ -79,7 +81,6 @@ export async function runBackup(
     dump = startDump(deps.pgBinDir, conn, project.dbName);
     await uploadStream(settings, key, dump.stream);
     markBackupDone(deps.db, backup.id, dump.bytes());
-    return { ok: true };
   } catch (error) {
     const message =
       error instanceof DumpError
@@ -90,6 +91,9 @@ export async function runBackup(
   } finally {
     dump?.stream.destroy();
   }
+  const done = getBackup(deps.db, backup.id);
+  if (done === undefined) throw new Error(`Backup ${backup.id} is not readable after it finished`);
+  return { ok: true, backup: done };
 }
 
 export async function removeBackup(deps: BackupDeps, backup: Backup): Promise<BackupOutcome> {

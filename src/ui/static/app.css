@@ -526,6 +526,11 @@ button:disabled {
   padding-top: 0.25rem;
 }
 
+.token-value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text);
+}
+
 @media (max-width: 720px) {
   .settings {
     grid-template-columns: minmax(0, 1fr);

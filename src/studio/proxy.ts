@@ -1,9 +1,13 @@
+import { API_TOKEN_PREFIX } from "../auth/api-tokens.js";
 import { SESSION_COOKIE } from "../auth/session-cookie.js";
 
 export const STUDIO_CSS_PATH = "/_hs/static/studio.css";
 export const STUDIO_JS_PATH = "/_hs/static/studio.js";
 
 const INJECTED_TAGS = `<link rel="stylesheet" href="${STUDIO_CSS_PATH}"><script src="${STUDIO_JS_PATH}" defer></script>`;
+
+// Only hattisar's own tokens: Studio's frontend may send an Authorization header of its own.
+const API_TOKEN_AUTHORIZATION = new RegExp(`^\\s*Bearer\\s+${API_TOKEN_PREFIX}`, "i");
 
 const HOP_BY_HOP = [
   "connection",
@@ -43,6 +47,9 @@ function upstreamRequestHeaders(incoming: Headers, overrides: Headers): Headers 
   const headers = withoutHopByHop(incoming);
   headers.delete("host");
   headers.delete("x-connection-encrypted");
+  if (API_TOKEN_AUTHORIZATION.test(headers.get("authorization") ?? "")) {
+    headers.delete("authorization");
+  }
   const cookie = withoutSessionCookie(headers.get("cookie") ?? "");
   if (cookie === "") headers.delete("cookie");
   else headers.set("cookie", cookie);

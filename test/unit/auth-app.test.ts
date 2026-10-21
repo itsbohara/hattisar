@@ -83,7 +83,7 @@ describe("unauthenticated requests", () => {
     "/_hs/debug/pg-meta-log",
     "/project/spike-b/editor",
     "/_next/static/chunk.js",
-    "/_hs/static/../api/platform/projects",
+    "/_hs/static/../projects",
   ])("redirects page %s to the login page", async (path) => {
     const response = await get(path);
     expect(response.status).toBe(302);
@@ -106,6 +106,13 @@ describe("unauthenticated requests", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toContain(type);
   });
+
+  it.each(["/_hs/static/app.css", "/_hs/static/studio.css", "/_hs/static/studio.js"])(
+    "makes browsers revalidate %s",
+    async (path) => {
+      expect((await get(path)).headers.get("cache-control")).toBe("no-cache");
+    },
+  );
 
   it.each(["/_hs/static/studio.css", "/_hs/static/studio.js"])(
     "serves a non-empty %s",

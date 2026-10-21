@@ -23,6 +23,8 @@ src/
   backups/    pg_dump/pg_restore, S3, schedules, retention
   managed/    Docker (via socket proxy) for managed boxes
   ui/         Hono JSX pages + static assets
+  api/        JSON API under /_hs/api/v1, API-token auth
+cli/          hattisar CLI: separate zero-dependency package (pnpm build:cli)
 sql/          baseline.sql applied to every new project db
 docker/       compose.yml (lean stack), compose.dev.yml, Dockerfile, volumes/
 test/unit  test/integration  e2e/
