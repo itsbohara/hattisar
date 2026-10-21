@@ -735,3 +735,355 @@ button:disabled {
   border-color: var(--border);
   background: var(--bg);
 }
+
+/* Projects page */
+.projects-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 17rem;
+  gap: 2rem;
+  align-items: start;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 1rem;
+}
+
+.toolbar-search {
+  margin: 0;
+  flex: 0 1 16rem;
+}
+
+.toolbar-search input {
+  width: 100%;
+  padding-block: 0.4rem;
+}
+
+.toolbar-gap {
+  flex: 1;
+}
+
+.toolbar .button {
+  padding-block: 0.4rem;
+}
+
+.segmented {
+  display: inline-flex;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.segmented-item {
+  padding: 0.25rem 0.6rem;
+  border-radius: calc(var(--radius) - 3px);
+  color: var(--muted);
+  font-size: 0.9rem;
+  text-decoration: none;
+}
+
+.segmented-item:hover {
+  color: var(--text);
+}
+
+.segmented-item[aria-current="true"] {
+  color: var(--text);
+  background: var(--surface);
+  box-shadow: 0 0 0 1px var(--border);
+}
+
+.link-quiet {
+  color: var(--muted);
+  font-size: 0.9rem;
+  text-decoration: none;
+}
+
+.link-quiet:hover {
+  color: var(--text);
+  text-decoration: underline;
+}
+
+.project-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
+  gap: 1rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.project-card {
+  position: relative;
+  display: grid;
+  gap: 0.85rem;
+  align-content: start;
+  min-height: 10.5rem;
+  padding: 1.1rem 1.1rem 1rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  transition: border-color 120ms ease;
+}
+
+.project-card:hover {
+  border-color: var(--muted);
+}
+
+.project-card[hidden],
+.project-table tr[hidden] {
+  display: none;
+}
+
+.project-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.project-title {
+  display: grid;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.project-link {
+  font-weight: 500;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+/* The whole card (or row) opens Studio; the menu sits above this overlay. */
+.project-link::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+}
+
+.project-link:focus-visible {
+  outline: none;
+}
+
+.project-link:focus-visible::after {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.project-card .menu,
+.project-table .menu {
+  z-index: 1;
+}
+
+.project-ref {
+  display: block;
+  color: var(--muted);
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+
+.pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.pill {
+  padding: 0.05rem 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.pill-ok {
+  color: var(--ok);
+  background: var(--ok-bg);
+  border-color: transparent;
+}
+
+.pill-busy {
+  color: var(--busy);
+  background: var(--busy-bg);
+  border-color: transparent;
+}
+
+.project-meta {
+  display: grid;
+  grid-template-columns: repeat(3, auto);
+  justify-content: start;
+  gap: 1.25rem;
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.project-meta dt {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.project-meta dd {
+  margin: 0;
+  white-space: nowrap;
+}
+
+.size {
+  font-variant-numeric: tabular-nums;
+}
+
+/* No overflow scrolling here: it would clip the row menus. Narrow screens drop .col-optional. */
+.table-frame {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.table-frame .table {
+  border: 0;
+  background: none;
+}
+
+.project-table th {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.project-table {
+  white-space: nowrap;
+}
+
+.project-table tbody tr {
+  position: relative;
+}
+
+.cell-actions {
+  width: 1%;
+  text-align: right;
+}
+
+.cell-actions .menu {
+  display: inline-block;
+  text-align: left;
+}
+
+.project-table tbody tr:hover {
+  background: var(--bg);
+}
+
+.sort-link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.sort-link:hover {
+  color: var(--text);
+}
+
+.empty .button {
+  margin-top: 1rem;
+}
+
+.empty[hidden] {
+  display: none;
+}
+
+.boxes-panel {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.boxes-panel-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  min-height: 2.25rem;
+}
+
+.boxes-panel-head h2 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.box-usage {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.box-usage li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.6rem 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.9rem;
+}
+
+.box-usage-name {
+  display: grid;
+  overflow-wrap: anywhere;
+}
+
+.box-usage-name small {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.box-dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border: 1.5px solid var(--muted);
+  border-radius: 50%;
+}
+
+.box-usage li[data-reachable="true"] .box-dot {
+  background: var(--ok);
+  border-color: var(--ok);
+}
+
+.box-usage li[data-reachable="false"] .box-dot {
+  border-color: var(--danger);
+}
+
+.box-state {
+  color: var(--danger);
+}
+
+@media (max-width: 900px) {
+  .projects-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 720px) {
+  .toolbar-search {
+    flex-basis: 100%;
+  }
+
+  .toolbar-gap {
+    display: none;
+  }
+
+  .project-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .project-table .col-optional {
+    display: none;
+  }
+
+  .project-table {
+    white-space: normal;
+  }
+}
