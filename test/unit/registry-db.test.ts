@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { migrate, openRegistry, type Registry } from "../../src/registry/db.js";
 
 const TABLES = [
+  "api_tokens",
   "backup_schedules",
   "backups",
   "boxes",
