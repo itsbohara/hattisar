@@ -62,8 +62,9 @@ test("a project's table survives being dropped by backing up to S3 and restoring
     ),
   );
 
+  await page.getByRole("link", { name: "Backups", exact: true }).click();
   await page.getByRole("button", { name: "Back up now" }).click();
-  await expect(page).toHaveURL(new RegExp(`/_hs/projects/${REF}\\?backed-up$`));
+  await expect(page).toHaveURL(new RegExp(`/_hs/projects/${REF}/backups\\?backed-up$`));
   await expect(page.getByText("Backup finished.")).toBeVisible();
 
   await onPooler(session, (client) => client.query("drop table public.notes"));
@@ -71,7 +72,7 @@ test("a project's table survives being dropped by backing up to S3 and restoring
   await page.getByRole("link", { name: "Restore…" }).first().click();
   await page.locator("#restore-same").getByLabel(`Type ${REF} to confirm`).fill(REF);
   await page.getByRole("button", { name: `Restore into ${REF}` }).click();
-  await expect(page).toHaveURL(new RegExp(`/_hs/projects/${REF}\\?restored$`));
+  await expect(page).toHaveURL(new RegExp(`/_hs/projects/${REF}/backups\\?restored$`));
   await expect(page.getByText("Backup restored.")).toBeVisible();
 
   const rows = await onPooler(session, async (client) => {
