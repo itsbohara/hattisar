@@ -580,3 +580,8 @@ button:disabled {
     padding: 1.5rem 1rem;
   }
 }
+
+.token-value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text);
+}

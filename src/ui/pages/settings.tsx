@@ -1,14 +1,19 @@
 import type { Child } from "hono/jsx";
+import { DEFAULT_TOKEN_EXPIRY_DAYS } from "../../auth/api-tokens.js";
 import type { S3FormValues } from "../../backups/s3-settings.js";
+import type { ApiToken } from "../../registry/api-tokens.js";
 import { Layout } from "../layout.js";
+import { utc } from "./trash.js";
 
 export const ACCOUNT_SETTINGS = "/_hs/settings/account";
+export const API_TOKENS_SETTINGS = "/_hs/settings/tokens";
 export const STORAGE_SETTINGS = "/_hs/settings/storage";
 
-type SettingsSection = "account" | "storage";
+type SettingsSection = "account" | "tokens" | "storage";
 
 const SECTIONS: { section: SettingsSection; label: string; href: string }[] = [
   { section: "account", label: "Account", href: ACCOUNT_SETTINGS },
+  { section: "tokens", label: "API tokens", href: API_TOKENS_SETTINGS },
   { section: "storage", label: "Backup storage", href: STORAGE_SETTINGS },
 ];
 
@@ -225,6 +230,138 @@ export function StorageSettingsPage({
           </div>
         </form>
       </section>
+    </SettingsLayout>
+  );
+}
+
+const EXPIRY_OPTIONS = [
+  { value: "30", label: "30 days" },
+  { value: "90", label: "90 days" },
+  { value: "365", label: "1 year" },
+  { value: "never", label: "Never" },
+];
+
+export interface TokenFormState {
+  name?: string;
+  expiry?: string;
+  problem?: string;
+  created?: { token: string; origin: string };
+}
+
+function NewTokenNotice({ token, origin }: { token: string; origin: string }) {
+  return (
+    <div class="alert alert-ok" role="status">
+      <label class="field">
+        <span>New token</span>
+        <input readonly value={token} class="token-value" autocomplete="off" spellcheck={false} />
+      </label>
+      <p>Copy it now: it won't be shown again.</p>
+      <p>
+        Next, run <code>hattisar login {origin}</code> and paste it when asked.
+      </p>
+    </div>
+  );
+}
+
+function TokenTable({ tokens }: { tokens: ApiToken[] }) {
+  if (tokens.length === 0) {
+    return (
+      <div class="empty">
+        <p>No API tokens yet.</p>
+      </div>
+    );
+  }
+  return (
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Token</th>
+          <th>Created</th>
+          <th>Last used</th>
+          <th>Expires</th>
+          <th />
+        </tr>
+      </thead>
+      <tbody>
+        {tokens.map((token) => (
+          <tr data-token={String(token.id)}>
+            <td>{token.name}</td>
+            <td>
+              <code>{token.prefix}…</code>
+            </td>
+            <td>{utc(new Date(token.createdAt))}</td>
+            <td>{token.lastUsedAt ? utc(new Date(token.lastUsedAt)) : "never"}</td>
+            <td>{token.expiresAt ? utc(new Date(token.expiresAt)) : "never"}</td>
+            <td class="row-actions">
+              <form method="post" action={`${API_TOKENS_SETTINGS}/${token.id}/revoke`}>
+                <button type="submit" class="button-quiet button-danger">
+                  Revoke
+                </button>
+              </form>
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+export function ApiTokensSettingsPage({
+  tokens,
+  form = {},
+}: {
+  tokens: ApiToken[];
+  form?: TokenFormState;
+}) {
+  const expiry = form.expiry ?? String(DEFAULT_TOKEN_EXPIRY_DAYS);
+  return (
+    <SettingsLayout current="tokens">
+      <div class="settings-head">
+        <h2>API tokens</h2>
+        <p class="hint">
+          The <code>hattisar</code> CLI signs in with a token. A token acts as you, with full
+          rights.
+        </p>
+      </div>
+      {form.created && <NewTokenNotice {...form.created} />}
+      <section class="card" aria-labelledby="create-token">
+        <h3 id="create-token">Create a token</h3>
+        <form method="post" action={API_TOKENS_SETTINGS} class="form">
+          {form.problem && (
+            <p class="alert alert-error" role="alert">
+              {form.problem}
+            </p>
+          )}
+          <div class="form-grid">
+            <label class="field">
+              <span>Name</span>
+              <input
+                name="name"
+                required
+                maxlength={64}
+                autocomplete="off"
+                value={form.name}
+                placeholder="laptop"
+              />
+            </label>
+            <label class="field">
+              <span>Expires after</span>
+              <select name="expiry">
+                {EXPIRY_OPTIONS.map((option) => (
+                  <option value={option.value} selected={option.value === expiry}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <button type="submit" class="button">
+            Create token
+          </button>
+        </form>
+      </section>
+      <TokenTable tokens={tokens} />
     </SettingsLayout>
   );
 }
