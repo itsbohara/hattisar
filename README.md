@@ -168,12 +168,23 @@ stores, region, bucket, keys, path style, key prefix). The secret key is stored 
 
 ## Production
 
-`docker/compose.yml` runs on its own, without the development override; it builds the hattisar
-image from [`docker/Dockerfile`](docker/Dockerfile).
+Production runs `docker/compose.yml` without the development override. The hattisar image is
+published to `ghcr.io/itsbohara/hattisar`.
+
+**From a release** — nothing is built. Download `hattisar-<version>.tar.gz` from the
+[GitHub release](https://github.com/itsbohara/hattisar/releases), then:
+
+```sh
+tar -xzf hattisar-<version>.tar.gz && cd hattisar
+cp env.example .env       # replace every secret, as the comments in env.example describe
+docker compose up -d
+```
+
+**From a checkout** — builds the image from [`docker/Dockerfile`](docker/Dockerfile):
 
 ```sh
 sh scripts/dev-env.sh     # generate docker/.env with fresh secrets, then edit it
-docker compose -f docker/compose.yml up -d --build
+docker compose -f docker/compose.yml -f docker/compose.source.yml up -d --build
 ```
 
 Before exposing it:
@@ -186,8 +197,8 @@ Before exposing it:
   into every connection string.
 - **Pooler ports** — 54322 and 6543 are published for apps on the shared box. Close them if no
   app should reach the shared box from outside.
-- **Secrets** — keep a copy of `docker/.env`. Without `HATTISAR_SECRET_KEY` the stored box and
-  S3 credentials cannot be decrypted.
+- **Secrets** — keep a copy of `.env` (`docker/.env` in a checkout). Without
+  `HATTISAR_SECRET_KEY` the stored box and S3 credentials cannot be decrypted.
 - **Backups** — configure S3 in Settings, set a schedule per project, and use "Test connection".
   Back up the `hattisar-data` volume too: it is the registry of boxes and projects.
 - **PITR** — dumps restore to the moment of the dump. For production boxes also run box-level
@@ -195,7 +206,9 @@ Before exposing it:
 - **Shared box** — development only. Put production projects on a registered or managed box.
 - **Managed boxes** — off by default; see the security note below before turning them on.
 
-To upgrade hattisar, pull and run the same `up -d --build`; registry migrations run at boot.
+To upgrade a release, replace `compose.yml` with the one from the new bundle and run
+`docker compose pull && docker compose up -d`. To upgrade a checkout, pull and run the same
+`up -d --build`. Registry migrations run at boot.
 Upgrading the pinned Studio and Postgres images is covered in
 [`docs/upgrading-studio.md`](docs/upgrading-studio.md).
 
@@ -242,11 +255,12 @@ pgBackRest).
 
 With managed boxes on, "New managed box" (Boxes) and "New dedicated box" (New project) start a
 fresh `supabase/postgres` container per box, with its own volume and a host port from
-`HATTISAR_MANAGED_PORT_RANGE`. To turn them on, set `HATTISAR_MANAGED_BOXES=true` in
-`docker/.env` and start the profile:
+`HATTISAR_MANAGED_PORT_RANGE`. To turn them on, set `HATTISAR_MANAGED_BOXES=true` in `.env`
+(`docker/.env` in a checkout) and start the profile:
 
 ```sh
-docker compose -f docker/compose.yml --profile managed-boxes up -d --build
+docker compose --profile managed-boxes up -d     # from a release
+docker compose -f docker/compose.yml -f docker/compose.source.yml --profile managed-boxes up -d --build
 ```
 
 hattisar reaches Docker only through `docker-proxy` (tecnativa/docker-socket-proxy) on an internal
