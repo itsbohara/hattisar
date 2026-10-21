@@ -23,9 +23,9 @@ Differentiator that must work: **one unmodified Studio, many databases**, chosen
 ## Definition of Done
 
 - [x] Routing e2e GO: every Studio screen for project B hits B's database only
-- [ ] All plan tasks 1–13 complete with reviews clean or rulings recorded
+- [x] All plan tasks 1–13 complete with reviews clean or rulings recorded
 - [x] `pnpm lint typecheck test test:it test:e2e` all pass locally
-- [ ] CI workflow present and runs the same
+- [x] CI workflow present and runs the same
 - [x] README explains setup, security notes, "not PITR", "Not affiliated with Supabase"
 
 ## Out of v1

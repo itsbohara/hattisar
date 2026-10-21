@@ -14,7 +14,7 @@ import {
   restoreProject,
   softDeleteProject,
 } from "../../src/projects/lifecycle.js";
-import { busyReason, holdingProject } from "../../src/projects/locks.js";
+import { busyReason, holdingProject, holdProject } from "../../src/projects/locks.js";
 import { projectRoutes } from "../../src/projects/routes.js";
 import {
   type LifecycleEvent,
@@ -553,6 +553,27 @@ describe("while a backup or restore holds the project", () => {
 });
 
 describe("one lifecycle operation at a time per project", () => {
+  it("holds a project for work that outlives the request until it is released", async () => {
+    const target = seed();
+    const dump = { action: "download a dump of", holds: "a dump of it is being downloaded" };
+    const hold = holdProject(db, target, dump);
+    if (!hold.ok) throw new Error(hold.problem);
+    expect(busyReason(db, target)).toBe("a dump of it is being downloaded");
+    expect(holdProject(db, target, dump)).toEqual({
+      ok: false,
+      problem:
+        "Can't download a dump of my-app while a dump of it is being downloaded. Try again when it finishes.",
+    });
+
+    hold.release();
+    expect(busyReason(db, target)).toBeUndefined();
+    const restoring = holdingAsRestore(target, async () => {
+      hold.release();
+      return busyReason(db, target);
+    });
+    expect(await restoring).toBe("it is being restored");
+  });
+
   it("refuses to rotate while a delete is on the box, then frees the project", async () => {
     const target = seed();
     const gate = gatedAdmin(fakeAdmin);
