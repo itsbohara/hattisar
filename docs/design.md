@@ -476,7 +476,11 @@ Restore means into the same project only; restore into a new project stays in th
 (`fetch`, `node:util` `parseArgs`, `node:readline`). It is not a pnpm workspace member, so
 installing it pulls none of the server's dependencies and the Dockerfile and lockfile do not
 change. `pnpm build:cli` empties `cli/dist/` and compiles into it (CI runs it); the package's
-`prepack` runs it, so a pack or publish never ships stale files. Publishing to npm is manual.
+`prepack` runs it, so a pack or publish never ships stale files. Releases are tag-driven: pushing
+`cli-v<version>` (matching `cli/package.json`, on a commit in `main`) runs
+`.github/workflows/release-cli.yml`, which tests, packs once, publishes that tarball to npm with
+provenance and attaches it to a GitHub release. npm auth is trusted publishing (OIDC), or the
+`NPM_TOKEN` secret when set.
 `run(argv, io)` in `cli/src/run.ts` takes `fetch`, the streams, `env` and the config directory and
 returns the exit code; unit tests drive it against the in-process app.
 
