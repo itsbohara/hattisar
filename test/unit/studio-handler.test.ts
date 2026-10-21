@@ -389,6 +389,16 @@ describe("Studio pass-through", () => {
     expect(seen[0]?.headers.cookie).toBe("theme=dark; a=b");
   });
 
+  it.each(["Bearer hs_abc", "bearer   hs_abc"])("strips an API token (%s)", async (value) => {
+    await request("/api/platform/profile", { headers: { authorization: value } });
+    expect(seen[0]?.headers).not.toHaveProperty("authorization");
+  });
+
+  it("keeps an Authorization header that is not an API token", async () => {
+    await request("/api/platform/profile", { headers: { authorization: "Bearer studio-jwt" } });
+    expect(seen[0]?.headers.authorization).toBe("Bearer studio-jwt");
+  });
+
   it("sends no cookie header when the session was the only cookie", async () => {
     await request("/api/platform/profile");
     expect(seen[0]?.headers).not.toHaveProperty("cookie");
