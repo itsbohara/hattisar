@@ -38,7 +38,7 @@ if [ "$(grep -cF "$pinned" "$bundle/compose.yml")" -ne 1 ]; then
   exit 1
 fi
 
-cp "$root/docker/env.example" "$root/docker/NOTICE" "$bundle/"
+cp "$root/docker/env.example" "$root/docker/NOTICE" "$root/scripts/generate-env.sh" "$bundle/"
 cp "$root/docker/volumes/db/roles.sql" "$root/docker/volumes/db/_supabase.sql" \
   "$root/docker/volumes/db/pooler.sql" "$bundle/volumes/db/"
 cp "$root/docker/volumes/pooler/pooler.exs" "$bundle/volumes/pooler/"
