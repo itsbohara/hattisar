@@ -2,17 +2,6 @@
 
 > **Goal:** [`GOAL.md`](./GOAL.md) · **Spec:** [`docs/design.md`](./docs/design.md) ·
 > **Rulings:** PR #1 (v1), #8 (follow-ups), #9 (Settings)
->
-> **Source idea / locked decisions:**
-> - Concept doc: `~/code/ideastorm/concepts/hattisar/README.md`
-> - Memory note: `~/code/ideastorm/memory/project-hattisar.md`
->
-> Those live in the ideastorm sandbox (planning only). This repo is the build; `docs/design.md`
-> wins where they disagree.
-
-## Stack overrides vs. the concept doc
-
-None — the concept locked TypeScript + Hono (Q12) and the lean stack (Q11).
 
 ## Phases
 
@@ -29,7 +18,7 @@ None — the concept locked TypeScript + Hono (Q12) and the lean stack (Q11).
 
 ## Decided
 
-Q1–Q17 in the concept doc; consolidated into `docs/design.md`.
+Everything decided is in `docs/design.md`; the PRs above keep the rulings.
 
 ## Open questions
 

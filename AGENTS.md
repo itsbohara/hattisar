@@ -9,7 +9,6 @@ in front choosing the database per request.
 **Read first:**
 - [`docs/design.md`](./docs/design.md) — the spec. Binding.
 - [`GOAL.md`](./GOAL.md) and [`TASK.md`](./TASK.md) — v1 done-ness and progress.
-- Origin: `~/code/ideastorm/concepts/hattisar/README.md` (planning sandbox; do not edit from here).
 
 ## Architecture
 

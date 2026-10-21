@@ -3,9 +3,6 @@
 Multi-project databases for self-hosted Supabase Studio. A *project* is a Postgres database on a
 *box*. One stock, unmodified Studio serves every project; hattisar sits in front of it.
 
-Origin: `~/code/ideastorm/concepts/hattisar/README.md` (decisions Q1–Q17, grilled 2026-10-20).
-Where that file and this one disagree, **this one is right**.
-
 ---
 
 ## 1. How Studio reaches a database (the fact the design rests on)
