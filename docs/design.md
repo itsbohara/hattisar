@@ -583,14 +583,18 @@ A server release is a `v<version>` tag (first `v0.1.0`), separate from the CLI's
 2. Runs lint, typecheck and the unit tests.
 3. Builds the `runtime` stage of `docker/Dockerfile` for `linux/amd64` and `linux/arm64` and
    pushes it to `ghcr.io/itsbohara/hattisar` as `<version>`, `<major>.<minor>` and `latest`, with
-   the `org.opencontainers.image.source` label pointing at the repository.
-4. Builds the bundle `hattisar-<version>.tar.gz` with `scripts/release-bundle.sh` and creates the
-   GitHub release `v<version>` with the bundle attached and generated notes.
+   the `org.opencontainers.image.source` label pointing at the repository. A prerelease (a version
+   containing `-`) gets only the `<version>` tag.
+4. Smoke-tests the pushed image on each platform, then checks it can be pulled anonymously.
+5. Builds the bundle `hattisar-<version>.tar.gz` with `scripts/release-bundle.sh` and creates the
+   GitHub release `v<version>` with the bundle attached and generated notes, marked prerelease for
+   a prerelease version.
 
-The bundle unpacks to `hattisar/`: `compose.yml`, `env.example`, `volumes/` (the db init SQL and
-`pooler.exs`) and `NOTICE`, the same layout as `docker/`. Its `compose.yml` is `docker/compose.yml`
-with the hattisar image's default tag replaced by the exact version, so an install never drifts:
-`cp env.example .env`, fill in the secrets, `docker compose up -d`. Nothing is built.
+The bundle unpacks to `hattisar/`: `compose.yml`, `env.example`, `generate-env.sh`, `volumes/` (the
+db init SQL and `pooler.exs`) and `NOTICE`, the same layout as `docker/` plus the env generator.
+Its `compose.yml` is `docker/compose.yml` with the hattisar image's default tag replaced by the
+exact version, so an install never drifts: `sh generate-env.sh env.example .env` (fresh secrets,
+never overwriting an existing `.env`), review `.env`, `docker compose up -d`. Nothing is built.
 
 `docker/compose.yml` names the image `ghcr.io/itsbohara/hattisar:${HATTISAR_VERSION:-latest}` and
 has no `build:`. Building from source is an override: `docker/compose.dev.yml` (the `dev` stage,

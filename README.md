@@ -100,7 +100,9 @@ git tag cli-v0.2.0 && git push origin cli-v0.2.0   # tests, publishes to npm, cr
 ```
 
 Server releases work the same way: bump `version` in `package.json` through a PR, then tag the
-merged commit `v<version>`. That publishes the image and the compose bundle.
+merged commit `v<version>`. That publishes the image and the compose bundle. After the first
+release, make the GHCR package public once in its package settings; the first run fails its
+public-pull check until then, so re-run the job.
 
 ```sh
 git tag v0.1.0 && git push origin v0.1.0   # tests, pushes the image, creates the GitHub release
@@ -148,6 +150,7 @@ Set in `.env` next to `compose.yml` (`docker/.env` in a checkout; template:
 
 | Env | Default | Notes |
 |---|---|---|
+| `HATTISAR_VERSION` | the bundle's version | hattisar image tag (`latest` in a checkout's `compose.yml`). Prefer upgrading by replacing the bundle over setting it. |
 | `HATTISAR_SECRET_KEY` | — | Required, ≥ 32 chars. Encrypts stored secrets (box passwords, owner passwords, S3 secret). Losing it loses them. |
 | `HATTISAR_ADMIN_USERNAME` | `admin` | First boot only. |
 | `HATTISAR_ADMIN_PASSWORD` | — | Required on first boot, ≥ 12 chars. Ignored afterwards. |
@@ -184,7 +187,7 @@ published to `ghcr.io/itsbohara/hattisar`.
 
 ```sh
 tar -xzf hattisar-<version>.tar.gz && cd hattisar
-cp env.example .env       # replace every secret, as the comments in env.example describe
+sh generate-env.sh env.example .env   # fresh secrets; then review .env
 docker compose up -d
 ```
 
@@ -214,7 +217,8 @@ Before exposing it:
 - **Shared box** — development only. Put production projects on a registered or managed box.
 - **Managed boxes** — off by default; see the security note below before turning them on.
 
-To upgrade a release, replace `compose.yml` with the one from the new bundle and run
+To upgrade a release, replace `compose.yml`, `volumes/` and `generate-env.sh` with the ones from
+the new bundle, compare `env.example` with `.env` for new keys, then run
 `docker compose pull && docker compose up -d`. To upgrade a checkout, pull and run the same
 `up -d --build`. Registry migrations run at boot.
 Upgrading the pinned Studio and Postgres images is covered in
