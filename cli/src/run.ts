@@ -61,6 +61,9 @@ function checkOptions(command: Command, values: Values): void {
     if (type === "string" && typeof value !== "string") {
       throw new UsageError(`${flag(name)} needs a value`, usageLine(command));
     }
+    if (type === "boolean" && typeof value !== "boolean") {
+      throw new UsageError(`${flag(name)} takes no value`, usageLine(command));
+    }
   }
 }
 
@@ -86,7 +89,7 @@ async function dispatch(argv: string[], io: Io): Promise<ExitCode> {
     allowPositionals: true,
     strict: false,
   });
-  if (values.version) {
+  if (values.version === true) {
     printLines(io.stdout, version());
     return EXIT.ok;
   }
@@ -95,7 +98,7 @@ async function dispatch(argv: string[], io: Io): Promise<ExitCode> {
     const [group] = positionals;
     const inGroup = COMMANDS.filter(({ name }) => name.startsWith(`${group} `));
     const usage = overview(inGroup.length > 0 ? inGroup : COMMANDS);
-    if (values.help && positionals.length <= 1) {
+    if (values.help === true && positionals.length <= 1) {
       printLines(io.stdout, usage);
       return EXIT.ok;
     }
@@ -104,7 +107,7 @@ async function dispatch(argv: string[], io: Io): Promise<ExitCode> {
     }
     throw new UsageError(`unknown command ${positionals.join(" ")}`, usage);
   }
-  if (values.help) {
+  if (values.help === true) {
     printLines(io.stdout, `${usageLine(command)}\n\n${command.summary}`);
     return EXIT.ok;
   }

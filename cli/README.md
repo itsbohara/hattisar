@@ -43,7 +43,8 @@ data with one of its backups.
 
 `login` saves `{ "url", "token" }` to `$XDG_CONFIG_HOME/hattisar/config.json` (default
 `~/.config/hattisar/config.json`), mode 0600. `HATTISAR_URL` and `HATTISAR_TOKEN` override it,
-for CI.
+for CI. The saved token is only sent to the saved URL: a different `HATTISAR_URL` needs
+`HATTISAR_TOKEN` too.
 
 ## Exit codes
 

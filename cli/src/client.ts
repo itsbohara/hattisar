@@ -41,6 +41,10 @@ export function apiClient(fetch: Fetch, { url, token }: Credentials): Api {
       throw new CliError(EXIT.api, `cannot reach ${url}: ${causeOf(error)}`);
     }
     if (!response.ok) throw await failure(response);
-    return (await response.json()) as T;
+    try {
+      return (await response.json()) as T;
+    } catch {
+      throw new CliError(EXIT.api, `unexpected response from ${url}`);
+    }
   };
 }

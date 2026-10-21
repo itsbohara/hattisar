@@ -30,7 +30,11 @@ export function formatBytes(bytes: number | null): string {
 }
 
 export function utc(iso: string | null): string {
-  return iso === null ? "-" : `${new Date(iso).toISOString().slice(0, 16).replace("T", " ")} UTC`;
+  if (iso === null) return "-";
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime())
+    ? iso
+    : `${date.toISOString().slice(0, 16).replace("T", " ")} UTC`;
 }
 
 export function printJson(out: Writer, value: unknown): void {
