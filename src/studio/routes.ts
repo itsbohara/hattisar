@@ -1,6 +1,7 @@
 export type Route =
   | { kind: "hattisar-public" }
   | { kind: "hattisar" }
+  | { kind: "hattisar-api" }
   | { kind: "redirect"; location: string }
   | { kind: "ai-disabled" }
   | { kind: "not-available" }
@@ -42,6 +43,7 @@ export function classifyRequest(method: string, rawPath: string): Route {
     return { kind: "hattisar-public" };
   }
   if (path === "/") return { kind: "redirect", location: PROJECTS_PAGE };
+  if (path === "/_hs/api" || path.startsWith("/_hs/api/")) return { kind: "hattisar-api" };
   if (path === "/_hs" || path.startsWith("/_hs/")) return { kind: "hattisar" };
   if (/^\/api\/ai(?:\/|$)/i.test(path)) return { kind: "ai-disabled" };
 

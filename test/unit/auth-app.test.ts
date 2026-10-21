@@ -83,7 +83,7 @@ describe("unauthenticated requests", () => {
     "/_hs/debug/pg-meta-log",
     "/project/spike-b/editor",
     "/_next/static/chunk.js",
-    "/_hs/static/../api/platform/projects",
+    "/_hs/static/../projects",
   ])("redirects page %s to the login page", async (path) => {
     const response = await get(path);
     expect(response.status).toBe(302);
