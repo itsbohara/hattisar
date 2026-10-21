@@ -1,6 +1,10 @@
 services:
   hattisar:
+    # Its own name, so a dev-stage build never stands in for the release image's tag.
+    image: hattisar:dev
     build:
+      context: ..
+      dockerfile: docker/Dockerfile
       target: dev
     # node_modules comes from the image, which `stack:up --build` rebuilds when the lockfile changes.
     # pnpm's own check compares the mounted package.json's mtime with the cached install and, after

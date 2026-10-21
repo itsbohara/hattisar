@@ -26,7 +26,7 @@ src/
   api/        JSON API under /_hs/api/v1, API-token auth
 cli/          hattisar CLI: separate zero-dependency package (pnpm build:cli)
 sql/          baseline.sql applied to every new project db
-docker/       compose.yml (lean stack), compose.dev.yml, Dockerfile, volumes/
+docker/       compose.yml (lean stack), compose.dev.yml, compose.source.yml, Dockerfile, volumes/
 test/unit  test/integration  e2e/
 ```
 
