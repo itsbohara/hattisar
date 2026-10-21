@@ -3,6 +3,10 @@ import type { Project } from "../registry/projects.js";
 
 export const MASK = "••••••••";
 
+export const DIRECT_LABEL = "Direct";
+export const SESSION_POOLER_LABEL = "Session pooler";
+export const TRANSACTION_POOLER_LABEL = "Transaction pooler";
+
 export type ProjectEndpoint = Pick<
   Box,
   "publicHost" | "publicPort" | "poolerTenant" | "poolerSessionPort" | "poolerTransactionPort"
@@ -28,9 +32,9 @@ export function ownerConnectionStrings(
   if (poolerTenant !== null && poolerSessionPort !== null && poolerTransactionPort !== null) {
     const user = `${project.ownerRole}.${poolerTenant}`;
     return [
-      build("Session pooler", user, poolerSessionPort),
-      build("Transaction pooler", user, poolerTransactionPort),
+      build(SESSION_POOLER_LABEL, user, poolerSessionPort),
+      build(TRANSACTION_POOLER_LABEL, user, poolerTransactionPort),
     ];
   }
-  return [build("Direct", project.ownerRole, box.publicPort)];
+  return [build(DIRECT_LABEL, project.ownerRole, box.publicPort)];
 }

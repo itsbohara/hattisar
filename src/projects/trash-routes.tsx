@@ -1,12 +1,12 @@
 import { type Context, Hono } from "hono";
 import { canAccess } from "../auth/access.js";
 import type { AuthEnv } from "../auth/middleware.js";
-import { type Box, getBoxById, listBoxes } from "../registry/boxes.js";
-import { getProjectByRef, listProjects, type Project } from "../registry/projects.js";
+import { listBoxes } from "../registry/boxes.js";
+import { listProjects } from "../registry/projects.js";
 import { renderPage } from "../ui/layout.js";
 import { TrashPage, type TrashRow } from "../ui/pages/trash.js";
 import { purgeDate, purgeProject, restoreProject } from "./lifecycle.js";
-import { text } from "./routes.js";
+import { findAccessibleProject, text } from "./routes.js";
 import type { ProjectServiceDeps } from "./service.js";
 
 const TRASH_PAGE = "/_hs/trash";
@@ -19,13 +19,8 @@ export function trashRoutes(deps: TrashDeps): Hono<AuthEnv> {
   const { db, purgeAfterDays } = deps;
   const app = new Hono<AuthEnv>();
 
-  // Active, unknown and forbidden refs all look the same here: not found.
-  function deleted(c: Context<AuthEnv>): { project: Project; box: Box } | undefined {
-    const project = getProjectByRef(db, c.req.param("ref") ?? "");
-    if (project?.status !== "deleted" || !canAccess(c.var.session.user, project)) return undefined;
-    const box = getBoxById(db, project.boxId);
-    return box && { project, box };
-  }
+  const deleted = (c: Context<AuthEnv>) =>
+    findAccessibleProject(db, c.var.session.user, c.req.param("ref") ?? "", "deleted");
 
   function renderTrash(c: Context<AuthEnv>, problem?: string, status: 200 | 400 | 502 = 200) {
     const boxes = new Map(listBoxes(db).map((box) => [box.id, box]));

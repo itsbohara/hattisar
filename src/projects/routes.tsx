@@ -7,8 +7,14 @@ import type { ManagedBoxes } from "../managed/service.js";
 import { getBackupSchedule, listBackups } from "../registry/backups.js";
 import { type Box, getBoxById, getSharedBox, listBoxes } from "../registry/boxes.js";
 import type { Registry } from "../registry/db.js";
-import { getProjectByRef, listProjects, type Project } from "../registry/projects.js";
+import {
+  getProjectByRef,
+  listProjects,
+  type Project,
+  type ProjectStatus,
+} from "../registry/projects.js";
 import { SecretError } from "../registry/secrets.js";
+import type { User } from "../registry/users.js";
 import { renderPage } from "../ui/layout.js";
 import {
   NEW_BOX_OPTION,
@@ -44,16 +50,25 @@ export interface ProjectAndBox {
   box: Box;
 }
 
-// Unknown, deleted and forbidden projects all look the same: not found.
+// Unknown, forbidden and other-status projects all look the same: not found.
+export function findAccessibleProject(
+  db: Registry,
+  user: Pick<User, "id">,
+  ref: string,
+  status: ProjectStatus = "active",
+): ProjectAndBox | undefined {
+  const project = getProjectByRef(db, ref);
+  if (project?.status !== status || !canAccess(user, project)) return undefined;
+  const box = getBoxById(db, project.boxId);
+  return box && { project, box };
+}
+
 export function accessibleProject(
   db: Registry,
   c: Context<AuthEnv>,
   ref: string = c.req.param("ref") ?? "",
 ): ProjectAndBox | undefined {
-  const project = getProjectByRef(db, ref);
-  if (project?.status !== "active" || !canAccess(c.var.session.user, project)) return undefined;
-  const box = getBoxById(db, project.boxId);
-  return box && { project, box };
+  return findAccessibleProject(db, c.var.session.user, ref);
 }
 
 export interface ProjectPageDeps {
@@ -63,7 +78,7 @@ export interface ProjectPageDeps {
 }
 
 // A secret that will not decrypt leaves the page usable: rotating is how it gets repaired.
-function connectionStrings(
+export function connectionStrings(
   { project, box }: ProjectAndBox,
   secretKey: Buffer,
 ): ConnectionString[] | undefined {
