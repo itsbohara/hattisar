@@ -49,6 +49,9 @@ Image versions are pinned to one official self-hosted release (§12). Studio, me
 no host ports. hattisar always runs inside the compose network (also in dev), so a box has one
 internal address valid for both hattisar and meta.
 
+Besides the proxy and UI, hattisar serves a JSON API under `/_hs/api/v1` (`src/api/`) for the
+`hattisar` CLI, a separate zero-dependency package in `cli/` (§15).
+
 ## 3. Request handling in front of Studio
 
 Order matters; first match wins.
@@ -56,7 +59,8 @@ Order matters; first match wins.
 | Path | Behaviour |
 |---|---|
 | `/_hs/healthz` | 200 `{"ok":true}`, no auth. |
-| `/_hs/login`, `/_hs/static/*` | No auth. |
+| `/_hs/login`, `/_hs/static/*` | No auth. Static assets are sent with `Cache-Control: no-cache`, so browsers revalidate them after a restart or upgrade. |
+| `/_hs/api`, `/_hs/api/*` | The token API (§15): no session, no `Origin` check; a bearer token instead. |
 | everything else | Requires a session (§6). API paths (`/api/*`) → 401 JSON; pages → 302 `/_hs/login`. |
 | `/` | 302 `/_hs/projects` |
 | `/_hs/*` | hattisar's own UI and actions. |
@@ -77,7 +81,7 @@ Order matters; first match wins.
 | `/projects`, `/organizations`, `/org/*` | 302 `/_hs/projects` |
 | `/new`, `/new/*` | 302 `/_hs/projects/new` |
 | path starting with `//` | 404. |
-| anything else | Pass through to Studio, streaming, method/body/query preserved, `Host` rewritten. The upstream URL is always Studio's origin with the request path set on it — never a URL resolved from the request path. `hs_session` and any client `x-connection-encrypted` are stripped from what Studio receives. |
+| anything else | Pass through to Studio, streaming, method/body/query preserved, `Host` rewritten. The upstream URL is always Studio's origin with the request path set on it — never a URL resolved from the request path. `hs_session`, any client `x-connection-encrypted` and an `Authorization: Bearer hs_…` header are stripped from what Studio receives. |
 
 **Invariant — no silent default DB.** No request reaches postgres-meta (directly or via Studio's
 pg-meta routes) without hattisar having set `x-connection-encrypted` for the ref in the URL. A
@@ -139,6 +143,8 @@ Numbered migrations in `src/registry/migrations/`, applied at boot, tracked in
 - `backups(id, project_id, kind CHECK in ('manual','scheduled'), s3_key, size_bytes,
   status CHECK in ('running','done','failed'), error NULL, created_at, finished_at NULL,
   bucket)` — `bucket` (migration 002) is where the object was written; delete/restore/retention use it.
+- `api_tokens(id, user_id → users ON DELETE CASCADE, name, token_hash UNIQUE, prefix,
+  created_at, last_used_at NULL, expires_at NULL)` — §15; `expires_at` NULL means never.
 
 ### Secrets at rest
 AES-256-GCM. Key = SHA-256 of `HATTISAR_SECRET_KEY` (required, ≥ 32 chars, boot fails otherwise).
@@ -185,6 +191,8 @@ Failure lists every unmet item. A box with projects (any status) cannot be remov
   that user are deleted.
 - `canAccess(user, project)` is the single authorization seam; every project-scoped path calls it.
   v1 returns `true`.
+- API tokens authenticate the JSON API and the CLI, and only those; the session cookie never does
+  (§15).
 
 ## 7. Projects
 
@@ -289,11 +297,13 @@ with other projects"), Project detail (connection strings, rotate password, down
 list + schedule + back up now + restore, delete), Trash, Boxes (list, register, edit, remove,
 "New managed box" when enabled), Settings. Errors render inline, never as a stack trace.
 
-Settings has a section nav: `/_hs/settings` → 302 `/_hs/settings/storage`. Account
-(`/_hs/settings/account`) shows the signed-in username and the change-password form, posting to
-`/_hs/settings/password`. Backup storage (`/_hs/settings/storage`) shows whether S3 is configured
-(bucket, endpoint host) above the S3 form, which posts to `/_hs/settings/s3` and, for "Test
-connection", `/_hs/settings/s3/test`. Each POST re-renders the section it belongs to.
+Settings has a section nav (Account, API tokens, Backup storage): `/_hs/settings` → 302
+`/_hs/settings/storage`. Account (`/_hs/settings/account`) shows the signed-in username and the
+change-password form, posting to `/_hs/settings/password`. API tokens (`/_hs/settings/tokens`)
+lists, creates and revokes tokens (§15). Backup storage (`/_hs/settings/storage`) shows whether S3
+is configured (bucket, endpoint host) above the S3 form, which posts to `/_hs/settings/s3` and, for
+"Test connection", `/_hs/settings/s3/test`. Each POST re-renders the section it belongs to, except
+revoking a token, which redirects back to the list.
 
 Known limitation: Studio stores SQL snippets in one folder (`SNIPPETS_MANAGEMENT_FOLDER`, a named
 volume) regardless of project, so saved snippets appear in every project's SQL editor and run
@@ -383,3 +393,130 @@ routing e2e (§13) to pass.
 Plain-Postgres boxes (E3); multi-user (F2); pooler for non-shared boxes (J3); add-on mode for the
 full official stack (K1); point-in-time recovery; boxes on other Docker hosts (O3); Auth/REST/
 Storage per project.
+
+## 15. API and CLI
+
+A JSON API for scripts and the `hattisar` CLI. It covers projects, connection URLs, backups and
+listing boxes. Migrations stay with the official `supabase` CLI, which takes a project's URL via
+`--db-url`.
+
+### 15.1 API tokens
+
+- A token is `hs_` + 32 random bytes, base64url. It is shown once, in a readonly field on the
+  page that created it (rendered, never redirected, so it is in no URL), and stored only as its
+  SHA-256 hash, with its first 10 characters kept as `prefix` for display.
+- No scopes: a token acts as its user with full rights; `canAccess` still decides per project.
+- Expiry is chosen at creation: 30, 90 (default) or 365 days, or never. An expired token answers
+  401 and its row is deleted, as an expired session is.
+- Revoking deletes the row. Changing the password does not revoke tokens; Settings → API tokens
+  lists every token (name, `prefix…`, created, last used, expires) and revokes them one by one. A
+  token id of another user → 404.
+- `last_used_at` is written on every authenticated API request.
+- After creating a token the page names the next step, `hattisar login <origin>`, with `https`
+  when `HATTISAR_COOKIE_SECURE=true`.
+
+### 15.2 Authentication and routing
+
+The API is mounted at `/_hs/api`; every path under it, versioned ones under `/_hs/api/v1`, first
+passes `requireApiToken`, so an unknown `/_hs/api/*` path is 401 without a token and 404 JSON with
+one, never the HTML page.
+
+- It accepts only `Authorization: Bearer <token>` (scheme case-insensitive) and never the session
+  cookie. A bearer token is accepted nowhere else: the UI and Studio's routes ignore it.
+- The session check and the same-origin check (§6) are skipped for the API: with no cookie there
+  is no CSRF. The skip applies only when the **raw** request path is under `/_hs/api` **and** the
+  route classifier calls it `hattisar-api`. The classifier decodes `%2F` and Hono's router does
+  not, so a path only the classifier calls API would otherwise reach a non-API handler with no
+  session and no origin check.
+- The Studio proxy strips an `Authorization` header that carries an `hs_` bearer before passing a
+  request on; any other `Authorization` (Studio's own) passes through.
+
+### 15.3 Errors and confirmation
+
+Errors use one shape across `/api` and `/_hs/api`: `{ "error": { "message": string,
+"problems"?: string[] } }`.
+
+| Status | When |
+|---|---|
+| 400 | Bad input, with `problems`; a failed create (as in the UI); `newBox` with managed boxes off; S3 not configured for a backup or restore. |
+| 401 | Missing, unknown or expired token: `Missing or invalid API token`. |
+| 404 | Unknown, deleted (unless asked for) or forbidden project; a backup not of that project or not `done`; unknown path. |
+| 409 | The service failed and the project is held by another operation or a running backup (§7). |
+| 502 | The service failed otherwise (box or S3); an owner password that will not decrypt. |
+| 500 | Unexpected: `app.onError` answers JSON for `/_hs/api/` as for `/api/`. |
+
+Destructive endpoints — soft delete and restoring a backup — require the body
+`{"confirm": "<ref>"}`, the API's form of the UI's type-the-ref. The CLI sends it only from
+`--confirm <ref>`.
+
+The API calls the same service functions as the UI (create, create on a new managed box, rotate,
+soft delete, restore from Trash, back up, restore a backup), so validation, locking and SQL are
+shared.
+
+### 15.4 Endpoints (all JSON, under `/_hs/api/v1`)
+
+| Method & path | Body | 2xx response |
+|---|---|---|
+| `GET /me` | – | `{ username }` |
+| `GET /boxes` | – | `[{ id, name, kind, devOnly, publicHost, publicPort }]`; never host, admin user or secrets |
+| `GET /projects?status=active\|deleted` | – | `[project]`, active by default. A project is `{ ref, name, status, box: { id, name, kind }, createdAt, deletedAt }` |
+| `POST /projects` | `{ name, ref?, boxId?, newBox? }` | 201 `project`. `ref` defaults to the slug of `name`, `boxId` to the shared box; `newBox: true` creates a managed box named after the ref (400 if managed boxes are off, or with `boxId`) |
+| `GET /projects/:ref` | – | `project` + `connections: [{ label, kind, masked }]`, `kind` `direct`, `session` or `transaction`; empty when the password will not decrypt |
+| `GET /projects/:ref/connections` | – | `[{ label, kind, url }]` with the real password, in the project page's order |
+| `POST /projects/:ref/rotate` | – | `{ ok: true }` |
+| `DELETE /projects/:ref` | `{ confirm }` | `{ ok: true }` (soft delete) |
+| `POST /projects/:ref/undelete` | – | `project`; looks up deleted projects only, 404 if not in Trash |
+| `GET /projects/:ref/backups` | – | `[{ id, kind, status, sizeBytes, error, createdAt, finishedAt }]`; no bucket or S3 key |
+| `POST /projects/:ref/backups` | – | 201 the backup, after it finished |
+| `POST /projects/:ref/backups/:id/restore` | `{ confirm }` | `{ ok: true }` |
+
+Restore means into the same project only; restore into a new project stays in the UI.
+
+### 15.5 CLI
+
+`cli/` is a separate package, `hattisar`, bin `hattisar`, Node ≥ 24, **no runtime dependencies**
+(`fetch`, `node:util` `parseArgs`, `node:readline`). It is not a pnpm workspace member, so
+installing it pulls none of the server's dependencies and the Dockerfile and lockfile do not
+change. `pnpm build:cli` compiles it to `cli/dist/` (CI runs it); publishing to npm is manual.
+`run(argv, io)` in `cli/src/run.ts` takes `fetch`, the streams, `env` and the config directory and
+returns the exit code; unit tests drive it against the in-process app.
+
+```
+hattisar login <url>                 hattisar logout              hattisar whoami
+hattisar projects list [--deleted]
+hattisar projects create <name> [--ref <ref>] [--box <id> | --new-box]
+hattisar projects show <ref>
+hattisar projects url <ref> [--transaction]
+hattisar projects rotate <ref>
+hattisar projects delete <ref> --confirm <ref>
+hattisar projects restore <ref>
+hattisar backups list <ref>
+hattisar backups run <ref>
+hattisar backups restore <ref> <backup-id> --confirm <ref>
+hattisar boxes list
+Global: --json, --help, --version
+```
+
+- `projects restore` takes a project out of Trash; `backups restore` replaces a project's data
+  with one of its backups. `--confirm` must equal the ref, else exit 2 before any request.
+- `projects url <ref>` prints exactly one URL with the real password: the first connection (the
+  session pooler on the shared box, direct elsewhere), so `$(hattisar projects url x)` works.
+  `--transaction` picks the transaction pooler and exits 1 if the box has none.
+- `login <url>` reads the token from a hidden prompt on a TTY, or from stdin otherwise, checks it
+  with `GET /me` and only then saves it. There is no flag for the token: secrets stay out of argv.
+  A URL with credentials, a query or a fragment, or not http(s), is refused without being echoed.
+- Config is `$XDG_CONFIG_HOME/hattisar/config.json` (default `~/.config/hattisar/config.json`),
+  `{ url, token }`, directory 0700, file 0600. `HATTISAR_URL` and `HATTISAR_TOKEN` override it.
+  The saved token is sent only to the saved URL: a `HATTISAR_URL` naming another server needs
+  `HATTISAR_TOKEN` too, so an environment variable cannot send the token elsewhere. `logout`
+  deletes the file.
+- Output is human tables by default; `--json` prints the API's JSON as it came. Errors go to
+  stderr as one line `hattisar: <message>`, followed by `  - <problem>` lines; a network failure
+  reads `hattisar: cannot reach <url>: <cause>`. The token never appears in output.
+
+| Exit | Meaning |
+|---|---|
+| 0 | OK |
+| 1 | API or network error |
+| 2 | Usage error (unknown command or option, missing argument, wrong `--confirm`) |
+| 3 | Not logged in, or the token was refused (401) |

@@ -67,6 +67,35 @@ pnpm stack:down                              # add -v to drop the volumes too
 `scripts/dev-env.sh` never overwrites `docker/.env`. The admin password is read only on the first
 boot of an empty `hattisar-data` volume; change it afterwards in Settings.
 
+## CLI
+
+`hattisar` drives projects, connection URLs and backups from a terminal or CI, through the JSON
+API under `/_hs/api/v1`. It needs Node 24 and has no dependencies. Build it from source:
+
+```sh
+pnpm build:cli
+node cli/dist/main.js --help        # once published: npx hattisar
+```
+
+Create a token in Settings → API tokens, then:
+
+```sh
+hattisar login https://hattisar.example.com     # paste the token; it is never an argument
+hattisar projects create "Notes App"            # ref notes-app, on the shared box
+psql "$(hattisar projects url notes-app)"
+hattisar backups run notes-app
+hattisar projects delete notes-app --confirm notes-app
+```
+
+Migrations stay with the official Supabase CLI:
+
+```sh
+supabase db push --db-url "$(hattisar projects url <ref>)"
+```
+
+`HATTISAR_URL` and `HATTISAR_TOKEN` replace `login` in CI. Every command and exit code is in
+[`cli/README.md`](cli/README.md).
+
 ## How it works
 
 ```
