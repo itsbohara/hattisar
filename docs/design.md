@@ -407,7 +407,8 @@ listing boxes. Migrations stay with the official `supabase` CLI, which takes a p
   SHA-256 hash, with its first 10 characters kept as `prefix` for display.
 - No scopes: a token acts as its user with full rights; `canAccess` still decides per project.
 - Expiry is chosen at creation: 30, 90 (default) or 365 days, or never. An expired token answers
-  401 and its row is deleted, as an expired session is.
+  401 and its row is deleted, on use and by the hourly purge, as an expired session is. Until then
+  Settings marks it `expired`.
 - Revoking deletes the row. Changing the password does not revoke tokens; Settings → API tokens
   lists every token (name, `prefix…`, created, last used, expires) and revokes them one by one. A
   token id of another user → 404.
@@ -477,7 +478,8 @@ Restore means into the same project only; restore into a new project stays in th
 `cli/` is a separate package, `hattisar`, bin `hattisar`, Node ≥ 24, **no runtime dependencies**
 (`fetch`, `node:util` `parseArgs`, `node:readline`). It is not a pnpm workspace member, so
 installing it pulls none of the server's dependencies and the Dockerfile and lockfile do not
-change. `pnpm build:cli` compiles it to `cli/dist/` (CI runs it); publishing to npm is manual.
+change. `pnpm build:cli` empties `cli/dist/` and compiles into it (CI runs it); the package's
+`prepack` runs it, so a pack or publish never ships stale files. Publishing to npm is manual.
 `run(argv, io)` in `cli/src/run.ts` takes `fetch`, the streams, `env` and the config directory and
 returns the exit code; unit tests drive it against the in-process app.
 
@@ -505,14 +507,25 @@ Global: --json, --help, --version
 - `login <url>` reads the token from a hidden prompt on a TTY, or from stdin otherwise, checks it
   with `GET /me` and only then saves it. There is no flag for the token: secrets stay out of argv.
   A URL with credentials, a query or a fragment, or not http(s), is refused without being echoed.
+  An `http:` URL whose host is not `localhost`, `127.0.0.1` or `[::1]` gets a stderr warning,
+  `warning: http sends the token unencrypted`, and login goes on.
+- A token, whether typed, from `HATTISAR_TOKEN` or from the config, is trimmed and must match
+  `hs_[A-Za-z0-9_-]+`; otherwise exit 3 with `the token is not valid` before any request, so a
+  stray line or control character never reaches a header (whose error would quote it).
+- Requests do not follow redirects: a 3xx exits 1 with `<url> redirected to <location> — log in
+  with that URL instead` (location without credentials, query or the API path), rather than
+  resending the token or losing it on an http → https hop.
 - Config is `$XDG_CONFIG_HOME/hattisar/config.json` (default `~/.config/hattisar/config.json`),
   `{ url, token }`, directory 0700, file 0600. `HATTISAR_URL` and `HATTISAR_TOKEN` override it.
   The saved token is sent only to the saved URL: a `HATTISAR_URL` naming another server needs
   `HATTISAR_TOKEN` too, so an environment variable cannot send the token elsewhere. `logout`
   deletes the file.
-- Output is human tables by default; `--json` prints the API's JSON as it came. Errors go to
-  stderr as one line `hattisar: <message>`, followed by `  - <problem>` lines; a network failure
-  reads `hattisar: cannot reach <url>: <cause>`. The token never appears in output.
+- Output is human tables by default; `--json` prints the API's JSON verbatim (indented), except
+  `projects url --json`, which prints the chosen connection object; `logout` has no JSON output.
+  Errors go to stderr as one line `hattisar: <message>`, followed by `  - <problem>` lines; a
+  network failure reads `hattisar: cannot reach <url>`, plus `: <code>` when the system gave one
+  (`ECONNREFUSED`): the request layer's message is never shown, as it can quote headers. The
+  token never appears in output.
 
 | Exit | Meaning |
 |---|---|
