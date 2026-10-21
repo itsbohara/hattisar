@@ -134,9 +134,7 @@ services:
       ]
 
   hattisar:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile
+    image: ghcr.io/itsbohara/hattisar:${HATTISAR_VERSION:-latest}
     restart: unless-stopped
     depends_on:
       meta:

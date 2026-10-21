@@ -1,0 +1,7 @@
+# Builds hattisar from this checkout instead of pulling the release image.
+services:
+  hattisar:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: runtime
