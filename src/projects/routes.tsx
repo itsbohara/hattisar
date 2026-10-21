@@ -1,11 +1,12 @@
 import { type Context, Hono } from "hono";
+import { getCookie, setCookie } from "hono/cookie";
 import { canAccess } from "../auth/access.js";
 import type { AuthEnv } from "../auth/middleware.js";
 import { isS3Configured } from "../backups/s3-settings.js";
 import { createProjectOnNewBox } from "../managed/new-project.js";
 import type { ManagedBoxes } from "../managed/service.js";
 import { getBackupSchedule, listBackups } from "../registry/backups.js";
-import { getSharedBox, listBoxes } from "../registry/boxes.js";
+import { type Box, getSharedBox, listBoxes } from "../registry/boxes.js";
 import type { Registry } from "../registry/db.js";
 import { listProjects } from "../registry/projects.js";
 import { renderPage } from "../ui/layout.js";
@@ -15,18 +16,49 @@ import {
   type NewProjectValues,
   ProjectPage,
   type ProjectPageNotice,
+  type ProjectSort,
   ProjectsPage,
+  type ProjectsQuery,
+  type ProjectView,
+  USAGE_PATH,
 } from "../ui/pages/projects.js";
 import { accessibleProject, connectionStrings, type ProjectAndBox } from "./access.js";
 import { softDeleteProject } from "./lifecycle.js";
+import { busyReason } from "./locks.js";
 import {
   createProject,
   type ProjectServiceDeps,
   renameProjectDisplay,
   rotateOwnerPassword,
 } from "./service.js";
+import { projectUsage } from "./usage.js";
 
 const PROJECTS_PAGE = "/_hs/projects";
+const VIEW_COOKIE = "hs_projects_view";
+const ONE_YEAR_SECONDS = 365 * 24 * 60 * 60;
+
+const isView = (value: unknown): value is ProjectView => value === "grid" || value === "list";
+const isSort = (value: unknown): value is ProjectSort => value === "name" || value === "created";
+
+function projectsQuery(c: Context<AuthEnv>): ProjectsQuery {
+  const view = c.req.query("view");
+  if (isView(view)) {
+    setCookie(c, VIEW_COOKIE, view, { path: "/_hs", sameSite: "Lax", maxAge: ONE_YEAR_SECONDS });
+  }
+  const saved = getCookie(c, VIEW_COOKIE);
+  const sort = c.req.query("sort");
+  return {
+    view: isView(view) ? view : isView(saved) ? saved : "grid",
+    q: c.req.query("q")?.trim() ?? "",
+    sort: isSort(sort) ? sort : "name",
+  };
+}
+
+// listProjects already orders by name.
+function sorted(rows: ProjectAndBox[], sort: ProjectSort): ProjectAndBox[] {
+  if (sort === "name") return rows;
+  return rows.toSorted((a, b) => b.project.createdAt.localeCompare(a.project.createdAt));
+}
 
 export function text(form: Record<string, unknown>, name: string): string {
   const value = form[name];
@@ -106,13 +138,38 @@ export function projectRoutes(
     );
   }
 
-  app.get(PROJECTS_PAGE, (c) => {
-    const boxes = new Map(listBoxes(db).map((box) => [box.id, box]));
-    const rows = listProjects(db, "active").flatMap((project) => {
-      const box = boxes.get(project.boxId);
+  function accessibleRows(c: Context<AuthEnv>, boxes: Box[]): ProjectAndBox[] {
+    const byId = new Map(boxes.map((box) => [box.id, box]));
+    return listProjects(db, "active").flatMap((project) => {
+      const box = byId.get(project.boxId);
       return box && canAccess(c.var.session.user, project) ? [{ project, box }] : [];
     });
-    return renderPage(c, <ProjectsPage rows={rows} />);
+  }
+
+  app.get(PROJECTS_PAGE, (c) => {
+    const query = projectsQuery(c);
+    const boxes = listBoxes(db);
+    const all = accessibleRows(c, boxes);
+    const deleted = listProjects(db, "deleted").filter((project) =>
+      canAccess(c.var.session.user, project),
+    );
+    const rows = sorted(all, query.sort).map((row) => ({
+      ...row,
+      busy: busyReason(db, row.project) !== undefined,
+    }));
+    const boxSummaries = boxes.map((box) => ({
+      box,
+      projectCount: all.filter((row) => row.box.id === box.id).length,
+    }));
+    return renderPage(
+      c,
+      <ProjectsPage rows={rows} boxes={boxSummaries} deletedCount={deleted.length} query={query} />,
+    );
+  });
+
+  app.get(USAGE_PATH, async (c) => {
+    const usage = await projectUsage(deps, accessibleRows(c, listBoxes(db)));
+    return c.json(usage, 200, { "cache-control": "no-store" });
   });
 
   app.get(`${PROJECTS_PAGE}/new`, (c) =>

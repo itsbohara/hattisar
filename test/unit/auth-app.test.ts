@@ -186,6 +186,41 @@ describe("signed-in requests", () => {
     }
   });
 
+  it("shows the signed-in user in the account menu", async () => {
+    const html = await (await get("/_hs/projects", signInToRegistry(db))).text();
+    expect(html).toContain(
+      '<summary class="avatar" aria-label="Account menu" title="admin">A</summary>',
+    );
+    expect(html).toContain('<input type="hidden" name="back" value="/_hs/projects"/>');
+  });
+
+  it("stores a chosen theme, renders it, and clears it for System", async () => {
+    const cookie = signInToRegistry(db);
+    const dark = await post("/_hs/theme", { theme: "dark", back: "/_hs/boxes" }, { cookie });
+    expect(dark.status).toBe(303);
+    expect(dark.headers.get("location")).toBe("/_hs/boxes");
+    const themeCookie = (dark.headers.get("set-cookie") ?? "").split(";")[0] as string;
+    expect(themeCookie).toBe("hs_theme=dark");
+    const html = await (await get("/_hs/projects", `${cookie}; ${themeCookie}`)).text();
+    expect(html).toContain('<html lang="en" data-theme="dark">');
+    expect(html).toContain('value="dark" class="menu-item menu-choice" aria-pressed="true"');
+
+    const system = await post("/_hs/theme", { theme: "system", back: "/_hs/boxes" }, { cookie });
+    expect(system.headers.get("set-cookie")).toMatch(/^hs_theme=; Max-Age=0/);
+  });
+
+  it.each(["https://evil.test/", "//evil.test/_hs/", "/project/x"])(
+    "sends a theme change back to the projects page, not to %s",
+    async (back) => {
+      const response = await post(
+        "/_hs/theme",
+        { theme: "light", back },
+        { cookie: signInToRegistry(db) },
+      );
+      expect(response.headers.get("location")).toBe("/_hs/projects");
+    },
+  );
+
   it("serves the debug log with a session", async () => {
     expect((await get("/_hs/debug/pg-meta-log", signInToRegistry(db))).status).toBe(200);
   });

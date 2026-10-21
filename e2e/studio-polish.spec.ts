@@ -30,8 +30,7 @@ test("Studio hides the sections hattisar does not serve and links back", async (
 
 test("the projects page opens a project in Studio's table editor", async ({ page }) => {
   await page.goto("/_hs/projects");
-  const open = page.locator(`a[href="/project/${REF}/editor"]`, { hasText: "Open in Studio" });
-  await open.click();
+  await page.locator(`[data-project="${REF}"]`).click();
   await expect(page).toHaveURL(`/project/${REF}/editor`);
   await expectHattisarChrome(page);
 });

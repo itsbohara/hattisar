@@ -12,7 +12,24 @@ export const DEV_ONLY_WARNING =
 export interface ProjectRow {
   project: Project;
   box: Box;
+  busy: boolean;
 }
+
+export interface BoxSummary {
+  box: Box;
+  projectCount: number;
+}
+
+export type ProjectView = "grid" | "list";
+export type ProjectSort = "name" | "created";
+
+export interface ProjectsQuery {
+  view: ProjectView;
+  q: string;
+  sort: ProjectSort;
+}
+
+export const USAGE_PATH = "/_hs/usage";
 
 function studioHref(ref: string): string {
   return `/project/${ref}/editor`;
@@ -31,52 +48,378 @@ export function Problems({ problems }: { problems: string[] }) {
   );
 }
 
-export function ProjectsPage({ rows }: { rows: ProjectRow[] }) {
+function projectsHref(query: ProjectsQuery, change: Partial<ProjectsQuery>): string {
+  const { view, q, sort } = { ...query, ...change };
+  const params = new URLSearchParams({ view });
+  if (q !== "") params.set("q", q);
+  if (sort !== "name") params.set("sort", sort);
+  return `/_hs/projects?${params}`;
+}
+
+function createdDate(createdAt: string): string {
+  return new Date(createdAt).toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+}
+
+function StatusBadge({ busy }: { busy: boolean }) {
+  return busy ? <span class="pill pill-busy">Busy</span> : <span class="pill pill-ok">Active</span>;
+}
+
+function KindBadge({ box }: { box: Box }) {
+  return <span class="pill">{box.devOnly ? `${box.kind} · dev` : box.kind}</span>;
+}
+
+// Filled in from USAGE_PATH by USAGE_SCRIPT once the page has loaded.
+function Size({ ref }: { ref: string }) {
   return (
-    <Layout title="Projects" section="projects">
-      <div class="page-head">
-        <h1>Projects</h1>
-        <a class="button" href="/_hs/projects/new">
-          New project
+    <span class="size" data-size-of={ref}>
+      …
+    </span>
+  );
+}
+
+function ProjectMenu({ project }: { project: Project }) {
+  return (
+    <details class="menu project-menu" data-menu>
+      <summary class="icon-button" aria-label={`Actions for ${project.name}`}>
+        ⋮
+      </summary>
+      <div class="menu-panel menu-panel-right">
+        <a class="menu-item" href={studioHref(project.ref)}>
+          Open in Studio
+        </a>
+        <a class="menu-item" href={`/_hs/projects/${project.ref}`}>
+          Project settings
+        </a>
+        <a class="menu-item menu-item-danger" href={`/_hs/projects/${project.ref}#delete`}>
+          Delete…
         </a>
       </div>
-      {rows.length === 0 ? (
-        <div class="empty">
-          <p>No projects yet.</p>
-        </div>
-      ) : (
-        <table class="table">
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Ref</th>
-              <th>Box</th>
-              <th />
+    </details>
+  );
+}
+
+function searchText(project: Project): string {
+  return `${project.name} ${project.ref}`.toLowerCase();
+}
+
+// Every project is rendered and the search only hides, so clearing it needs no reload.
+function hiddenBy(project: Project, q: string): boolean {
+  return !searchText(project).includes(q.toLowerCase());
+}
+
+function ProjectCards({ rows, q }: { rows: ProjectRow[]; q: string }) {
+  return (
+    <ul class="project-grid">
+      {rows.map(({ project, box, busy }) => (
+        <li
+          class="project-card"
+          data-project={project.ref}
+          data-search={searchText(project)}
+          hidden={hiddenBy(project, q)}
+        >
+          <div class="project-card-head">
+            <div class="project-title">
+              <a class="project-link" href={studioHref(project.ref)}>
+                {project.name}
+              </a>
+              <code class="project-ref">{project.ref}</code>
+            </div>
+            <ProjectMenu project={project} />
+          </div>
+          <div class="pills">
+            <StatusBadge busy={busy} />
+            <KindBadge box={box} />
+          </div>
+          <dl class="project-meta">
+            <div>
+              <dt>Box</dt>
+              <dd>{box.name}</dd>
+            </div>
+            <div>
+              <dt>Size</dt>
+              <dd>
+                <Size ref={project.ref} />
+              </dd>
+            </div>
+            <div>
+              <dt>Created</dt>
+              <dd>{createdDate(project.createdAt)}</dd>
+            </div>
+          </dl>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function SortHeader({
+  query,
+  sort,
+  label,
+  optional = false,
+}: {
+  query: ProjectsQuery;
+  sort: ProjectSort;
+  label: string;
+  optional?: boolean;
+}) {
+  const active = query.sort === sort;
+  return (
+    <th
+      class={optional ? "col-optional" : undefined}
+      aria-sort={active ? (sort === "name" ? "ascending" : "descending") : undefined}
+    >
+      <a class="sort-link" href={projectsHref(query, { sort })}>
+        {label}
+        {active && <span aria-hidden="true">{sort === "name" ? " ↑" : " ↓"}</span>}
+      </a>
+    </th>
+  );
+}
+
+function ProjectTable({ rows, query }: { rows: ProjectRow[]; query: ProjectsQuery }) {
+  return (
+    <div class="table-frame">
+      <table class="table project-table">
+        <thead>
+          <tr>
+            <SortHeader query={query} sort="name" label="Project" />
+            <th>Status</th>
+            <th class="col-optional">Kind</th>
+            <th class="col-optional">Box</th>
+            <th class="col-optional">Size</th>
+            <SortHeader query={query} sort="created" label="Created" optional />
+            <th>
+              <span class="visually-hidden">Actions</span>
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(({ project, box, busy }) => (
+            <tr
+              data-project={project.ref}
+              data-search={searchText(project)}
+              hidden={hiddenBy(project, query.q)}
+            >
+              <td>
+                <a class="project-link" href={studioHref(project.ref)}>
+                  {project.name}
+                </a>
+                <code class="project-ref">{project.ref}</code>
+              </td>
+              <td>
+                <StatusBadge busy={busy} />
+              </td>
+              <td class="col-optional">
+                <KindBadge box={box} />
+              </td>
+              <td class="col-optional">{box.name}</td>
+              <td class="col-optional">
+                <Size ref={project.ref} />
+              </td>
+              <td class="col-optional">{createdDate(project.createdAt)}</td>
+              <td class="cell-actions">
+                <ProjectMenu project={project} />
+              </td>
             </tr>
-          </thead>
-          <tbody>
-            {rows.map(({ project, box }) => (
-              <tr data-project={project.ref}>
-                <td>
-                  <a href={`/_hs/projects/${project.ref}`}>{project.name}</a>
-                </td>
-                <td>
-                  <code>{project.ref}</code>
-                </td>
-                <td>
-                  {box.name}
-                  {box.devOnly && <span class="badge">development only</span>}
-                </td>
-                <td class="row-actions">
-                  <a class="button-quiet" href={studioHref(project.ref)}>
-                    Open in Studio
-                  </a>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function BoxesPanel({ boxes }: { boxes: BoxSummary[] }) {
+  return (
+    <aside class="boxes-panel" aria-labelledby="boxes-panel-title">
+      <div class="boxes-panel-head">
+        <h2 id="boxes-panel-title">Boxes</h2>
+        <a class="link-quiet" href="/_hs/boxes">
+          Manage
+        </a>
+      </div>
+      <ul class="box-usage">
+        {boxes.map(({ box, projectCount }) => (
+          <li data-box={box.id} data-projects={projectCount}>
+            <span class="box-dot" aria-hidden="true" />
+            <span class="box-usage-name">
+              {box.name}
+              <small>
+                {projectCount === 1 ? "1 project" : `${projectCount} projects`}
+                <span class="box-state" data-box-state={box.id} />
+              </small>
+            </span>
+            <span class="size" data-size-of-box={box.id}>
+              {projectCount === 0 ? "—" : "…"}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </aside>
+  );
+}
+
+function ViewToggle({ query }: { query: ProjectsQuery }) {
+  return (
+    <nav class="segmented" aria-label="View">
+      {(["grid", "list"] as const).map((view) => (
+        <a
+          class="segmented-item"
+          href={projectsHref(query, { view })}
+          aria-current={query.view === view ? "true" : undefined}
+          title={view === "grid" ? "Grid view" : "List view"}
+        >
+          {view === "grid" ? "Grid" : "List"}
+        </a>
+      ))}
+    </nav>
+  );
+}
+
+function Toolbar({ query, deletedCount }: { query: ProjectsQuery; deletedCount: number }) {
+  return (
+    <div class="toolbar">
+      <form method="get" action="/_hs/projects" class="toolbar-search">
+        <input type="hidden" name="view" value={query.view} />
+        {query.sort !== "name" && <input type="hidden" name="sort" value={query.sort} />}
+        <input
+          type="search"
+          name="q"
+          value={query.q}
+          placeholder="Search for a project"
+          aria-label="Search for a project"
+          id="project-search"
+        />
+      </form>
+      <nav class="segmented" aria-label="Sort">
+        <a
+          class="segmented-item"
+          href={projectsHref(query, { sort: "name" })}
+          aria-current={query.sort === "name" ? "true" : undefined}
+        >
+          Name
+        </a>
+        <a
+          class="segmented-item"
+          href={projectsHref(query, { sort: "created" })}
+          aria-current={query.sort === "created" ? "true" : undefined}
+        >
+          Newest
+        </a>
+      </nav>
+      <span class="toolbar-gap" />
+      <a class="link-quiet" href="/_hs/trash">
+        Trash ({deletedCount})
+      </a>
+      <ViewToggle query={query} />
+      <a class="button" href="/_hs/projects/new">
+        New project
+      </a>
+    </div>
+  );
+}
+
+// Keeps ?q= in the URL so a reload or a shared link shows the same search.
+const SEARCH_SCRIPT = `(() => {
+  const input = document.getElementById("project-search");
+  const empty = document.getElementById("no-matches");
+  if (!input) return;
+  input.addEventListener("input", () => {
+    const needle = input.value.trim().toLowerCase();
+    let shown = 0;
+    for (const item of document.querySelectorAll("[data-search]")) {
+      item.hidden = !item.dataset.search.includes(needle);
+      if (!item.hidden) shown += 1;
+    }
+    if (empty) empty.hidden = shown > 0;
+    const url = new URL(location.href);
+    if (needle === "") url.searchParams.delete("q");
+    else url.searchParams.set("q", input.value.trim());
+    history.replaceState(history.state, "", url);
+  });
+})();`;
+
+const USAGE_SCRIPT = `(() => {
+  const units = ["B", "kB", "MB", "GB", "TB"];
+  const format = (bytes) => {
+    let value = bytes;
+    let unit = 0;
+    while (value >= 1000 && unit < units.length - 1) {
+      value /= 1000;
+      unit += 1;
+    }
+    return (unit === 0 || value >= 100 ? Math.round(value) : value.toFixed(1)) + " " + units[unit];
+  };
+  const fill = (selector, text) => {
+    for (const element of document.querySelectorAll(selector)) element.textContent = text;
+  };
+  fetch(${JSON.stringify(USAGE_PATH)}, { headers: { accept: "application/json" } })
+    .then((response) => (response.ok ? response.json() : Promise.reject(response.status)))
+    .then(({ boxes, projects }) => {
+      for (const element of document.querySelectorAll("[data-size-of]")) {
+        const bytes = projects[element.dataset.sizeOf];
+        element.textContent = bytes === undefined ? "—" : format(bytes);
+      }
+      for (const [id, box] of Object.entries(boxes)) {
+        fill('[data-size-of-box="' + id + '"]', box.reachable ? format(box.bytes) : "—");
+        fill('[data-box-state="' + id + '"]', box.reachable ? "" : " · unreachable");
+        document.querySelector('[data-box="' + id + '"]')
+          ?.setAttribute("data-reachable", String(box.reachable));
+      }
+    })
+    .catch(() => fill("[data-size-of]", "—"));
+})();`;
+
+export function ProjectsPage({
+  rows,
+  boxes,
+  deletedCount,
+  query,
+}: {
+  rows: ProjectRow[];
+  boxes: BoxSummary[];
+  deletedCount: number;
+  query: ProjectsQuery;
+}) {
+  return (
+    <Layout title="Projects" section="projects" wide>
+      <h1>Projects</h1>
+      <div class="projects-layout">
+        <div class="projects-main">
+          <Toolbar query={query} deletedCount={deletedCount} />
+          {rows.length === 0 ? (
+            <div class="empty">
+              <p>No projects yet.</p>
+              <a class="button" href="/_hs/projects/new">
+                Create your first project
+              </a>
+            </div>
+          ) : (
+            <>
+              {query.view === "grid" ? (
+                <ProjectCards rows={rows} q={query.q} />
+              ) : (
+                <ProjectTable rows={rows} query={query} />
+              )}
+              <p
+                class="empty"
+                id="no-matches"
+                hidden={rows.some(({ project }) => !hiddenBy(project, query.q))}
+              >
+                No projects match your search.
+              </p>
+            </>
+          )}
+        </div>
+        <BoxesPanel boxes={boxes} />
+      </div>
+      <script dangerouslySetInnerHTML={{ __html: SEARCH_SCRIPT }} />
+      <script dangerouslySetInnerHTML={{ __html: USAGE_SCRIPT }} />
     </Layout>
   );
 }
@@ -357,8 +700,8 @@ function Backups({
           <thead>
             <tr>
               <th>Taken</th>
-              <th>Kind</th>
-              <th>Size</th>
+              <th class="col-optional">Kind</th>
+              <th class="col-optional">Size</th>
               <th>Status</th>
               <th />
             </tr>
@@ -490,7 +833,7 @@ export function ProjectPage({
           </button>
         </form>
       </section>
-      <section class="card card-wide">
+      <section class="card card-wide" id="delete">
         <h2>Delete project</h2>
         <p class="hint">
           Moves the project to Trash: the owner can no longer connect and Studio stops showing it.

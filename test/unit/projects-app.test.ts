@@ -32,6 +32,7 @@ let db: Registry;
 let statements: Statement[];
 let failOn: RegExp | undefined;
 let databaseExists: boolean;
+let databaseSizes: [string, string][];
 let refreshed: { ref: string; password: string }[];
 let app: Hono<AuthEnv>;
 
@@ -40,6 +41,9 @@ const fakeAdmin: AdminClientRunner = async (_conn, run, database = "postgres") =
     query: async (sql: string) => {
       statements.push({ database, sql });
       if (failOn?.test(sql)) throw new Error(`boom (${ADMIN_PASSWORD})`);
+      if (sql.includes("pg_database_size")) {
+        return { rows: databaseSizes.map(([datname, bytes]) => ({ datname, bytes })) };
+      }
       const exists = sql.startsWith("select 1 from pg_database") && databaseExists;
       return { rowCount: exists ? 1 : 0, rows: [] };
     },
@@ -64,6 +68,7 @@ beforeEach(() => {
   statements = [];
   failOn = undefined;
   databaseExists = false;
+  databaseSizes = [];
   refreshed = [];
   const user = insertUser(db, { username: "admin", passwordHash: "unused" });
   app = new Hono<AuthEnv>();
@@ -220,12 +225,67 @@ describe("the new-project form", () => {
 });
 
 describe("the project pages", () => {
-  it("lists active projects with an Open in Studio link", async () => {
+  it("lists active projects as cards that open Studio, with the project page in the menu", async () => {
     await create();
     const html = await (await app.request("/_hs/projects")).text();
+    expect(html).toContain('class="project-grid"');
     expect(html).toContain('data-project="my-app"');
-    expect(html).toContain('href="/project/my-app/editor"');
-    expect(html).toContain("development only");
+    expect(html).toContain('<a class="project-link" href="/project/my-app/editor">My App</a>');
+    expect(html).toContain('href="/_hs/projects/my-app">Project settings</a>');
+    expect(html).toContain('href="/_hs/projects/my-app#delete"');
+    expect(html).toContain("shared · dev");
+    expect(html).toContain(">Active</span>");
+    expect(html).not.toContain(ownerPassword("my-app"));
+  });
+
+  it("switches to the list view and remembers it", async () => {
+    await create();
+    const list = await app.request("/_hs/projects?view=list");
+    expect(await list.text()).toContain('class="table project-table"');
+    const cookie = list.headers.get("set-cookie") ?? "";
+    expect(cookie).toContain("hs_projects_view=list");
+    const again = await app.request("/_hs/projects", {
+      headers: { cookie: cookie.split(";")[0] as string },
+    });
+    expect(await again.text()).toContain('class="table project-table"');
+  });
+
+  it("hides projects the search does not match and sorts newest first", async () => {
+    await create();
+    await create("billing", "Billing");
+    const setCreated = db.prepare("UPDATE projects SET created_at = ? WHERE ref = ?");
+    setCreated.run("2026-01-01T00:00:00.000Z", "billing");
+    setCreated.run("2026-10-21T00:00:00.000Z", "my-app");
+    const searched = await (await app.request("/_hs/projects?q=bill")).text();
+    expect(searched).toMatch(/data-project="billing" data-search="billing billing">/);
+    expect(searched).toMatch(/data-project="my-app" data-search="my app my-app" hidden="">/);
+    expect(searched).toContain('id="no-matches" hidden=""');
+
+    const byName = await (await app.request("/_hs/projects")).text();
+    expect(byName.indexOf('data-project="billing"')).toBeLessThan(
+      byName.indexOf('data-project="my-app"'),
+    );
+    const newest = await (await app.request("/_hs/projects?sort=created")).text();
+    expect(newest.indexOf('data-project="my-app"')).toBeLessThan(
+      newest.indexOf('data-project="billing"'),
+    );
+  });
+
+  it("answers database sizes per project and per box, and marks a failing box unreachable", async () => {
+    await create();
+    databaseSizes = [["my_app", "8192000"]];
+    const boxId = Number(sharedBoxId());
+    expect(await (await app.request("/_hs/usage")).json()).toEqual({
+      boxes: { [boxId]: { reachable: true, bytes: 8192000 } },
+      projects: { "my-app": 8192000 },
+    });
+    expect(statements.at(-1)?.sql).toContain("pg_database_size");
+
+    failOn = /pg_database_size/;
+    expect(await (await app.request("/_hs/usage")).json()).toEqual({
+      boxes: { [boxId]: { reachable: false, bytes: 0 } },
+      projects: {},
+    });
   });
 
   it("shows masked pooler strings with the real one only behind Reveal/Copy", async () => {
