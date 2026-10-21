@@ -99,6 +99,13 @@ To release the CLI, bump `version` in `cli/package.json` through a PR, then tag 
 git tag cli-v0.2.0 && git push origin cli-v0.2.0   # tests, publishes to npm, creates the GitHub release
 ```
 
+Server releases work the same way: bump `version` in `package.json` through a PR, then tag the
+merged commit `v<version>`. That publishes the image and the compose bundle.
+
+```sh
+git tag v0.1.0 && git push origin v0.1.0   # tests, pushes the image, creates the GitHub release
+```
+
 Migrations stay with the official Supabase CLI:
 
 ```sh
@@ -136,7 +143,8 @@ state in SQLite in the `hattisar-data` volume. The full design is in
 
 ## Configuration
 
-Set in `docker/.env` (template: [`docker/env.example`](docker/env.example)).
+Set in `.env` next to `compose.yml` (`docker/.env` in a checkout; template:
+[`docker/env.example`](docker/env.example)).
 
 | Env | Default | Notes |
 |---|---|---|
