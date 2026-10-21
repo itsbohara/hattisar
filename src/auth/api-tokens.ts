@@ -13,7 +13,7 @@ import { hashToken } from "./sessions.js";
 export const TOKEN_EXPIRY_DAYS = [30, 90, 365] as const;
 export const DEFAULT_TOKEN_EXPIRY_DAYS = 90;
 
-const TOKEN_PREFIX = "hs_";
+export const API_TOKEN_PREFIX = "hs_";
 const DISPLAY_PREFIX_LENGTH = 10;
 const MAX_NAME_LENGTH = 64;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -38,7 +38,7 @@ export function createApiToken(
   if (expiryDays !== null && !TOKEN_EXPIRY_DAYS.includes(expiryDays)) {
     return { ok: false, problem: `Expiry must be ${TOKEN_EXPIRY_DAYS.join(", ")} days or never.` };
   }
-  const token = TOKEN_PREFIX + randomBytes(32).toString("base64url");
+  const token = API_TOKEN_PREFIX + randomBytes(32).toString("base64url");
   const row = insertApiToken(
     db,
     {
@@ -59,7 +59,7 @@ export function resolveApiToken(
   token: string,
   now: Date = new Date(),
 ): { user: User; tokenId: number } | undefined {
-  if (!token.startsWith(TOKEN_PREFIX)) return undefined;
+  if (!token.startsWith(API_TOKEN_PREFIX)) return undefined;
   const row = getApiTokenByHash(db, hashToken(token));
   if (row === undefined) return undefined;
   if (row.expiresAt !== null && row.expiresAt <= now.toISOString()) {

@@ -4,8 +4,6 @@ import type { Registry } from "../registry/db.js";
 import { type ApiEnv, requireApiToken } from "./auth.js";
 import { notFound } from "./errors.js";
 
-export const API_PREFIX = "/_hs/api";
-
 export interface ApiDeps {
   db: Registry;
 }
@@ -15,6 +13,7 @@ export interface ApiDeps {
 export function apiRoutes(deps: ApiDeps): Hono<ApiEnv> {
   const { db } = deps;
   const app = new Hono<ApiEnv>();
+  app.use(requireApiToken(db));
   const v1 = new Hono<ApiEnv>();
 
   v1.get("/me", (c) => c.json({ username: c.var.user.username }));
@@ -32,7 +31,6 @@ export function apiRoutes(deps: ApiDeps): Hono<ApiEnv> {
     ),
   );
 
-  app.use(requireApiToken(db));
   app.route("/v1", v1);
   app.all("*", notFound);
   return app;

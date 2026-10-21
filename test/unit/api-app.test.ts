@@ -106,7 +106,7 @@ describe("API authentication", () => {
     expect(getApiTokenByHash(db, hashToken(expired))).toBeUndefined();
   });
 
-  it("does not refuse a cross-origin POST with a bearer token", async () => {
+  it("lets a cross-origin POST with a bearer token reach the router", async () => {
     const response = await request(
       "/_hs/api/v1/me",
       { ...bearer(), origin: "http://evil.test" },
@@ -132,8 +132,39 @@ describe("API authentication", () => {
     },
   );
 
-  it("never serves an encoded API path to Studio without a session", async () => {
-    const response = await request("/_hs/api%2Fv1/me");
+  it("answers a cookie-only cross-origin POST with 401, not an action", async () => {
+    const response = await request(
+      "/_hs/api/v1/me",
+      { cookie, origin: "http://evil.test" },
+      "POST",
+    );
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual(NO_TOKEN);
+  });
+
+  it.each(["/_HS/API/v1/me", "//_hs/api/v1/me", "/_hs/api%2Fv1/me", "/_hs%2Fapi/v1/me"])(
+    "asks %s for a session, not a token",
+    async (path) => {
+      const response = await request(path, bearer());
+      expect(response.status).toBe(302);
+      expect(response.headers.get("location")).toBe("/_hs/login");
+    },
+  );
+
+  it.each(["/_hs/api%2Fv1/me", "/_hs%2Fapi/v1/me"])(
+    "refuses a cross-origin POST to %s like any hattisar path",
+    async (path) => {
+      const response = await request(
+        path,
+        { ...bearer(), cookie, origin: "http://evil.test" },
+        "POST",
+      );
+      expect(response.status).toBe(403);
+    },
+  );
+
+  it("never serves an encoded API path to Studio, even with a session", async () => {
+    const response = await request("/_hs/api%2Fv1/me", { cookie });
     expect(response.status).toBe(404);
   });
 });

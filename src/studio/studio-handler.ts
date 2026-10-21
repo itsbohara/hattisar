@@ -48,7 +48,7 @@ export function createStudioHandler({ config, projects, pgMetaLog }: StudioDeps)
   return async (c: Context<AuthEnv>): Promise<Response> => {
     const route = classifyRequest(c.req.method, new URL(c.req.url).pathname);
     // requireSession lets public and token-API paths through without a session, so this check
-    // comes first. An API path lands here when the router missed it, e.g. /_hs/api%2Fv1/me.
+    // comes first. A token-API path is never Studio's, even when the router missed it.
     if (
       route.kind === "hattisar-public" ||
       route.kind === "hattisar" ||

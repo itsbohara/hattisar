@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
-import { API_PREFIX, apiRoutes } from "./api/routes.js";
+import { apiRoutes } from "./api/routes.js";
 import type { AuthEnv } from "./auth/middleware.js";
 import { requireSameOrigin, requireSession } from "./auth/middleware.js";
 import { LoginRateLimiter } from "./auth/rate-limit.js";
@@ -22,6 +22,7 @@ import { trashRoutes } from "./projects/trash-routes.js";
 import type { Registry } from "./registry/db.js";
 import { deriveSecretKey } from "./registry/secrets.js";
 import { PgMetaLog } from "./studio/pg-meta.js";
+import { API_PREFIX } from "./studio/routes.js";
 import { createStudioHandler } from "./studio/studio-handler.js";
 import { renderPage } from "./ui/layout.js";
 import { ErrorPage } from "./ui/pages/error.js";
