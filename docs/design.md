@@ -256,7 +256,9 @@ another holds the project or a backup of it is running is refused at once, namin
 ("Can't delete <ref> while it is being restored. Try again when it finishes."); nothing waits.
 Once it holds the lock an operation re-reads the project and refuses if its status no longer
 allows it, e.g. a restore into a project that was deleted meanwhile. The hourly purge skips a busy
-project and retries next hour.
+project and retries next hour. A dump download holds the project too, from before `pg_dump`
+starts until it exits (finished, failed, or killed because the client went away); a download
+refused this way answers 409 on the Backups tab.
 
 ## 8. Backups
 
