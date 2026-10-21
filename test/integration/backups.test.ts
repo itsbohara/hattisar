@@ -95,6 +95,35 @@ describe("download dump", () => {
     await expect(drain()).rejects.toThrow();
   });
 
+  it("holds the project while a dump streams, so a delete or a second dump waits", async () => {
+    const response = await fetchWith(baseUrl, cookie, `/_hs/projects/${ref}/dump`);
+    expect(response.status).toBe(200);
+    // The blobs table from the test above is big enough that the unread body holds pg_dump open.
+    const reader = (response.body as ReadableStream<Uint8Array>).getReader();
+    await reader.read();
+
+    const deleting = await postForm(
+      baseUrl,
+      `/_hs/projects/${ref}/delete`,
+      { confirm: ref },
+      cookie,
+    );
+    expect(deleting.status).toBe(502);
+    expect(await deleting.text()).toContain("while a dump of it is being downloaded");
+    const second = await fetchWith(baseUrl, cookie, `/_hs/projects/${ref}/dump`);
+    expect(second.status).toBe(409);
+    expect(await second.text()).toContain("Can&#39;t download a dump of");
+
+    await reader.cancel();
+    await expect
+      .poll(async () => {
+        const again = await fetchWith(baseUrl, cookie, `/_hs/projects/${ref}/dump`);
+        await again.body?.cancel();
+        return again.status;
+      })
+      .toBe(200);
+  });
+
   it("is not found for an unknown project", async () => {
     const response = await fetchWith(baseUrl, cookie, "/_hs/projects/no-such-ref/dump");
     expect(response.status).toBe(404);
