@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
+import { API_PREFIX, apiRoutes } from "./api/routes.js";
 import type { AuthEnv } from "./auth/middleware.js";
 import { requireSameOrigin, requireSession } from "./auth/middleware.js";
 import { LoginRateLimiter } from "./auth/rate-limit.js";
@@ -75,7 +76,7 @@ export function createApp(
     if (error instanceof HTTPException) return error.getResponse();
     const { pathname } = new URL(c.req.url);
     logUnexpected(c.req.method, pathname, error);
-    return pathname.startsWith("/api/")
+    return pathname.startsWith("/api/") || pathname.startsWith(`${API_PREFIX}/`)
       ? c.json(INTERNAL_ERROR_BODY, 500)
       : renderPage(c, ErrorPage(), 500);
   });
@@ -83,6 +84,8 @@ export function createApp(
   app.get("/_hs/healthz", (c) => c.json({ ok: true }));
   app.use(requireSameOrigin());
   app.use(requireSession(registry));
+
+  app.route(API_PREFIX, apiRoutes({ db: registry }));
 
   app.route(
     "/",
