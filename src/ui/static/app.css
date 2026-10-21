@@ -11,15 +11,19 @@
   --danger-bg: #3a1c1a;
   --ok: #3ecf8e;
   --ok-bg: #12301f;
+  --busy: #f0b44c;
+  --busy-bg: #3a2d12;
   --focus: #6cb6ff;
+  --shadow: 0 8px 24px rgb(0 0 0 / 0.45);
   --radius: 8px;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   font-size: 15px;
   line-height: 1.5;
 }
 
+/* data-theme comes from the user menu (hs_theme); without it the OS preference decides. */
 @media (prefers-color-scheme: light) {
-  :root {
+  :root:not([data-theme="dark"]) {
     color-scheme: light;
     --bg: #f7f8f9;
     --surface: #ffffff;
@@ -32,8 +36,30 @@
     --danger-bg: #fdecea;
     --ok: #17784b;
     --ok-bg: #e5f5ec;
+    --busy: #8a5a00;
+    --busy-bg: #fdf3dc;
     --focus: #0b63c5;
+    --shadow: 0 8px 24px rgb(15 23 42 / 0.12);
   }
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f7f8f9;
+  --surface: #ffffff;
+  --border: #dde1e5;
+  --text: #1b1f23;
+  --muted: #5f6870;
+  --accent: #1f9d63;
+  --accent-text: #ffffff;
+  --danger: #b3261e;
+  --danger-bg: #fdecea;
+  --ok: #17784b;
+  --ok-bg: #e5f5ec;
+  --busy: #8a5a00;
+  --busy-bg: #fdf3dc;
+  --focus: #0b63c5;
+  --shadow: 0 8px 24px rgb(15 23 42 / 0.12);
 }
 
 * {
@@ -99,10 +125,6 @@ h2 {
 .nav-link[aria-current="page"] {
   color: var(--text);
   background: var(--bg);
-}
-
-.logout {
-  margin: 0;
 }
 
 .main {
@@ -554,10 +576,6 @@ button:disabled {
   }
 }
 
-.logout .button-quiet {
-  white-space: nowrap;
-}
-
 @media (max-width: 720px) {
   .topbar {
     flex-wrap: wrap;
@@ -584,4 +602,136 @@ button:disabled {
   .main {
     padding: 1.5rem 1rem;
   }
+}
+
+.main-wide {
+  max-width: 1200px;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Menus: <details data-menu>, closed on outside click and Escape by app.js. */
+.menu {
+  position: relative;
+}
+
+.menu > summary {
+  list-style: none;
+  cursor: pointer;
+}
+
+.menu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.menu-panel {
+  position: absolute;
+  top: calc(100% + 0.35rem);
+  z-index: 10;
+  min-width: 12rem;
+  padding: 0.35rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.menu-panel-right {
+  right: 0;
+}
+
+.menu-heading {
+  margin: 0;
+  padding: 0.4rem 0.6rem 0.5rem;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.menu-label {
+  margin: 0;
+  padding: 0.3rem 0.6rem 0.15rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.menu-section {
+  margin: 0.35rem 0 0;
+  padding-top: 0.35rem;
+  border-top: 1px solid var(--border);
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.4rem 0.6rem;
+  border: 0;
+  border-radius: calc(var(--radius) - 2px);
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.menu-item:hover {
+  background: var(--bg);
+}
+
+.menu-item-danger {
+  color: var(--danger);
+}
+
+.menu-choice::before {
+  content: "";
+  width: 0.4rem;
+  height: 0.4rem;
+  border-radius: 50%;
+}
+
+.menu-choice[aria-pressed="true"]::before {
+  background: var(--text);
+}
+
+.user-menu {
+  margin-left: auto;
+}
+
+.avatar {
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--bg);
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.icon-button {
+  display: grid;
+  place-items: center;
+  width: 1.9rem;
+  height: 1.9rem;
+  border: 1px solid transparent;
+  border-radius: calc(var(--radius) - 2px);
+  color: var(--muted);
+  line-height: 1;
+}
+
+.icon-button:hover,
+.menu[open] > .icon-button {
+  color: var(--text);
+  border-color: var(--border);
+  background: var(--bg);
 }
