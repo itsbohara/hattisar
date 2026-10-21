@@ -570,11 +570,13 @@ describe("projects", () => {
     it("runs a backup and answers 201 with its row", async () => {
       await create();
       configureS3();
+      const older = backupOf("my-app");
       const response = await call("POST", "/projects/my-app/backups");
       expect(response.status).toBe(201);
       const body = (await response.json()) as Record<string, unknown>;
       expect(Object.keys(body).sort()).toEqual(BACKUP_FIELDS);
       expect(body).toMatchObject({ kind: "manual", status: "done", sizeBytes: 42, error: null });
+      expect(body.id).not.toBe(older.id);
     });
 
     it("answers a backup while one is running with 409", async () => {

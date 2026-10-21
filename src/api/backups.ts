@@ -48,9 +48,7 @@ export function backupApiRoutes(deps: BackupDeps, projectDeps: ProjectServiceDep
     if (!found) return notFound(c);
     const result = await runBackup(deps, found.project, found.box, "manual");
     if (!result.ok) return failure(c, found.project, result.problem);
-    const [newest] = listBackups(db, found.project.id);
-    if (!newest) throw new Error(`Backup of ${found.project.ref} is not readable after it ran`);
-    return c.json(backupJson(newest), 201);
+    return c.json(backupJson(result.backup), 201);
   });
 
   app.post("/:ref/backups/:id/restore", async (c) => {
