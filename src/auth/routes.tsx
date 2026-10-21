@@ -1,10 +1,20 @@
-import { Hono } from "hono";
+import { type Context, Hono } from "hono";
+import type { ContentfulStatusCode } from "hono/utils/http-status";
+import { listApiTokens } from "../registry/api-tokens.js";
 import type { Registry } from "../registry/db.js";
 import { deleteOtherSessions } from "../registry/sessions.js";
 import { getUserByUsername, updateUserPasswordHash } from "../registry/users.js";
 import { renderPage } from "../ui/layout.js";
 import { LoginPage } from "../ui/pages/login.js";
-import { ACCOUNT_SETTINGS, AccountSettingsPage, STORAGE_SETTINGS } from "../ui/pages/settings.js";
+import {
+  ACCOUNT_SETTINGS,
+  AccountSettingsPage,
+  API_TOKENS_SETTINGS,
+  ApiTokensSettingsPage,
+  STORAGE_SETTINGS,
+  type TokenFormState,
+} from "../ui/pages/settings.js";
+import { createApiToken, revokeApiToken, type TokenExpiryDays } from "./api-tokens.js";
 import { type AuthEnv, LOGIN_PAGE } from "./middleware.js";
 import { hashPassword, verifyPassword } from "./password.js";
 import type { LoginRateLimiter } from "./rate-limit.js";
@@ -23,6 +33,11 @@ export interface AuthRoutesDeps {
 function field(form: Record<string, unknown>, name: string): string {
   const value = form[name];
   return typeof value === "string" ? value : "";
+}
+
+// "never" means no expiry; anything else goes through as a number for createApiToken to reject.
+function expiryDays(value: string): TokenExpiryDays | null {
+  return value === "never" ? null : (Number(value) as TokenExpiryDays);
 }
 
 export function authRoutes({ db, limiter, cookieSecure }: AuthRoutesDeps): Hono<AuthEnv> {
@@ -98,6 +113,36 @@ export function authRoutes({ db, limiter, cookieSecure }: AuthRoutesDeps): Hono<
       c,
       <AccountSettingsPage username={user.username} password={{ saved: true }} />,
     );
+  });
+
+  function renderTokens(
+    c: Context<AuthEnv>,
+    form: TokenFormState = {},
+    status: ContentfulStatusCode = 200,
+  ) {
+    const tokens = listApiTokens(db, c.var.session.user.id);
+    return renderPage(c, <ApiTokensSettingsPage tokens={tokens} form={form} />, status);
+  }
+
+  app.get(API_TOKENS_SETTINGS, (c) => renderTokens(c));
+
+  app.post(API_TOKENS_SETTINGS, async (c) => {
+    const form = await c.req.parseBody();
+    const name = field(form, "name");
+    const expiry = field(form, "expiry");
+    const result = createApiToken(db, c.var.session.user.id, name, expiryDays(expiry));
+    if (!result.ok) return renderTokens(c, { name, expiry, problem: result.problem }, 400);
+    // Rendered, not redirected: the token must never travel in a URL.
+    const created = { token: result.token, origin: new URL(c.req.url).origin };
+    return renderTokens(c, { created }, 201);
+  });
+
+  app.post(`${API_TOKENS_SETTINGS}/:id/revoke`, (c) => {
+    const id = c.req.param("id");
+    if (!/^\d+$/.test(id) || !revokeApiToken(db, c.var.session.user.id, Number(id))) {
+      return c.notFound();
+    }
+    return c.redirect(API_TOKENS_SETTINGS, 302);
   });
 
   return app;
