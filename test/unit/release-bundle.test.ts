@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -10,6 +10,7 @@ const script = join(root, "scripts/release-bundle.sh");
 const bundleFiles = [
   "compose.yml",
   "env.example",
+  "generate-env.sh",
   "NOTICE",
   "volumes/db/roles.sql",
   "volumes/db/_supabase.sql",
@@ -45,7 +46,7 @@ function extract(tarball: string): string {
 }
 
 describe("release-bundle.sh", () => {
-  it("packs the compose file, env template, volumes and NOTICE under hattisar/", () => {
+  it("packs the compose file, env template and generator, volumes and NOTICE under hattisar/", () => {
     const tarball = pack();
 
     expect(tarball).toBe(join(outDir, "hattisar-0.1.0.tar.gz"));
@@ -60,12 +61,18 @@ describe("release-bundle.sh", () => {
     expect(compose).not.toContain("build:");
   });
 
-  it("copies the env template and volume files unchanged", () => {
+  it("copies the env template, generator and volume files unchanged", () => {
     const bundle = extract(pack());
+    const source = (file: string) =>
+      join(root, file === "generate-env.sh" ? "scripts" : "docker", file);
 
     for (const file of bundleFiles.filter((file) => file !== "compose.yml")) {
-      expect(readFileSync(join(bundle, file))).toEqual(readFileSync(join(root, "docker", file)));
+      expect(readFileSync(join(bundle, file))).toEqual(readFileSync(source(file)));
     }
+  });
+
+  it("keeps the env generator executable", () => {
+    expect(statSync(join(extract(pack()), "generate-env.sh")).mode & 0o111).not.toBe(0);
   });
 
   it("leaves out macOS metadata files", () => {
