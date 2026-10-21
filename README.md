@@ -27,16 +27,17 @@ nothing else.
 
 ### Screenshots
 
-Not captured yet. Planned:
+Studio's Table Editor on one project, with hattisar's "← hattisar" link back:
 
-- Login
-- Projects list with "Open in Studio"
-- New project, with the shared box's "development only" warning
-- Project page: connection strings, backups, schedule
-- Studio Table Editor opened on a project, with the "← hattisar" link
-- Boxes: shared, registered and managed
-- Trash
-- Settings: S3 backup storage
+![Supabase Studio's Table Editor showing the notes table of the Notes App project](docs/screenshots/studio.png)
+
+| Projects | Project page |
+|---|---|
+| ![Projects list with an Open in Studio button per project](docs/screenshots/projects.png) | ![Project page with masked connection strings, rotate password and backups](docs/screenshots/project.png) |
+
+Settings → API tokens, for the [CLI](#cli):
+
+![API tokens settings with a create form and one token](docs/screenshots/api-tokens.png)
 
 ## Quick start (development)
 
@@ -70,11 +71,10 @@ boot of an empty `hattisar-data` volume; change it afterwards in Settings.
 ## CLI
 
 `hattisar` drives projects, connection URLs and backups from a terminal or CI, through the JSON
-API under `/_hs/api/v1`. It needs Node 24 and has no dependencies. Build it from source:
+API under `/_hs/api/v1`. It needs Node 24 and has no dependencies:
 
 ```sh
-pnpm build:cli
-node cli/dist/main.js --help        # once published: npx hattisar
+npm install -g hattisar             # or: npx hattisar, or from source: pnpm build:cli
 ```
 
 Create a token in Settings → API tokens, then:
@@ -85,6 +85,12 @@ hattisar projects create "Notes App"            # ref notes-app, on the shared b
 psql "$(hattisar projects url notes-app)"
 hattisar backups run notes-app
 hattisar projects delete notes-app --confirm notes-app
+```
+
+```text
+$ hattisar projects list
+REF        NAME       BOX     CREATED
+notes-app  Notes App  shared  2026-10-21 13:49 UTC
 ```
 
 To release the CLI, bump `version` in `cli/package.json` through a PR, then tag the merged commit:
