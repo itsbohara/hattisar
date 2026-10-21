@@ -3,8 +3,9 @@
 Command line client for a [hattisar](https://github.com/itsbohara/hattisar) server's JSON API.
 Node 24 or newer, no dependencies.
 
-Not on npm yet: build it from the repository with `pnpm build:cli` and run
-`node cli/dist/main.js`. Once published, `npm install -g hattisar` or `npx hattisar` will do.
+```sh
+npm install -g hattisar     # or run it once with npx hattisar
+```
 
 ```sh
 hattisar login https://hattisar.example.com   # paste an API token from Settings → API tokens
