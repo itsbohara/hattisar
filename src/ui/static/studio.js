@@ -29,6 +29,7 @@
   const PROJECT = /^\/project\/([^/]+)/;
   const CONNECT_PARAMS = ["showConnect", "connectTab", "method"];
   const { pushState, replaceState } = history;
+  let leftForConnect = false;
 
   function redirectConnect() {
     const ref = PROJECT.exec(location.pathname)?.[1];
@@ -37,8 +38,14 @@
     // Without this, Back returns to the sheet's URL and redirects again.
     for (const name of CONNECT_PARAMS) url.searchParams.delete(name);
     replaceState.call(history, history.state, "", url);
+    leftForConnect = true;
     location.assign(`/_hs/projects/${ref}`);
   }
+
+  // Back restores this page from the back/forward cache with the sheet Studio had already opened.
+  addEventListener("pageshow", (event) => {
+    if (event.persisted && leftForConnect) location.reload();
+  });
 
   // Studio's logo links to /project/default, its built-in project, and navigates there without a
   // request hattisar could redirect (design §3). A full load lets the server decide. Never on page
