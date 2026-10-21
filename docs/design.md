@@ -417,9 +417,18 @@ routing e2e (§13) to pass.
 
 ## 14. Out of v1
 
-Plain-Postgres boxes (E3); multi-user (F2); pooler for non-shared boxes (J3); add-on mode for the
-full official stack (K1); point-in-time recovery; boxes on other Docker hosts (O3); Auth/REST/
-Storage per project.
+The post-v1 roadmap is the GitHub milestone "Roadmap": a release pipeline (§16), a one-line
+installer, per-project SQL snippets, pooler for non-shared boxes (J3), a WAL-G point-in-time
+recovery recipe in the docs, and a plain-Postgres boxes spike (E3). Parked, each until its
+condition holds:
+
+| Parked | Revisit when |
+|---|---|
+| Multi-user (F2) | someone asks to share one hattisar |
+| Boxes on other Docker hosts (O3) | hattisar runs on more than one server |
+| Add-on mode for the full official stack (K1) | a user needs Supabase features beyond the database |
+| Auth / REST / Storage per project | same as K1 |
+| Point-in-time recovery inside hattisar | the documented box-level recipe is not enough |
 
 ## 15. API and CLI
 
@@ -564,3 +573,30 @@ Global: --json, --help, --version
 | 1 | API or network error |
 | 2 | Usage error (unknown command or option, missing argument, wrong `--confirm`) |
 | 3 | Not logged in, or the token was refused (401) |
+
+## 16. Server releases
+
+A server release is a `v<version>` tag (first `v0.1.0`), separate from the CLI's `cli-v*` tags
+(§15.5). `.github/workflows/release.yml` runs on it:
+
+1. Refuses a tag whose commit is not on `main`, or whose version is not `package.json`'s.
+2. Runs lint, typecheck and the unit tests.
+3. Builds the `runtime` stage of `docker/Dockerfile` for `linux/amd64` and `linux/arm64` and
+   pushes it to `ghcr.io/itsbohara/hattisar` as `<version>`, `<major>.<minor>` and `latest`, with
+   the `org.opencontainers.image.source` label pointing at the repository.
+4. Builds the bundle `hattisar-<version>.tar.gz` with `scripts/release-bundle.sh` and creates the
+   GitHub release `v<version>` with the bundle attached and generated notes.
+
+The bundle unpacks to `hattisar/`: `compose.yml`, `env.example`, `volumes/` (the db init SQL and
+`pooler.exs`) and `NOTICE`, the same layout as `docker/`. Its `compose.yml` is `docker/compose.yml`
+with the hattisar image's default tag replaced by the exact version, so an install never drifts:
+`cp env.example .env`, fill in the secrets, `docker compose up -d`. Nothing is built.
+
+`docker/compose.yml` names the image `ghcr.io/itsbohara/hattisar:${HATTISAR_VERSION:-latest}` and
+has no `build:`. Building from source is an override: `docker/compose.dev.yml` (the `dev` stage,
+for development and CI) and `docker/compose.source.yml` (the `runtime` stage, for running a
+checkout in production mode).
+
+The GHCR package is public; a package's first push can create it private, in which case it is made
+public once in its settings. Public packages cost nothing to store or pull.
+
