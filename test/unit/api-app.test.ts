@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Readable } from "node:stream";
 import { Hono } from "hono";
 import type pg from "pg";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -8,16 +9,36 @@ import { apiRoutes } from "../../src/api/routes.js";
 import { createApp } from "../../src/app.js";
 import { createApiToken } from "../../src/auth/api-tokens.js";
 import { hashToken } from "../../src/auth/sessions.js";
+import { saveS3Settings } from "../../src/backups/s3-settings.js";
+import { NOT_CONFIGURED } from "../../src/backups/service.js";
 import type { AdminClientRunner } from "../../src/boxes/admin-client.js";
 import { loadConfig } from "../../src/config.js";
 import { holdingProject } from "../../src/projects/locks.js";
 import { getApiTokenByHash } from "../../src/registry/api-tokens.js";
+import { insertBackup, markBackupDone } from "../../src/registry/backups.js";
 import { insertBox } from "../../src/registry/boxes.js";
 import { openRegistry, type Registry } from "../../src/registry/db.js";
 import { getProjectByRef, setProjectOwnerPassword } from "../../src/registry/projects.js";
 import { decryptSecret, deriveSecretKey, encryptSecret } from "../../src/registry/secrets.js";
 import { API_PREFIX } from "../../src/studio/routes.js";
 import { signInToRegistry } from "../helpers/session.js";
+
+vi.mock("../../src/backups/s3.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/backups/s3.js")>()),
+  uploadStream: async () => {},
+  downloadBackupObject: async () => {},
+}));
+
+vi.mock("../../src/backups/pg-dump.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/backups/pg-dump.js")>()),
+  startDump: () => ({ stream: Readable.from([]), bytes: () => 42, exited: Promise.resolve(0) }),
+}));
+
+vi.mock("../../src/backups/pg-restore.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/backups/pg-restore.js")>()),
+  writeRestoreList: async () => {},
+  restoreArchive: async () => {},
+}));
 
 const ORIGIN = "http://hattisar.test";
 const NO_TOKEN = { error: { message: "Missing or invalid API token" } };
@@ -258,7 +279,10 @@ describe("projects", () => {
     api = new Hono();
     api.route(
       API_PREFIX,
-      apiRoutes({ db, secretKey, admin: fakeAdmin, refreshPooler: async () => {} }),
+      apiRoutes(
+        { db, secretKey, admin: fakeAdmin, refreshPooler: async () => {} },
+        { db, secretKey, pgBinDir: "/unused", dataDir, backupHourUtc: 2 },
+      ),
     );
   });
 
@@ -493,6 +517,163 @@ describe("projects", () => {
           message: "Can't delete my-app while it is being restored. Try again when it finishes.",
         },
       });
+    });
+  });
+
+  describe("backups", () => {
+    const BACKUP_FIELDS = ["createdAt", "error", "finishedAt", "id", "kind", "sizeBytes", "status"];
+
+    function configureS3() {
+      saveS3Settings(db, secretKey, {
+        endpoint: undefined,
+        region: "us-east-1",
+        bucket: "team-backups",
+        accessKeyId: "id",
+        secretAccessKey: "secret",
+        forcePathStyle: false,
+        prefix: "hattisar",
+      });
+    }
+
+    function backupOf(ref: string, done = true) {
+      const project = getProjectByRef(db, ref);
+      if (project === undefined) throw new Error(`no project ${ref}`);
+      const backup = insertBackup(db, {
+        projectId: project.id,
+        kind: "manual",
+        bucket: "team-backups",
+        s3Key: `hattisar/${ref}/x.dump`,
+      });
+      if (done) markBackupDone(db, backup.id, 7);
+      return backup;
+    }
+
+    it("lists backups without their bucket or key", async () => {
+      await create();
+      backupOf("my-app");
+      const response = await call("GET", "/projects/my-app/backups");
+      expect(response.status).toBe(200);
+      const backups = (await response.json()) as Record<string, unknown>[];
+      expect(backups).toHaveLength(1);
+      expect(Object.keys(backups[0] ?? {}).sort()).toEqual(BACKUP_FIELDS);
+      expect(backups[0]).toMatchObject({ kind: "manual", status: "done", sizeBytes: 7 });
+      expect(JSON.stringify(backups)).not.toContain("team-backups");
+    });
+
+    it("answers a backup without S3 settings with 400", async () => {
+      await create();
+      const response = await call("POST", "/projects/my-app/backups");
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({ error: { message: NOT_CONFIGURED } });
+    });
+
+    it("runs a backup and answers 201 with its row", async () => {
+      await create();
+      configureS3();
+      const response = await call("POST", "/projects/my-app/backups");
+      expect(response.status).toBe(201);
+      const body = (await response.json()) as Record<string, unknown>;
+      expect(Object.keys(body).sort()).toEqual(BACKUP_FIELDS);
+      expect(body).toMatchObject({ kind: "manual", status: "done", sizeBytes: 42, error: null });
+    });
+
+    it("answers a backup while one is running with 409", async () => {
+      await create();
+      configureS3();
+      backupOf("my-app", false);
+      const response = await call("POST", "/projects/my-app/backups");
+      expect(response.status).toBe(409);
+      expect(await response.json()).toEqual({
+        error: { message: "A backup of my-app is already running." },
+      });
+    });
+
+    it.each([
+      ["without a body", undefined, ["Body must be a JSON object."]],
+      ["without confirm", {}, ["Type the ref my-app to confirm restoring into it."]],
+      [
+        "with the wrong confirm",
+        { confirm: "other" },
+        ["Type the ref my-app to confirm restoring into it."],
+      ],
+    ])("refuses a restore %s", async (_, body, expected) => {
+      await create();
+      configureS3();
+      const backup = backupOf("my-app");
+      const response = await call("POST", `/projects/my-app/backups/${backup.id}/restore`, body);
+      expect(await problems(response)).toEqual(expected);
+      expect(statements).not.toContainEqual(expect.stringMatching(/^DROP DATABASE/));
+    });
+
+    it("restores a done backup into the project", async () => {
+      await create();
+      configureS3();
+      const backup = backupOf("my-app");
+      const response = await call("POST", `/projects/my-app/backups/${backup.id}/restore`, {
+        confirm: "my-app",
+      });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ok: true });
+      expect(statements).toContain('DROP DATABASE IF EXISTS "my_app" WITH (FORCE)');
+    });
+
+    it("answers a restore without S3 settings with 400", async () => {
+      await create();
+      const backup = backupOf("my-app");
+      const response = await call("POST", `/projects/my-app/backups/${backup.id}/restore`, {
+        confirm: "my-app",
+      });
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({ error: { message: NOT_CONFIGURED } });
+    });
+
+    it("answers a restore of another project's backup with 404", async () => {
+      await create();
+      await create({ name: "Other", ref: "other" });
+      configureS3();
+      const backup = backupOf("other");
+      const response = await call("POST", `/projects/my-app/backups/${backup.id}/restore`, {
+        confirm: "my-app",
+      });
+      expect(response.status).toBe(404);
+      expect(await response.json()).toEqual({ error: { message: "Not found" } });
+    });
+
+    it("answers a restore of an unfinished backup with 404", async () => {
+      await create();
+      configureS3();
+      const backup = backupOf("my-app", false);
+      const response = await call("POST", `/projects/my-app/backups/${backup.id}/restore`, {
+        confirm: "my-app",
+      });
+      expect(response.status).toBe(404);
+    });
+
+    it.each(["0", "-1", "1.5", "abc", "999"])(
+      "answers a restore of backup %s with 404",
+      async (id) => {
+        await create();
+        configureS3();
+        backupOf("my-app");
+        const response = await call("POST", `/projects/my-app/backups/${id}/restore`, {
+          confirm: "my-app",
+        });
+        expect(response.status).toBe(404);
+      },
+    );
+
+    it.each([
+      ["GET", "/projects/nope/backups"],
+      ["POST", "/projects/nope/backups"],
+      ["POST", "/projects/nope/backups/1/restore"],
+    ])("answers %s %s for an unknown ref with 404", async (method, path) => {
+      const response = await call(
+        method,
+        path,
+        method === "POST" ? { confirm: "nope" } : undefined,
+      );
+      expect(response.status).toBe(404);
+      expect(await response.json()).toEqual({ error: { message: "Not found" } });
     });
   });
 });

@@ -87,7 +87,8 @@ export function createApp(
   app.use(requireSession(registry));
 
   const projectDeps = projectServiceDeps(config, registry, managed);
-  app.route(API_PREFIX, apiRoutes({ ...projectDeps, managed }));
+  const backups = backupDeps(config, registry);
+  app.route(API_PREFIX, apiRoutes({ ...projectDeps, managed }, backups));
 
   app.route(
     "/",
@@ -102,7 +103,7 @@ export function createApp(
   if (managed) app.route("/", managedBoxRoutes(managed));
   app.route("/", projectRoutes({ ...projectDeps, backupHourUtc: config.backupHourUtc, managed }));
   app.route("/", trashRoutes({ ...projectDeps, purgeAfterDays: config.purgeAfterDays }));
-  app.route("/", backupRoutes(backupDeps(config, registry), projectDeps));
+  app.route("/", backupRoutes(backups, projectDeps));
   if (config.debug) {
     app.get("/_hs/debug/pg-meta-log", (c) => c.json(pgMetaLog.recent()));
   }

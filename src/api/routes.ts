@@ -1,6 +1,8 @@
 import { Hono } from "hono";
+import type { BackupDeps } from "../backups/service.js";
 import { listBoxes } from "../registry/boxes.js";
 import { type ApiEnv, requireApiToken } from "./auth.js";
+import { backupApiRoutes } from "./backups.js";
 import { notFound } from "./errors.js";
 import { type ProjectApiDeps, projectApiRoutes } from "./projects.js";
 
@@ -8,7 +10,7 @@ export type ApiDeps = ProjectApiDeps;
 
 // Mounted at API_PREFIX, not at /v1, so the catch-all answers every unknown /_hs/api/* path with
 // JSON after the token check instead of letting it fall through to the HTML routes.
-export function apiRoutes(deps: ApiDeps): Hono<ApiEnv> {
+export function apiRoutes(deps: ApiDeps, backupDeps: BackupDeps): Hono<ApiEnv> {
   const { db } = deps;
   const app = new Hono<ApiEnv>();
   app.use(requireApiToken(db));
@@ -30,6 +32,7 @@ export function apiRoutes(deps: ApiDeps): Hono<ApiEnv> {
   );
 
   v1.route("/projects", projectApiRoutes(deps));
+  v1.route("/projects", backupApiRoutes(backupDeps, deps));
 
   app.route("/v1", v1);
   app.all("*", notFound);

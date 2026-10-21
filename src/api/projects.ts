@@ -34,7 +34,7 @@ function projectJson({ project, box }: ProjectAndBox) {
   };
 }
 
-async function jsonObject(c: Context): Promise<Record<string, unknown> | undefined> {
+export async function jsonObject(c: Context): Promise<Record<string, unknown> | undefined> {
   try {
     const body: unknown = await c.req.json();
     return typeof body === "object" && body !== null && !Array.isArray(body)
