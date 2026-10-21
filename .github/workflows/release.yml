@@ -17,6 +17,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
       # A tag on an unmerged commit would publish code the required checks never passed.
       - name: Check the tag is on main and matches package.json
         run: |
@@ -73,6 +74,11 @@ jobs:
               node -e "new (require('better-sqlite3'))(':memory:'); require('pg'); console.log('ok')")"
             test "$out" = ok || { echo "smoke failed on $platform: $out"; exit 1; }
           done
+      # The package starts private, and bundle users pull anonymously.
+      - name: Check the image is public
+        run: |
+          docker logout ghcr.io
+          docker manifest inspect "ghcr.io/itsbohara/hattisar:$VERSION" >/dev/null
       - name: Pack the compose bundle
         run: sh scripts/release-bundle.sh "$VERSION" "$RUNNER_TEMP"
       - name: Create the GitHub release
