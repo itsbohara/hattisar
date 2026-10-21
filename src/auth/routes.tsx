@@ -40,6 +40,13 @@ function expiryDays(value: string): TokenExpiryDays | null {
   return value === "never" ? null : (Number(value) as TokenExpiryDays);
 }
 
+// Behind a TLS-terminating proxy the request URL says http://; cookieSecure is set exactly when
+// hattisar is served over TLS.
+function publicOrigin(requestUrl: string, secure: boolean): string {
+  const url = new URL(requestUrl);
+  return secure ? `https://${url.host}` : url.origin;
+}
+
 export function authRoutes({ db, limiter, cookieSecure }: AuthRoutesDeps): Hono<AuthEnv> {
   const app = new Hono<AuthEnv>();
   // Unknown usernames are checked against this too, so response time does not reveal which exist.
@@ -133,7 +140,7 @@ export function authRoutes({ db, limiter, cookieSecure }: AuthRoutesDeps): Hono<
     const result = createApiToken(db, c.var.session.user.id, name, expiryDays(expiry));
     if (!result.ok) return renderTokens(c, { name, expiry, problem: result.problem }, 400);
     // Rendered, not redirected: the token must never travel in a URL.
-    const created = { token: result.token, origin: new URL(c.req.url).origin };
+    const created = { token: result.token, origin: publicOrigin(c.req.url, cookieSecure) };
     return renderTokens(c, { created }, 201);
   });
 

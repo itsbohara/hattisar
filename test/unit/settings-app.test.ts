@@ -38,6 +38,14 @@ const s3Fields = {
   prefix: "hattisar",
 };
 
+const ENV = {
+  HATTISAR_SECRET_KEY: SECRET,
+  PG_META_CRYPTO_KEY: "unit-test-crypto-key",
+  POSTGRES_PASSWORD: "unused",
+  POOLER_TENANT_ID: "hattisar",
+  STUDIO_URL: "http://127.0.0.1:9",
+};
+
 let dataDir: string;
 let db: Registry;
 let app: ReturnType<typeof createApp>;
@@ -47,16 +55,7 @@ beforeEach(async () => {
   dataDir = mkdtempSync(join(tmpdir(), "hattisar-settings-"));
   db = openRegistry(dataDir);
   insertUser(db, { username: "admin", passwordHash: await hashPassword(PASSWORD) });
-  app = createApp(
-    loadConfig({
-      HATTISAR_SECRET_KEY: SECRET,
-      PG_META_CRYPTO_KEY: "unit-test-crypto-key",
-      POSTGRES_PASSWORD: "unused",
-      POOLER_TENANT_ID: "hattisar",
-      STUDIO_URL: "http://127.0.0.1:9",
-    }),
-    db,
-  );
+  app = createApp(loadConfig(ENV), db);
   cookie = signInToRegistry(db);
   connection.result = { ok: true };
 });
@@ -277,6 +276,13 @@ describe("API tokens", () => {
     expect(reload).toContain(`<code>${row?.prefix}…</code>`);
     expect(reload).toContain("laptop");
     expect(reload).not.toContain("No API tokens yet.");
+  });
+
+  it("gives an https login origin when served over TLS behind a proxy", async () => {
+    app = createApp(loadConfig({ ...ENV, HATTISAR_COOKIE_SECURE: "true" }), db);
+    const response = await post("/_hs/settings/tokens", { name: "laptop", expiry: "90" });
+    expect(response.status).toBe(201);
+    expect(await response.text()).toContain("<code>hattisar login https://hattisar.test</code>");
   });
 
   it("sets the chosen expiry", async () => {
