@@ -262,16 +262,14 @@ describe("projects", () => {
     );
   });
 
-  function call(method: string, path: string, body?: unknown): Promise<Response> {
+  async function call(method: string, path: string, body?: unknown): Promise<Response> {
     const headers: Record<string, string> = bearer();
     let payload: string | undefined;
     if (body !== undefined) {
       headers["content-type"] = "application/json";
       payload = typeof body === "string" ? body : JSON.stringify(body);
     }
-    return Promise.resolve(
-      api.request(`${ORIGIN}${API_PREFIX}/v1${path}`, { method, headers, body: payload }),
-    );
+    return api.request(`${ORIGIN}${API_PREFIX}/v1${path}`, { method, headers, body: payload });
   }
 
   async function create(body: unknown = { name: "My App", ref: "my-app" }) {
@@ -302,6 +300,11 @@ describe("projects", () => {
   it("defaults the ref to the slugified name", async () => {
     const response = await create({ name: "Héllo World!" });
     expect(await response.json()).toMatchObject({ ref: "hello-world", name: "Héllo World!" });
+  });
+
+  it.each(["", "   "])("treats a ref of %j as absent", async (ref) => {
+    const response = await create({ name: "My App", ref });
+    expect(await response.json()).toMatchObject({ ref: "my-app" });
   });
 
   it("answers a duplicate ref with 400 and the service's problems", async () => {

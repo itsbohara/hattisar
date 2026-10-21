@@ -3,18 +3,12 @@ import { canAccess } from "../auth/access.js";
 import { createProjectOnNewBox } from "../managed/new-project.js";
 import type { ManagedBoxes } from "../managed/service.js";
 import {
-  type ConnectionString,
-  DIRECT_LABEL,
-  SESSION_POOLER_LABEL,
-  TRANSACTION_POOLER_LABEL,
-} from "../projects/connection-strings.js";
-import { restoreProject, softDeleteProject } from "../projects/lifecycle.js";
-import { slugify } from "../projects/naming.js";
-import {
   connectionStrings,
   findAccessibleProject,
   type ProjectAndBox,
-} from "../projects/routes.js";
+} from "../projects/access.js";
+import { restoreProject, softDeleteProject } from "../projects/lifecycle.js";
+import { slugify } from "../projects/naming.js";
 import {
   createProject,
   type ProjectServiceDeps,
@@ -26,12 +20,6 @@ import type { ApiEnv } from "./auth.js";
 import { apiError, badRequest, notFound, serviceFailure } from "./errors.js";
 
 export type ProjectApiDeps = ProjectServiceDeps & { managed?: ManagedBoxes };
-
-const CONNECTION_KINDS: Record<string, string> = {
-  [DIRECT_LABEL]: "direct",
-  [SESSION_POOLER_LABEL]: "session",
-  [TRANSACTION_POOLER_LABEL]: "transaction",
-};
 
 const UNREADABLE_PASSWORD = "The project's password could not be decrypted. Rotate it to repair.";
 
@@ -45,8 +33,6 @@ function projectJson({ project, box }: ProjectAndBox) {
     deletedAt: project.deletedAt,
   };
 }
-
-const kindOf = ({ label }: ConnectionString) => CONNECTION_KINDS[label];
 
 async function jsonObject(c: Context): Promise<Record<string, unknown> | undefined> {
   try {
@@ -76,7 +62,7 @@ function createFields(body: Record<string, unknown>): CreateFields | string[] {
   if (problems.length > 0) return problems;
   return {
     name: (name as string).trim(),
-    ref: (ref as string | undefined)?.trim(),
+    ref: (ref as string | undefined)?.trim() || undefined,
     boxId: boxId as number | undefined,
     newBox: newBox as boolean,
   };
@@ -87,6 +73,11 @@ export function projectApiRoutes(deps: ProjectApiDeps): Hono<ApiEnv> {
   const app = new Hono<ApiEnv>();
   const accessible = (c: Context<ApiEnv>, status?: ProjectStatus) =>
     findAccessibleProject(db, c.var.user, c.req.param("ref") ?? "", status);
+  const reread = (c: Context<ApiEnv>, ref: string) => {
+    const found = findAccessibleProject(db, c.var.user, ref);
+    if (!found) throw new Error(`Project ${ref} is not readable after a successful change`);
+    return found;
+  };
 
   app.get("/", (c) => {
     const status = c.req.query("status") ?? "active";
@@ -122,18 +113,15 @@ export function projectApiRoutes(deps: ProjectApiDeps): Hono<ApiEnv> {
             boxId: fields.boxId ?? getSharedBox(db)?.id ?? Number.NaN,
           });
     if (!result.ok) return badRequest(c, result.problems);
-    const created = findAccessibleProject(db, c.var.user, result.project.ref);
-    return created ? c.json(projectJson(created), 201) : notFound(c);
+    return c.json(projectJson(reread(c, result.project.ref)), 201);
   });
 
   app.get("/:ref", (c) => {
     const found = accessible(c);
     if (!found) return notFound(c);
-    const connections = (connectionStrings(found, secretKey) ?? []).map((string) => ({
-      label: string.label,
-      kind: kindOf(string),
-      masked: string.masked,
-    }));
+    const connections = (connectionStrings(found, secretKey) ?? []).map(
+      ({ label, kind, masked }) => ({ label, kind, masked }),
+    );
     return c.json({ ...projectJson(found), connections });
   });
 
@@ -142,9 +130,7 @@ export function projectApiRoutes(deps: ProjectApiDeps): Hono<ApiEnv> {
     if (!found) return notFound(c);
     const strings = connectionStrings(found, secretKey);
     if (strings === undefined) return apiError(c, 502, UNREADABLE_PASSWORD);
-    return c.json(
-      strings.map((string) => ({ label: string.label, kind: kindOf(string), url: string.url })),
-    );
+    return c.json(strings.map(({ label, kind, url }) => ({ label, kind, url })));
   });
 
   app.post("/:ref/rotate", async (c) => {
@@ -173,8 +159,7 @@ export function projectApiRoutes(deps: ProjectApiDeps): Hono<ApiEnv> {
     if (!found) return notFound(c);
     const result = await restoreProject(deps, found.project, found.box);
     if (!result.ok) return serviceFailure(c, db, found.project, result.problem);
-    const restored = findAccessibleProject(db, c.var.user, found.project.ref);
-    return restored ? c.json(projectJson(restored)) : notFound(c);
+    return c.json(projectJson(reread(c, found.project.ref)));
   });
 
   return app;
