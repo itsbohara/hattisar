@@ -62,3 +62,7 @@ export function deleteApiToken(db: Registry, id: number, userId: number): boolea
       .run(id, userId).changes > 0
   );
 }
+
+export function deleteExpiredApiTokens(db: Registry, now: string = new Date().toISOString()): void {
+  db.prepare<[string]>("DELETE FROM api_tokens WHERE expires_at <= ?").run(now);
+}

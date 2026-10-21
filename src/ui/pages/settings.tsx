@@ -264,6 +264,7 @@ function NewTokenNotice({ token, origin }: { token: string; origin: string }) {
 }
 
 function TokenTable({ tokens }: { tokens: ApiToken[] }) {
+  const now = new Date().toISOString();
   if (tokens.length === 0) {
     return (
       <div class="empty">
@@ -292,7 +293,12 @@ function TokenTable({ tokens }: { tokens: ApiToken[] }) {
             </td>
             <td>{utc(new Date(token.createdAt))}</td>
             <td>{token.lastUsedAt ? utc(new Date(token.lastUsedAt)) : "never"}</td>
-            <td>{token.expiresAt ? utc(new Date(token.expiresAt)) : "never"}</td>
+            <td>
+              {token.expiresAt ? utc(new Date(token.expiresAt)) : "never"}
+              {token.expiresAt !== null && token.expiresAt <= now && (
+                <span class="badge">expired</span>
+              )}
+            </td>
             <td class="row-actions">
               <form method="post" action={`${API_TOKENS_SETTINGS}/${token.id}/revoke`}>
                 <button type="submit" class="button-quiet button-danger">

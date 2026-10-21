@@ -293,6 +293,22 @@ describe("API tokens", () => {
     expect(Math.round(days)).toBe(30);
   });
 
+  it("marks an expired token as expired and a live one not", async () => {
+    const expired = createApiToken(
+      db,
+      adminId(),
+      "old",
+      30,
+      new Date(Date.now() - 31 * 86_400_000),
+    );
+    const live = createApiToken(db, adminId(), "new", 30);
+    if (!expired.ok || !live.ok) throw new Error("token not created");
+    const html = await (await get("/_hs/settings/tokens")).text();
+    const row = (id: number) => new RegExp(`<tr data-token="${id}">.*?</tr>`, "s").exec(html)?.[0];
+    expect(row(expired.row.id)).toContain('<span class="badge">expired</span>');
+    expect(row(live.row.id)).not.toContain("expired");
+  });
+
   it.each([
     ["a blank name", { name: "  ", expiry: "90" }, "Name must be 1 to 64 characters."],
     ["an unknown expiry", { name: "laptop", expiry: "7" }, "Expiry must be 30, 90, 365 days"],

@@ -9,7 +9,11 @@ import {
   revokeApiToken,
   type TokenExpiryDays,
 } from "../../src/auth/api-tokens.js";
-import { getApiTokenByHash, listApiTokens } from "../../src/registry/api-tokens.js";
+import {
+  deleteExpiredApiTokens,
+  getApiTokenByHash,
+  listApiTokens,
+} from "../../src/registry/api-tokens.js";
 import { openRegistry, type Registry } from "../../src/registry/db.js";
 import { insertUser, type User } from "../../src/registry/users.js";
 
@@ -100,6 +104,14 @@ describe("api tokens", () => {
     expect(resolveApiToken(db, token, new Date(T0.getTime() + 30 * DAY))).toBeUndefined();
     expect(getApiTokenByHash(db, row.tokenHash)).toBeUndefined();
     expect(resolveApiToken(db, token, T0)).toBeUndefined();
+  });
+
+  it("purges expired tokens and keeps live and never-expiring ones", () => {
+    create("short", 30);
+    create("long", 90);
+    create("forever", null);
+    deleteExpiredApiTokens(db, new Date(T0.getTime() + 30 * DAY).toISOString());
+    expect(listApiTokens(db, user.id).map((t) => t.name)).toEqual(["forever", "long"]);
   });
 
   it("never expires when created with no expiry", () => {
