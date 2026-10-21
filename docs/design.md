@@ -289,12 +289,31 @@ go in `PGPASSWORD` env, never argv. Dumps are custom format (`-Fc`), connecting 
 ## 9. UI
 
 Server-rendered Hono JSX, one stylesheet, no client framework; tiny inline scripts only for copy /
-reveal. Dark by default, respects `prefers-color-scheme`. Pages: Login, Projects (list, "Open in
-Studio" → `/project/<ref>/editor`), New project (name, ref with live slug hint, box picker — each
+reveal, live search and loading sizes. The theme follows `prefers-color-scheme` unless the user menu
+(top right of every page: username, Settings, System / Dark / Light, Log out) picks one: `POST
+/_hs/theme` stores `hs_theme=light|dark` (or clears it for System) and the server renders
+`<html data-theme>` from it, so there is no flash. Pages: Login, Projects, New project (name, ref with live slug hint, box picker — each
 option labelled; dev-only boxes carry the warning "Best for development only — shares one Postgres
 with other projects"), Project detail (connection strings, rotate password, download dump, backups
 list + schedule + back up now + restore, delete), Trash, Boxes (list, register, edit, remove,
 "New managed box" when enabled), Settings. Errors render inline, never as a stack trace.
+
+Projects (`/_hs/projects`) shows the active projects as cards or as a list. `?view=grid|list`
+picks the view and is remembered in `hs_projects_view`; `?q=` filters by name or ref (the inline
+script also filters as you type); `?sort=name|created` orders by name or newest first, and the
+list's Project and Created headers link to those sorts. Each card or row shows the name, ref, status
+(`ACTIVE`, or `BUSY` while §7's lock or a running backup holds it), the box's kind (`SHARED · DEV`
+for the dev-only shared box), the box, the created date and the database size. Clicking it opens
+Studio at `/project/<ref>/editor`; its ⋮ menu has Open in Studio, Project settings
+(`/_hs/projects/<ref>`) and Delete (the project page's delete form, `#delete`). Connection strings
+stay on the project page, so the list never carries a password. A Trash link shows the deleted
+count. A Boxes panel beside the projects lists each box with its active project count and the
+total size of those databases.
+
+Sizes come from `GET /_hs/usage` after the page loads, so a slow box never delays the page: one
+`pg_database_size` query per box that has active projects, in parallel, through the box's admin
+connection (§5 timeouts). A box that fails shows as unreachable and its projects show no size. A
+box without active projects is not queried; a managed one is stopped then (§10).
 
 Settings has a section nav (Account, API tokens, Backup storage): `/_hs/settings` → 302
 `/_hs/settings/storage`. Account (`/_hs/settings/account`) shows the signed-in username and the
