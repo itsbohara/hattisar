@@ -19,7 +19,9 @@ import {
   type ProjectSort,
   ProjectsPage,
   type ProjectsQuery,
+  type ProjectTab,
   type ProjectView,
+  projectTabHref,
   USAGE_PATH,
 } from "../ui/pages/projects.js";
 import { accessibleProject, connectionStrings, type ProjectAndBox } from "./access.js";
@@ -79,6 +81,7 @@ export function renderProjectDetail(
   c: Context<AuthEnv>,
   { db, secretKey, backupHourUtc }: ProjectPageDeps,
   { project, box }: ProjectAndBox,
+  tab: ProjectTab,
   notice?: ProjectPageNotice,
   status: 200 | 400 | 502 = 200,
 ) {
@@ -86,6 +89,7 @@ export function renderProjectDetail(
   return renderPage(
     c,
     <ProjectPage
+      tab={tab}
       project={project}
       box={box}
       strings={strings}
@@ -101,6 +105,7 @@ export function renderProjectDetail(
 
 const QUERY_NOTICES: Record<string, string> = {
   rotated: "Password rotated. The connection strings below use the new one.",
+  renamed: "Display name saved.",
   "backed-up": "Backup finished.",
   "backup-deleted": "Backup deleted.",
   "schedule-saved": "Backup schedule saved.",
@@ -121,9 +126,10 @@ export function projectRoutes(
   const renderDetail = (
     c: Context<AuthEnv>,
     found: ProjectAndBox,
+    tab: ProjectTab,
     notice?: ProjectPageNotice,
     status?: 200 | 400 | 502,
-  ) => renderProjectDetail(c, deps, found, notice, status);
+  ) => renderProjectDetail(c, deps, found, tab, notice, status);
 
   function renderNew(c: Context<AuthEnv>, values: NewProjectValues, problems?: string[]) {
     return renderPage(
@@ -188,18 +194,26 @@ export function projectRoutes(
     return renderNew(c, { ...values, boxId, newBox: managed !== undefined }, result.problems);
   });
 
-  app.get(`${PROJECTS_PAGE}/:ref`, (c) => {
-    const found = accessible(c);
-    if (!found) return c.notFound();
-    return renderDetail(c, found, queryNotice(c));
-  });
+  const TAB_PATHS: [string, ProjectTab][] = [
+    ["", "connect"],
+    ["/backups", "backups"],
+    ["/settings", "general"],
+  ];
+  for (const [path, tab] of TAB_PATHS) {
+    app.get(`${PROJECTS_PAGE}/:ref${path}`, (c) => {
+      const found = accessible(c);
+      if (!found) return c.notFound();
+      return renderDetail(c, found, tab, queryNotice(c));
+    });
+  }
 
   app.post(`${PROJECTS_PAGE}/:ref/name`, async (c) => {
     const found = accessible(c);
     if (!found) return c.notFound();
     const result = renameProjectDisplay(db, found.project, text(await c.req.parseBody(), "name"));
-    if (result.ok) return c.redirect(`${PROJECTS_PAGE}/${found.project.ref}`, 302);
-    return renderDetail(c, found, { kind: "error", message: result.problem }, 400);
+    if (result.ok)
+      return c.redirect(`${projectTabHref(found.project.ref, "general")}?renamed`, 302);
+    return renderDetail(c, found, "general", { kind: "error", message: result.problem }, 400);
   });
 
   app.post(`${PROJECTS_PAGE}/:ref/rotate`, async (c) => {
@@ -207,7 +221,7 @@ export function projectRoutes(
     if (!found) return c.notFound();
     const result = await rotateOwnerPassword(deps, found.project, found.box);
     if (result.ok) return c.redirect(`${PROJECTS_PAGE}/${found.project.ref}?rotated`, 302);
-    return renderDetail(c, found, { kind: "error", message: result.problem }, 502);
+    return renderDetail(c, found, "connect", { kind: "error", message: result.problem }, 502);
   });
 
   app.post(`${PROJECTS_PAGE}/:ref/delete`, async (c) => {
@@ -215,11 +229,11 @@ export function projectRoutes(
     if (!found) return c.notFound();
     if (text(await c.req.parseBody(), "confirm") !== found.project.ref) {
       const message = `Type the ref ${found.project.ref} to confirm deleting the project.`;
-      return renderDetail(c, found, { kind: "error", message }, 400);
+      return renderDetail(c, found, "general", { kind: "error", message }, 400);
     }
     const result = await softDeleteProject(deps, found.project, found.box);
     if (result.ok) return c.redirect("/_hs/trash", 302);
-    return renderDetail(c, found, { kind: "error", message: result.problem }, 502);
+    return renderDetail(c, found, "general", { kind: "error", message: result.problem }, 502);
   });
 
   return app;
