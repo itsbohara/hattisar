@@ -29,6 +29,29 @@ export function busyProblem(db: Registry, project: Project, action: string): str
   return `Can't ${action} ${project.ref} while ${reason}. Try again when it finishes.`;
 }
 
+export type ProjectHold = { ok: true; release: () => void } | { ok: false; problem: string };
+
+// For work that outlives the request holding it, such as a streamed dump. The caller must call
+// release once that work ends, or the project stays busy until hattisar restarts.
+export function holdProject(
+  db: Registry,
+  project: Project,
+  operation: Omit<ProjectOperation, "status">,
+): ProjectHold {
+  const busy = busyProblem(db, project, operation.action);
+  if (busy !== undefined) return { ok: false, problem: busy };
+  held.set(project.id, operation.holds);
+  let released = false;
+  return {
+    ok: true,
+    release: () => {
+      if (released) return;
+      released = true;
+      held.delete(project.id);
+    },
+  };
+}
+
 // The busy check, the take and the re-read are synchronous, so no other request can slip between
 // them. The re-read catches a project that changed while this request was on its way here.
 export async function holdingProject<T>(

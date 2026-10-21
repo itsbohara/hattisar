@@ -3,6 +3,7 @@ import { type Context, Hono } from "hono";
 import type { AuthEnv } from "../auth/middleware.js";
 import { boxConnection } from "../boxes/service.js";
 import { accessibleProject, type ProjectAndBox } from "../projects/access.js";
+import { holdProject } from "../projects/locks.js";
 import { slugify } from "../projects/naming.js";
 import { renderProjectDetail, text } from "../projects/routes.js";
 import type { ProjectServiceDeps } from "../projects/service.js";
@@ -97,6 +98,13 @@ function firstOutput(stream: Readable): Promise<void> {
   });
 }
 
+// Held for the whole download: a restore under it would capture a half-restored database, and a
+// delete or purge would cut it off.
+const DUMP_OPERATION = {
+  action: "download a dump of",
+  holds: "a dump of it is being downloaded",
+};
+
 export function backupRoutes(deps: BackupDeps, projectDeps: ProjectServiceDeps): Hono<AuthEnv> {
   const { db, secretKey, pgBinDir } = deps;
   const app = new Hono<AuthEnv>();
@@ -133,7 +141,20 @@ export function backupRoutes(deps: BackupDeps, projectDeps: ProjectServiceDeps):
     const found = accessibleProject(db, c);
     if (!found) return c.notFound();
     const { project, box } = found;
+    const hold = holdProject(db, project, DUMP_OPERATION);
+    if (!hold.ok) {
+      return renderProjectDetail(
+        c,
+        deps,
+        found,
+        "backups",
+        { kind: "error", message: hold.problem },
+        409,
+      );
+    }
     const dump = startDump(pgBinDir, boxConnection(box, secretKey), project.dbName);
+    // pg_dump exits on success, on failure and when the client goes away (the stream kills it).
+    void dump.exited.then(hold.release);
     dump.stream.on("error", (error) => {
       console.error(`hattisar: dump of ${project.ref} failed: ${error.message}`);
     });

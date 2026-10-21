@@ -83,7 +83,7 @@ export function renderProjectDetail(
   { project, box }: ProjectAndBox,
   tab: ProjectTab,
   notice?: ProjectPageNotice,
-  status: 200 | 400 | 502 = 200,
+  status: 200 | 400 | 409 | 502 = 200,
 ) {
   const strings = connectionStrings({ project, box }, secretKey);
   return renderPage(
