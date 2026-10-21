@@ -107,6 +107,13 @@ describe("unauthenticated requests", () => {
     expect(response.headers.get("content-type")).toContain(type);
   });
 
+  it.each(["/_hs/static/app.css", "/_hs/static/studio.css", "/_hs/static/studio.js"])(
+    "makes browsers revalidate %s",
+    async (path) => {
+      expect((await get(path)).headers.get("cache-control")).toBe("no-cache");
+    },
+  );
+
   it.each(["/_hs/static/studio.css", "/_hs/static/studio.js"])(
     "serves a non-empty %s",
     async (path) => {
