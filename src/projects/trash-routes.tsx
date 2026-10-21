@@ -5,8 +5,9 @@ import { listBoxes } from "../registry/boxes.js";
 import { listProjects } from "../registry/projects.js";
 import { renderPage } from "../ui/layout.js";
 import { TrashPage, type TrashRow } from "../ui/pages/trash.js";
+import { findAccessibleProject } from "./access.js";
 import { purgeDate, purgeProject, restoreProject } from "./lifecycle.js";
-import { findAccessibleProject, text } from "./routes.js";
+import { text } from "./routes.js";
 import type { ProjectServiceDeps } from "./service.js";
 
 const TRASH_PAGE = "/_hs/trash";

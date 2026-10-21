@@ -27,11 +27,13 @@ describe("ownerConnectionStrings", () => {
   it("offers session and transaction pooler strings with <owner>.<tenant>", () => {
     expect(ownerConnectionStrings(pooled, project, "pw")).toEqual([
       {
+        kind: "session",
         label: "Session pooler",
         url: "postgresql://hs_my_app_owner.hattisar:pw@db.example.test:54322/my_app",
         masked: `postgresql://hs_my_app_owner.hattisar:${MASK}@db.example.test:54322/my_app`,
       },
       {
+        kind: "transaction",
         label: "Transaction pooler",
         url: "postgresql://hs_my_app_owner.hattisar:pw@db.example.test:6543/my_app",
         masked: `postgresql://hs_my_app_owner.hattisar:${MASK}@db.example.test:6543/my_app`,
@@ -42,6 +44,7 @@ describe("ownerConnectionStrings", () => {
   it("offers one direct string for a box without a pooler", () => {
     expect(ownerConnectionStrings(direct, project, "pw")).toEqual([
       {
+        kind: "direct",
         label: "Direct",
         url: "postgresql://hs_my_app_owner:pw@pg.example.test:5433/my_app",
         masked: `postgresql://hs_my_app_owner:${MASK}@pg.example.test:5433/my_app`,

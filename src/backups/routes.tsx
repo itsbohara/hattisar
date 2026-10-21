@@ -2,13 +2,9 @@ import { Readable } from "node:stream";
 import { type Context, Hono } from "hono";
 import type { AuthEnv } from "../auth/middleware.js";
 import { boxConnection } from "../boxes/service.js";
+import { accessibleProject, type ProjectAndBox } from "../projects/access.js";
 import { slugify } from "../projects/naming.js";
-import {
-  accessibleProject,
-  type ProjectAndBox,
-  renderProjectDetail,
-  text,
-} from "../projects/routes.js";
+import { renderProjectDetail, text } from "../projects/routes.js";
 import type { ProjectServiceDeps } from "../projects/service.js";
 import {
   type Backup,

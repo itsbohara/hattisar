@@ -5,16 +5,9 @@ import { isS3Configured } from "../backups/s3-settings.js";
 import { createProjectOnNewBox } from "../managed/new-project.js";
 import type { ManagedBoxes } from "../managed/service.js";
 import { getBackupSchedule, listBackups } from "../registry/backups.js";
-import { type Box, getBoxById, getSharedBox, listBoxes } from "../registry/boxes.js";
+import { getSharedBox, listBoxes } from "../registry/boxes.js";
 import type { Registry } from "../registry/db.js";
-import {
-  getProjectByRef,
-  listProjects,
-  type Project,
-  type ProjectStatus,
-} from "../registry/projects.js";
-import { SecretError } from "../registry/secrets.js";
-import type { User } from "../registry/users.js";
+import { listProjects } from "../registry/projects.js";
 import { renderPage } from "../ui/layout.js";
 import {
   NEW_BOX_OPTION,
@@ -24,11 +17,10 @@ import {
   type ProjectPageNotice,
   ProjectsPage,
 } from "../ui/pages/projects.js";
-import { type ConnectionString, ownerConnectionStrings } from "./connection-strings.js";
+import { accessibleProject, connectionStrings, type ProjectAndBox } from "./access.js";
 import { softDeleteProject } from "./lifecycle.js";
 import {
   createProject,
-  ownerPassword,
   type ProjectServiceDeps,
   renameProjectDisplay,
   rotateOwnerPassword,
@@ -45,49 +37,10 @@ function boxIdFrom(value: string): number | undefined {
   return /^\d+$/.test(value) ? Number(value) : undefined;
 }
 
-export interface ProjectAndBox {
-  project: Project;
-  box: Box;
-}
-
-// Unknown, forbidden and other-status projects all look the same: not found.
-export function findAccessibleProject(
-  db: Registry,
-  user: Pick<User, "id">,
-  ref: string,
-  status: ProjectStatus = "active",
-): ProjectAndBox | undefined {
-  const project = getProjectByRef(db, ref);
-  if (project?.status !== status || !canAccess(user, project)) return undefined;
-  const box = getBoxById(db, project.boxId);
-  return box && { project, box };
-}
-
-export function accessibleProject(
-  db: Registry,
-  c: Context<AuthEnv>,
-  ref: string = c.req.param("ref") ?? "",
-): ProjectAndBox | undefined {
-  return findAccessibleProject(db, c.var.session.user, ref);
-}
-
 export interface ProjectPageDeps {
   db: Registry;
   secretKey: Buffer;
   backupHourUtc: number;
-}
-
-// A secret that will not decrypt leaves the page usable: rotating is how it gets repaired.
-export function connectionStrings(
-  { project, box }: ProjectAndBox,
-  secretKey: Buffer,
-): ConnectionString[] | undefined {
-  try {
-    return ownerConnectionStrings(box, project, ownerPassword(project, secretKey));
-  } catch (error) {
-    if (error instanceof SecretError) return undefined;
-    throw error;
-  }
 }
 
 export function renderProjectDetail(
