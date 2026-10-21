@@ -26,7 +26,7 @@ test("the list view is remembered and its rows open Studio", async ({ page }) =>
   await page.goto("/_hs/projects");
   await expect(page.getByRole("columnheader", { name: "Status" })).toBeVisible();
 
-  await page.locator(card("spike-b")).getByRole("cell").nth(1).click();
+  await page.locator(card("spike-b")).click();
   await expect(page).toHaveURL("/project/spike-b/editor");
 });
 
