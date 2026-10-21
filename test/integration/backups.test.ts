@@ -104,7 +104,7 @@ describe("download dump", () => {
 describe("S3 settings", () => {
   it("refuses Back up now until S3 is configured", async () => {
     registrySql("DELETE FROM settings WHERE key LIKE 's3.%'");
-    const page = await (await fetchWith(baseUrl, cookie, `/_hs/projects/${ref}`)).text();
+    const page = await (await fetchWith(baseUrl, cookie, `/_hs/projects/${ref}/backups`)).text();
     expect(page).toContain("Configure S3 storage in");
     const response = await postForm(baseUrl, `/_hs/projects/${ref}/backups`, {}, cookie);
     expect(response.status).toBe(502);
@@ -157,7 +157,7 @@ describe("back up now", () => {
   it("uploads the dump and records a done backup", async () => {
     const response = await postForm(baseUrl, `/_hs/projects/${ref}/backups`, {}, cookie);
     expect(response.status).toBe(302);
-    expect(response.headers.get("location")).toBe(`/_hs/projects/${ref}?backed-up`);
+    expect(response.headers.get("location")).toBe(`/_hs/projects/${ref}/backups?backed-up`);
     const [backup] = backups();
     expect(backup).toMatchObject({
       kind: "manual",
@@ -170,7 +170,7 @@ describe("back up now", () => {
       status: 200,
       length: backup?.sizeBytes,
     });
-    const page = await (await fetchWith(baseUrl, cookie, `/_hs/projects/${ref}`)).text();
+    const page = await (await fetchWith(baseUrl, cookie, `/_hs/projects/${ref}/backups`)).text();
     expect(page).toContain(`data-backup="${backup?.id}"`);
   });
 
