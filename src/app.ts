@@ -86,7 +86,8 @@ export function createApp(
   app.use(requireSameOrigin());
   app.use(requireSession(registry));
 
-  app.route(API_PREFIX, apiRoutes({ db: registry }));
+  const projectDeps = projectServiceDeps(config, registry, managed);
+  app.route(API_PREFIX, apiRoutes({ ...projectDeps, managed }));
 
   app.route(
     "/",
@@ -99,7 +100,6 @@ export function createApp(
   app.route("/", uiRoutes());
   app.route("/", boxRoutes({ db: registry, secretKey, check: checkBox, managed }));
   if (managed) app.route("/", managedBoxRoutes(managed));
-  const projectDeps = projectServiceDeps(config, registry, managed);
   app.route("/", projectRoutes({ ...projectDeps, backupHourUtc: config.backupHourUtc, managed }));
   app.route("/", trashRoutes({ ...projectDeps, purgeAfterDays: config.purgeAfterDays }));
   app.route("/", backupRoutes(backupDeps(config, registry), projectDeps));
