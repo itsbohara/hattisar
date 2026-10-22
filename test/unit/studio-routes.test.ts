@@ -55,6 +55,53 @@ describe("classifyRequest", () => {
       { kind: "project-api-pass", ref: "spike-b" },
     ],
     ["GET", "/api/v1/projects/spike-b/api-keys", { kind: "project-api-pass", ref: "spike-b" }],
+    [
+      "GET",
+      "/api/platform/projects/abc/content",
+      { kind: "project-content", ref: "abc", rest: "" },
+    ],
+    [
+      "PUT",
+      "/api/platform/projects/abc/content",
+      { kind: "project-content", ref: "abc", rest: "" },
+    ],
+    [
+      "DELETE",
+      "/api/platform/projects/abc/content",
+      { kind: "project-content", ref: "abc", rest: "" },
+    ],
+    [
+      "PATCH",
+      "/api/platform/projects/abc/content",
+      { kind: "project-content", ref: "abc", rest: "" },
+    ],
+    [
+      "GET",
+      "/api/platform/projects/abc/content/item/x",
+      { kind: "project-content", ref: "abc", rest: "/item/x" },
+    ],
+    [
+      "POST",
+      "/api/platform/projects/abc/content/folders",
+      { kind: "project-content", ref: "abc", rest: "/folders" },
+    ],
+    [
+      "GET",
+      "/api/platform/projects/abc/content/",
+      { kind: "project-content", ref: "abc", rest: "/" },
+    ],
+    [
+      "GET",
+      "/api/platform/projects/abc/Content/count",
+      { kind: "project-content", ref: "abc", rest: "/count" },
+    ],
+    [
+      "GET",
+      "/api/platform/projects/abc/%63ontent/count",
+      { kind: "project-content", ref: "abc", rest: "/count" },
+    ],
+    ["GET", "/api/platform/projects/abc/contents", { kind: "project-api-pass", ref: "abc" }],
+    ["GET", "/api/v1/projects/abc/content", { kind: "project-api-pass", ref: "abc" }],
     ["GET", "/api/v1/projects/spike-b", { kind: "project-api-pass", ref: "spike-b" }],
     ["POST", "/api/platform/pg-meta/spike-b/query", { kind: "pg-meta-query", ref: "spike-b" }],
     ["GET", "/api/platform/pg-meta/spike-b/query", { kind: "pg-meta", ref: "spike-b" }],
