@@ -192,8 +192,9 @@ On a Linux server (`x86_64` or `aarch64`) with curl, openssl, Docker and Compose
 curl -fsSL https://github.com/itsbohara/hattisar/releases/latest/download/install.sh | sudo sh
 ```
 
-It asks for a domain and whether to turn managed boxes on, installs into `/opt/hattisar`, and
-prints the URL and admin password. To answer up front:
+It asks for a domain and whether to turn managed boxes on (the default, and what `--yes` picks;
+pass `--no-managed-boxes` to keep them off), installs into `/opt/hattisar`, and prints the URL
+and admin password. To answer up front:
 
 ```sh
 curl -fsSL https://github.com/itsbohara/hattisar/releases/latest/download/install.sh \
@@ -245,7 +246,8 @@ Before exposing it:
 - **PITR** — dumps restore to the moment of the dump. For production boxes also run box-level
   point-in-time recovery (WAL-G, pgBackRest) on the Postgres servers themselves.
 - **Shared box** — development only. Put production projects on a registered or managed box.
-- **Managed boxes** — off by default; see the security note below before turning them on.
+- **Managed boxes** — off in a hand install, on by default with the installer; see the security
+  note below.
 
 To upgrade an install, run the installer again. To upgrade a release by hand, replace
 `compose.yml`, `volumes/` and `generate-env.sh` with the ones from the new bundle, compare

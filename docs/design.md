@@ -588,8 +588,8 @@ A server release is a `v<version>` tag (first `v0.1.0`), separate from the CLI's
    containing `-`) gets only the `<version>` tag.
 4. Smoke-tests the pushed image on each platform, then checks it can be pulled anonymously.
 5. Builds the bundle `hattisar-<version>.tar.gz` with `scripts/release-bundle.sh` and creates the
-   GitHub release `v<version>` with the bundle attached and generated notes, marked prerelease for
-   a prerelease version.
+   GitHub release `v<version>` with the bundle and `install.sh` (§17) attached and generated
+   notes, marked prerelease for a prerelease version.
 
 The bundle unpacks to `hattisar/`: `compose.yml`, `env.example`, `generate-env.sh`, `volumes/` (the
 db init SQL, `pooler.exs` and the `Caddyfile`) and `NOTICE`, the same layout as `docker/` plus the
