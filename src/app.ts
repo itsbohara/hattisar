@@ -112,6 +112,7 @@ export function createApp(
     "*",
     createStudioHandler({
       config,
+      db: registry,
       projects: new RegistryProjectSource(registry, secretKey),
       pgMetaLog,
     }),

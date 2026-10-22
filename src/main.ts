@@ -13,9 +13,11 @@ import { deleteExpiredApiTokens } from "./registry/api-tokens.js";
 import { openRegistry, type Registry } from "./registry/db.js";
 import { deriveSecretKey } from "./registry/secrets.js";
 import { deleteExpiredSessions } from "./registry/sessions.js";
+import { importStudioSnippets } from "./snippets/import.js";
 
 // HATTISAR_PORT is the host-published port; compose maps it onto this fixed container port.
 const LISTEN_PORT = 8000;
+const STUDIO_SNIPPETS_DIR = "/studio-snippets";
 const MINUTE_MS = 60 * 1000;
 const HOUR_MS = 60 * MINUTE_MS;
 
@@ -47,6 +49,24 @@ async function seededRegistry(config: Config): Promise<Registry> {
   }
 }
 
+// A failed import must not keep hattisar down; without the marker it runs again on the next boot.
+function importSharedSnippets(registry: Registry): void {
+  try {
+    const counts = importStudioSnippets(registry, STUDIO_SNIPPETS_DIR);
+    if (!counts) return;
+    if (!counts.found) {
+      console.log(`hattisar: no Studio snippets at ${STUDIO_SNIPPETS_DIR}; nothing imported`);
+      return;
+    }
+    console.log(
+      `hattisar: imported ${counts.snippets} snippets and ${counts.folders} folders from Studio into ${counts.projects} projects`,
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`hattisar: could not import Studio's snippets, retrying next boot: ${message}`);
+  }
+}
+
 function managedBoxesOrExit(config: Config, registry: Registry): ManagedBoxes | undefined {
   try {
     return createManagedBoxes(config, registry, deriveSecretKey(config.secretKey));
@@ -58,6 +78,7 @@ function managedBoxesOrExit(config: Config, registry: Registry): ManagedBoxes | 
 
 const config = configOrExit();
 const registry = await seededRegistry(config);
+importSharedSnippets(registry);
 const managed = managedBoxesOrExit(config, registry);
 const app = createApp(config, registry, managed);
 const scheduler = new Scheduler();

@@ -11,6 +11,7 @@ export type Route =
   | { kind: "run-lints"; ref: string }
   | { kind: "platform-projects" }
   | { kind: "platform-project"; ref: string }
+  | { kind: "project-content"; ref: string; rest: string }
   | { kind: "project-api-pass"; ref: string }
   | { kind: "pg-meta-query"; ref: string }
   | { kind: "pg-meta"; ref: string }
@@ -21,11 +22,14 @@ export type Route =
 const PROJECTS_PAGE = "/_hs/projects";
 export const API_PREFIX = "/_hs/api";
 
-// Matched case-insensitively and on the decoded path: Studio must never receive a pg-meta request
-// hattisar did not recognise, however the client spells it. Anything under the prefix without a
-// usable ref is a 404, not a pass-through.
-const PG_META_PREFIX = /^\/api\/platform\/pg-meta(?:\/|$)/i;
-const PG_META = /^\/api\/platform\/pg-meta\/([^/]+)(\/.*)?$/i;
+// Matched case-insensitively, on the decoded path and across repeated slashes: Studio must never
+// receive a pg-meta request hattisar did not recognise, however the client spells it. Anything
+// under the prefix without a usable ref is a 404, not a pass-through.
+const PG_META_PREFIX = /^\/api\/+platform\/+pg-meta(?:\/|$)/i;
+const PG_META = /^\/api\/+platform\/+pg-meta\/([^/]+)(\/.*)?$/i;
+// Studio's handlers under this path share one snippet folder across every project, so it is
+// matched the same way as pg-meta: no spelling of it reaches Studio.
+const CONTENT = /^\/api\/+platform\/+projects\/+([^/]*)\/+content(\/.*)?$/i;
 
 export function classifyRequest(method: string, rawPath: string): Route {
   const path = decodePath(rawPath);
@@ -38,6 +42,13 @@ export function classifyRequest(method: string, rawPath: string): Route {
     const ref = match[1];
     const isQuery = method === "POST" && match[2]?.toLowerCase() === "/query";
     return isQuery ? { kind: "pg-meta-query", ref } : { kind: "pg-meta", ref };
+  }
+
+  const content = CONTENT.exec(path);
+  if (content) {
+    const ref = content[1];
+    if (!ref) return { kind: "not-found" };
+    return { kind: "project-content", ref, rest: (content[2] ?? "").replace(/\/+/g, "/") };
   }
 
   if (path === "/_hs/healthz" || path === "/_hs/login" || path.startsWith("/_hs/static/")) {

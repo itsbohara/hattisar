@@ -1,6 +1,7 @@
 import { expect, type Page, test } from "@playwright/test";
 
 const REF = "spike-b";
+const OTHER_REF = "spike-a";
 const HIDDEN_SECTIONS = ["auth/users", "storage/files", "functions", "realtime/inspector"];
 
 function sidebarLink(page: Page, section: string) {
@@ -71,7 +72,19 @@ for (const [path, target] of [
   });
 }
 
-test("Studio saves a SQL snippet", async ({ page }) => {
+async function listedSnippetIds(page: Page, ref: string): Promise<string[]> {
+  const response = await page.request.get(
+    `/api/platform/projects/${ref}/content?type=sql&limit=100`,
+    {
+      headers: { origin: new URL(page.url()).origin },
+    },
+  );
+  expect(response.ok()).toBe(true);
+  const body = (await response.json()) as { data: { id: string }[] };
+  return body.data.map((snippet) => snippet.id);
+}
+
+test("Studio saves a SQL snippet in its project only", async ({ page }) => {
   await page.goto(`/project/${REF}/sql/new`);
   const saved = page.waitForResponse(
     (r) =>
@@ -83,9 +96,18 @@ test("Studio saves a SQL snippet", async ({ page }) => {
   expect(response.status()).toBe(200);
 
   await expect(page).toHaveURL(new RegExp(`/project/${REF}/sql/[0-9a-f-]{36}$`));
-  const id = new URL(page.url()).pathname.split("/").pop();
+  const id = new URL(page.url()).pathname.split("/").pop() ?? "";
+
+  await page.goto(`/project/${OTHER_REF}/sql/new`);
+  await expect(page).toHaveURL(new RegExp(`/project/${OTHER_REF}/sql/`));
+  expect(await listedSnippetIds(page, OTHER_REF)).not.toContain(id);
+
+  await page.goto(`/project/${REF}/sql/${id}`);
+  expect(await listedSnippetIds(page, REF)).toContain(id);
+
   const deleted = await page.request.delete(`/api/platform/projects/${REF}/content?ids=${id}`, {
     headers: { origin: new URL(page.url()).origin },
   });
   expect(deleted.ok()).toBe(true);
+  expect(await listedSnippetIds(page, REF)).not.toContain(id);
 });

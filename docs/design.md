@@ -69,11 +69,12 @@ Order matters; first match wins.
 | `GET /api/platform/projects/:ref/databases` | hattisar answers: Studio's shape with `identifier` = ref, `db_name`, `db_host`/`db_port` = box public host/port, `db_user` = the project's owner role (admin user until projects have owners), other fields as Studio's. |
 | `GET /api/platform/projects/:ref/settings` | hattisar fetches Studio's stub for the same request and overrides only `ref`, `name`, `db_host`/`db_port` (box public host/port), `db_name`, `db_user` (owner role) and, when the box's sslmode is `require`/`verify-ca`/`verify-full`, `ssl_enforced: true`; every other field is Studio's. Stub unreachable, non-2xx or not a JSON object → 502, never the default. Unknown/deleted/forbidden → 404. |
 | `GET /api/v1/projects/:ref/types/typescript` | hattisar calls `${PG_META_URL}/generators/typescript` with the same query Studio uses and the project's `x-connection-encrypted`; mirrors Studio's response shape. |
+| `/api/platform/projects/:ref/content`, `/api/platform/projects/:ref/content/*` | hattisar's snippet store (§3.3), never Studio. Unknown/deleted/forbidden ref → 404; a method or sub-path §3.3 does not list → 404. |
 | `/api/platform/projects/:ref/*` | Unknown/forbidden ref → 404; else pass through. |
 | `/api/v1/projects/:ref/*` | Unknown/forbidden ref → 404; else pass through. |
 | `POST /api/platform/pg-meta/:ref/query` | hattisar handles it itself (§3.2). |
 | `/api/platform/pg-meta/:ref/*` (other) | Unknown/forbidden ref → 404. Else **strip** any client `x-connection-encrypted`, **set** it to the project's encrypted connection string, pass through to Studio. |
-| `/project/default`, `/project/default/*` | If no project has ref `default`: 302 `/_hs/projects`. Studio's logo reaches it by client-side navigation, so `studio.js` reloads the page when Studio navigates into it from another ref, letting this rule apply. |
+| `/project/default`, `/project/default/*` | If no project has ref `default`: 302 `/_hs/projects`. Studio's logo reaches it by client-side navigation, so `studio.js` reloads the page whenever Studio navigates into a different ref than the last project it showed, or into `default`, letting this rule apply (and keeping Studio's in-memory snippets, keyed by id alone, from mixing projects, §3.3). |
 | `/project/:ref`, `/project/:ref/*` | Unknown/forbidden ref → 302 `/_hs/projects`; else pass through. |
 | `/projects`, `/organizations`, `/org/*` | 302 `/_hs/projects` |
 | `/new`, `/new/*` | 302 `/_hs/projects/new` |
@@ -122,6 +123,51 @@ Response mirroring, same as Studio: pg-meta OK → 200 with its JSON; pg-meta er
 `{message, formattedError}` (fallback `formattedError = message`); network/parse failure → 500
 `{message, formattedError: message}`.
 
+### 3.3 SQL snippets
+
+Studio's own snippet store is one folder for every project, and its handlers never read the ref,
+so hattisar answers the SQL editor's content API itself, from the registry, scoped by the ref in
+the URL. Studio's `SNIPPETS_MANAGEMENT_FOLDER` stays set but is never reached.
+
+| Method and path (under `/api/platform/projects/:ref/`) | Behaviour (Studio's self-hosted wire contract) |
+|---|---|
+| `GET content` | `{data: Snippet[], cursor?}`. Query `name` (case-insensitive substring, all folders; without it, root snippets only), `limit` (default 100, 1–1000, else 400 `{data:[]}`), `cursor` (id of the previous page's last item), `sort_by` `name`\|`inserted_at` (default `inserted_at`), `sort_order` `asc`\|`desc` (default `desc`). `visibility=project` → `{data:[]}`. `type` and `favorite` are ignored. |
+| `PUT content` | Upsert by `id`: `name`, `content.sql`, `folder_id`. A new snippet is validated (400 `{error}`); a name already used in the target folder → 409 `{error}`. Returns the Snippet. Body ≤ 5 MB. |
+| `DELETE content?ids=a,b` | 200 `[{id}]`; missing or non-uuid ids → 400 `{error:"Snippet IDs are required"}`. |
+| `GET content/item/:id` | The Snippet, or 404 `{message:"Content not found."}`. |
+| `GET content/count` | With `name`: `{count}`; else `{shared:0, favorites:0, private:<all>}`. |
+| `GET content/folders` | `{data:{folders, contents}, cursor?}`: root folders and root snippets without content, same query as `GET content`. |
+| `POST content/folders` | Body `{name}` → 201 Folder; a duplicate name → 409 `{error}`. |
+| `DELETE content/folders?ids=a,b` | Deletes the folders and their snippets → 200 `{}`; missing ids → 400 `{error:"Folder IDs are required"}`. |
+| `GET content/folders/:id` | `{data:{folders:[], contents}, cursor?}` for that folder. |
+| `PATCH content/folders/:id` | Body `{name}`: renames the folder (Studio's own handler ignores it) → 200 `{}`. |
+
+Where Studio's own handler would answer 500, or does nothing, hattisar answers 413 `{error}` for a
+body over 5 MB; 400 `{error}` for an invalid body or an unknown folder; `PATCH content/folders/:id`
+404 for an unknown folder and 409 for a taken name. `DELETE content` returns the ids it actually
+deleted. A new snippet is stored under the id derived from its folder and name, whatever id the body
+carries.
+
+Shapes are Studio's: a Snippet is `{id, inserted_at, updated_at, type:"sql", name,
+description:"", favorite:false, visibility:"user", project_id:1, folder_id, owner_id:1, owner,
+updated_by, content:{sql, content_id, schema_version:"1.0"}}`, a Folder `{id, name, owner_id:1,
+parent_id:null, project_id:1}`. Folders are one level deep. Ids follow Studio's
+`generateDeterministicUuid` (a snippet from `[folder_id, name + ".sql"]`, a folder from `[name]`),
+which the browser also computes before saving, so renaming or moving a snippet changes its id and
+the same name has the same id in every project: the registry keys snippets and folders by
+(project, id). Names are non-empty, without `/` or NUL. `inserted_at` survives edits.
+
+Snippets live in the registry tables `snippet_folders` and `snippets`, which reference the project
+with `ON DELETE CASCADE`: a deleted project's snippets 404 with its ref and come back on restore,
+purge removes them, and they are backed up with `hattisar-data`. They are not in a project's
+`pg_dump`.
+
+**Import of Studio's shared folder.** Snippets saved before this release carry no project. On the
+first boot with snippet support, hattisar reads the `studio-snippets` volume (mounted read-only at
+`/studio-snippets`) and copies every snippet and folder into every active project (a project deleted
+at the time never gets them), then records the setting `snippets_imported` and never imports again.
+An empty or missing folder imports nothing and still sets the marker.
+
 ## 4. Registry (SQLite, `better-sqlite3`, file `${HATTISAR_DATA_DIR}/hattisar.db`)
 
 Numbered migrations in `src/registry/migrations/`, applied at boot, tracked in
@@ -144,6 +190,11 @@ Numbered migrations in `src/registry/migrations/`, applied at boot, tracked in
   bucket)` — `bucket` (migration 002) is where the object was written; delete/restore/retention use it.
 - `api_tokens(id, user_id → users ON DELETE CASCADE, name, token_hash UNIQUE, prefix,
   created_at, last_used_at NULL, expires_at NULL)` — §15; `expires_at` NULL means never.
+- `snippet_folders(project_id → projects ON DELETE CASCADE, id, name, created_at)`, primary key
+  `(project_id, id)`, `name` unique per project — §3.3.
+- `snippets(project_id → projects ON DELETE CASCADE, id, folder_id NULL → snippet_folders ON
+  DELETE CASCADE, name, sql, inserted_at, updated_at)`, primary key `(project_id, id)`, `name`
+  unique per project and folder (root included) — §3.3.
 
 ### Secrets at rest
 AES-256-GCM. Key = SHA-256 of `HATTISAR_SECRET_KEY` (required, ≥ 32 chars, boot fails otherwise).
@@ -332,11 +383,6 @@ is configured (bucket, endpoint host) above the S3 form, which posts to `/_hs/se
 "Test connection", `/_hs/settings/s3/test`. Each POST re-renders the section it belongs to, except
 revoking a token, which redirects back to the list.
 
-Known limitation: Studio stores SQL snippets in one folder (`SNIPPETS_MANAGEMENT_FOLDER`, a named
-volume) regardless of project, so saved snippets appear in every project's SQL editor and run
-against whichever project is open. Acceptable for a single admin; scoping
-`/api/platform/projects/:ref/content*` per project is post-v1.
-
 ## 10. Managed boxes (O4 + O2)
 
 Off unless `HATTISAR_MANAGED_BOXES=true`. Then compose profile `managed-boxes` runs
@@ -419,9 +465,9 @@ rule: it never reaches a project database.
 ## 14. Out of v1
 
 The post-v1 roadmap is the GitHub milestone "Roadmap": a release pipeline (§16), a one-line
-installer (§17), per-project SQL snippets, pooler for non-shared boxes (J3), a WAL-G point-in-time
-recovery recipe in the docs, and a plain-Postgres boxes spike (E3). Parked, each until its
-condition holds:
+installer (§17), per-project SQL snippets (§3.3), pooler for non-shared boxes (J3), a WAL-G
+point-in-time recovery recipe in the docs, and a plain-Postgres boxes spike (E3). Parked, each until
+its condition holds:
 
 | Parked | Revisit when |
 |---|---|

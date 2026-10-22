@@ -148,6 +148,7 @@ services:
       - docker-api
     volumes:
       - hattisar-data:/data
+      - studio-snippets:/studio-snippets:ro
     healthcheck:
       test:
         [

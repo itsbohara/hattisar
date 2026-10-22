@@ -55,6 +55,53 @@ describe("classifyRequest", () => {
       { kind: "project-api-pass", ref: "spike-b" },
     ],
     ["GET", "/api/v1/projects/spike-b/api-keys", { kind: "project-api-pass", ref: "spike-b" }],
+    [
+      "GET",
+      "/api/platform/projects/abc/content",
+      { kind: "project-content", ref: "abc", rest: "" },
+    ],
+    [
+      "PUT",
+      "/api/platform/projects/abc/content",
+      { kind: "project-content", ref: "abc", rest: "" },
+    ],
+    [
+      "DELETE",
+      "/api/platform/projects/abc/content",
+      { kind: "project-content", ref: "abc", rest: "" },
+    ],
+    [
+      "PATCH",
+      "/api/platform/projects/abc/content",
+      { kind: "project-content", ref: "abc", rest: "" },
+    ],
+    [
+      "GET",
+      "/api/platform/projects/abc/content/item/x",
+      { kind: "project-content", ref: "abc", rest: "/item/x" },
+    ],
+    [
+      "POST",
+      "/api/platform/projects/abc/content/folders",
+      { kind: "project-content", ref: "abc", rest: "/folders" },
+    ],
+    [
+      "GET",
+      "/api/platform/projects/abc/content/",
+      { kind: "project-content", ref: "abc", rest: "/" },
+    ],
+    [
+      "GET",
+      "/api/platform/projects/abc/Content/count",
+      { kind: "project-content", ref: "abc", rest: "/count" },
+    ],
+    [
+      "GET",
+      "/api/platform/projects/abc/%63ontent/count",
+      { kind: "project-content", ref: "abc", rest: "/count" },
+    ],
+    ["GET", "/api/platform/projects/abc/contents", { kind: "project-api-pass", ref: "abc" }],
+    ["GET", "/api/v1/projects/abc/content", { kind: "project-api-pass", ref: "abc" }],
     ["GET", "/api/v1/projects/spike-b", { kind: "project-api-pass", ref: "spike-b" }],
     ["POST", "/api/platform/pg-meta/spike-b/query", { kind: "pg-meta-query", ref: "spike-b" }],
     ["GET", "/api/platform/pg-meta/spike-b/query", { kind: "pg-meta", ref: "spike-b" }],
@@ -89,12 +136,43 @@ describe("classifyRequest", () => {
     expect(classifyRequest("GET", path)).toEqual({ kind: "not-found" });
   });
 
+  describe("never lets a content path past hattisar's snippet handler", () => {
+    it.each([
+      ["/api/Platform/projects/abc/content", ""],
+      ["/API/platform/projects/abc/content/count", "/count"],
+      ["/api/platform/Projects/abc/CONTENT/item/x", "/item/x"],
+      ["/api/platform/projects/abc//content", ""],
+      ["/api//platform///projects/abc/content/folders", "/folders"],
+      ["/api/platform/projects/abc/content//folders//x", "/folders/x"],
+      ["/api/platform/projects/abc/%63ontent/count", "/count"],
+    ])("%s", (path, rest) => {
+      expect(classifyRequest("GET", path)).toEqual({ kind: "project-content", ref: "abc", rest });
+    });
+
+    it.each([
+      "/api/platform/projects//content",
+      "/api/platform/projects///content/count",
+      "/API/Platform/Projects//Content",
+    ])("answers %s without a ref with not-found", (path) => {
+      expect(classifyRequest("PUT", path)).toEqual({ kind: "not-found" });
+    });
+  });
+
+  it.each(["/api/platform/projects/x/contentful", "/api/v1/projects/x/content"])(
+    "leaves %s to the project pass-through",
+    (path) => {
+      expect(classifyRequest("GET", path)).toEqual({ kind: "project-api-pass", ref: "x" });
+    },
+  );
+
   describe("never lets a pg-meta path through without a ref", () => {
     it.each([
       "/api/platform/pg-meta",
       "/api/platform/pg-meta/",
       "/api/platform/pg-meta//tables",
       "/API/Platform/PG-META/spike-b/tables",
+      "/api//platform/pg-meta/spike-b/tables",
+      "/api/platform//pg-meta/spike-b/tables",
     ])("%s", (path) => {
       expect(classifyRequest("GET", path)).toMatchObject({
         kind: expect.stringMatching(/^(pg-meta|not-found)$/),
