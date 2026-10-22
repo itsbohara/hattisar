@@ -74,7 +74,7 @@ Order matters; first match wins.
 | `/api/v1/projects/:ref/*` | Unknown/forbidden ref → 404; else pass through. |
 | `POST /api/platform/pg-meta/:ref/query` | hattisar handles it itself (§3.2). |
 | `/api/platform/pg-meta/:ref/*` (other) | Unknown/forbidden ref → 404. Else **strip** any client `x-connection-encrypted`, **set** it to the project's encrypted connection string, pass through to Studio. |
-| `/project/default`, `/project/default/*` | If no project has ref `default`: 302 `/_hs/projects`. Studio's logo reaches it by client-side navigation, so `studio.js` reloads the page when Studio navigates into it from another ref, letting this rule apply. |
+| `/project/default`, `/project/default/*` | If no project has ref `default`: 302 `/_hs/projects`. Studio's logo reaches it by client-side navigation, so `studio.js` reloads the page whenever Studio navigates from one ref to another, letting this rule apply (and keeping Studio's in-memory snippets, keyed by id alone, from mixing projects, §3.3). |
 | `/project/:ref`, `/project/:ref/*` | Unknown/forbidden ref → 302 `/_hs/projects`; else pass through. |
 | `/projects`, `/organizations`, `/org/*` | 302 `/_hs/projects` |
 | `/new`, `/new/*` | 302 `/_hs/projects/new` |
@@ -164,9 +164,9 @@ purge removes them, and they are backed up with `hattisar-data`. They are not in
 
 **Import of Studio's shared folder.** Snippets saved before this release carry no project. On the
 first boot with snippet support, hattisar reads the `studio-snippets` volume (mounted read-only at
-`/studio-snippets`) and copies every snippet and folder into every active project, then records
-the setting `snippets_imported` and never imports again. An empty or missing folder imports
-nothing and still sets the marker.
+`/studio-snippets`) and copies every snippet and folder into every active project (a project deleted
+at the time never gets them), then records the setting `snippets_imported` and never imports again.
+An empty or missing folder imports nothing and still sets the marker.
 
 ## 4. Registry (SQLite, `better-sqlite3`, file `${HATTISAR_DATA_DIR}/hattisar.db`)
 
@@ -190,6 +190,11 @@ Numbered migrations in `src/registry/migrations/`, applied at boot, tracked in
   bucket)` — `bucket` (migration 002) is where the object was written; delete/restore/retention use it.
 - `api_tokens(id, user_id → users ON DELETE CASCADE, name, token_hash UNIQUE, prefix,
   created_at, last_used_at NULL, expires_at NULL)` — §15; `expires_at` NULL means never.
+- `snippet_folders(project_id → projects ON DELETE CASCADE, id, name, created_at)`, primary key
+  `(project_id, id)`, `name` unique per project — §3.3.
+- `snippets(project_id → projects ON DELETE CASCADE, id, folder_id NULL → snippet_folders ON
+  DELETE CASCADE, name, sql, inserted_at, updated_at)`, primary key `(project_id, id)`, `name`
+  unique per project and folder (root included) — §3.3.
 
 ### Secrets at rest
 AES-256-GCM. Key = SHA-256 of `HATTISAR_SECRET_KEY` (required, ≥ 32 chars, boot fails otherwise).
@@ -460,9 +465,9 @@ rule: it never reaches a project database.
 ## 14. Out of v1
 
 The post-v1 roadmap is the GitHub milestone "Roadmap": a release pipeline (§16), a one-line
-installer (§17), per-project SQL snippets, pooler for non-shared boxes (J3), a WAL-G point-in-time
-recovery recipe in the docs, and a plain-Postgres boxes spike (E3). Parked, each until its
-condition holds:
+installer (§17), per-project SQL snippets (§3.3), pooler for non-shared boxes (J3), a WAL-G
+point-in-time recovery recipe in the docs, and a plain-Postgres boxes spike (E3). Parked, each until
+its condition holds:
 
 | Parked | Revisit when |
 |---|---|
