@@ -142,6 +142,12 @@ the URL. Studio's `SNIPPETS_MANAGEMENT_FOLDER` stays set but is never reached.
 | `GET content/folders/:id` | `{data:{folders:[], contents}, cursor?}` for that folder. |
 | `PATCH content/folders/:id` | Body `{name}`: renames the folder (Studio's own handler ignores it) → 200 `{}`. |
 
+Where Studio's own handler would answer 500, or does nothing, hattisar answers 413 `{error}` for a
+body over 5 MB; 400 `{error}` for an invalid body or an unknown folder; `PATCH content/folders/:id`
+404 for an unknown folder and 409 for a taken name. `DELETE content` returns the ids it actually
+deleted. A new snippet is stored under the id derived from its folder and name, whatever id the body
+carries.
+
 Shapes are Studio's: a Snippet is `{id, inserted_at, updated_at, type:"sql", name,
 description:"", favorite:false, visibility:"user", project_id:1, folder_id, owner_id:1, owner,
 updated_by, content:{sql, content_id, schema_version:"1.0"}}`, a Folder `{id, name, owner_id:1,
