@@ -1,5 +1,14 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -92,6 +101,27 @@ describe("generate-env.sh", () => {
     const env = values(target);
     expect(env.get("POOLER_JWT_SECRET")).toMatch(/^[0-9a-f]{64}$/);
     expect(env.get("HATTISAR_PURGE_AFTER_DAYS")).toBe("7");
+  });
+
+  it("fails without writing the target when openssl is missing", () => {
+    const bin = join(dir, "bin");
+    mkdirSync(bin);
+    for (const tool of ["sh", "grep", "tail", "mktemp", "mv", "rm"]) {
+      const path = execFileSync("sh", ["-c", `command -v ${tool}`], { encoding: "utf8" }).trim();
+      symlinkSync(path, join(bin, tool));
+    }
+    const target = join(dir, ".env");
+
+    const result = spawnSync(join(bin, "sh"), [script, template, target], {
+      cwd: tmpdir(),
+      encoding: "utf8",
+      env: { PATH: bin },
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toMatch(/^generate-env: /m);
+    expect(existsSync(target)).toBe(false);
+    expect(readdirSync(dir)).toEqual(["bin"]);
   });
 
   it("refuses missing arguments", () => {

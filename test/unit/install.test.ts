@@ -8,6 +8,7 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -23,6 +24,14 @@ if [ "$1 $2" = "compose version" ]; then
   exit 0
 fi
 echo "$* cwd=$PWD" >>"$DOCKER_LOG"
+case "$*" in
+  "volume ls"*) printf '%s' "\${STUB_VOLUMES:-}" ;;
+  "compose run"*) printf '%s' "\${STUB_RUN_STDOUT:-}" ;;
+esac
+if [ -n "\${STUB_FAIL:-}" ]; then
+  case "$*" in "$STUB_FAIL"*) exit 1 ;; esac
+fi
+exit 0
 `;
 
 const stubUname = `#!/bin/sh
@@ -90,6 +99,22 @@ function dockerCalls(): string[] {
   return readFileSync(log, "utf8").split("\n").filter(Boolean);
 }
 
+function mutatingCalls(): string[] {
+  return dockerCalls().filter((call) => !call.startsWith("volume ls "));
+}
+
+// A PATH holding only the stubs and the named host tools, to run without one (openssl).
+function onlyTools(tools: string[]): string {
+  const bin = join(work, "only-bin");
+  mkdirSync(bin);
+  for (const tool of tools) {
+    const path = execFileSync("sh", ["-c", `command -v ${tool}`], { encoding: "utf8" }).trim();
+    symlinkSync(path, join(bin, tool));
+  }
+  for (const stub of ["docker", "uname"]) symlinkSync(join(work, "bin", stub), join(bin, stub));
+  return bin;
+}
+
 function env(): Map<string, string> {
   const pairs = readFileSync(join(dir, ".env"), "utf8")
     .split("\n")
@@ -121,7 +146,10 @@ describe("install.sh", () => {
     expect(values.get("HATTISAR_MANAGED_BOXES")).toBe("true");
     expect(values.get("COMPOSE_PROFILES")).toBe("managed-boxes");
     expect(values.get("HATTISAR_DOMAIN")).toBe("");
-    expect(dockerCalls()).toEqual([`compose pull cwd=${dir}`, `compose up -d --wait cwd=${dir}`]);
+    const calls = mutatingCalls();
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toMatch(/^compose pull cwd=/);
+    expect(calls[1]).toBe(`compose up -d --wait cwd=${dir}`);
     expect(result.stdout).toContain("http://localhost:8000");
     expect(result.stdout).toContain("admin");
     expect(result.stdout).toContain(values.get("HATTISAR_ADMIN_PASSWORD"));
@@ -155,20 +183,99 @@ describe("install.sh", () => {
     const result = install(`--version 0.2.0 --dir ${dir}`);
 
     expect(result.status, result.stderr).toBe(0);
+    expect(result.stderr).toBe("");
     expect(readFileSync(join(dir, ".env"), "utf8")).toBe(edited);
     expect(readFileSync(join(dir, "compose.yml"), "utf8")).toContain(
       `ghcr.io/itsbohara/hattisar:\${HATTISAR_VERSION:-0.2.0}`,
     );
     const calls = dockerCalls();
     expect(calls).toHaveLength(4);
-    expect(calls[0]).toBe(`compose pull cwd=${dir}`);
+    expect(calls[0]).toMatch(/^compose pull cwd=/);
+    expect(calls[0]).not.toBe(`compose pull cwd=${dir}`);
     expect(calls[1]).toBe(`compose stop hattisar cwd=${dir}`);
-    expect(calls[2]).toMatch(/^compose run --rm --no-deps /);
-    expect(calls[2]).toContain("hattisar.db.bak-0.1.0");
+    expect(calls[2]).toMatch(/^compose run -T --rm --no-deps /);
+    for (const file of ["hattisar.db", "hattisar.db-wal", "hattisar.db-shm"]) {
+      expect(calls[2]).toContain(file);
+    }
+    expect(calls[2]).toContain(".bak-0.1.0");
     expect(calls[2]).toContain(`cwd=${dir}`);
     expect(calls[3]).toBe(`compose up -d --wait cwd=${dir}`);
     expect(result.stdout).toContain("http://localhost:8000");
+    expect(result.stdout).not.toContain(".bak-");
     expect(result.stdout).not.toContain(env().get("HATTISAR_ADMIN_PASSWORD"));
+  });
+
+  it("names the registry backup when one was taken", () => {
+    expect(install(`--yes --version 0.1.0 --dir ${dir}`).status).toBe(0);
+
+    const result = install(`--version 0.2.0 --dir ${dir}`, {
+      STUB_RUN_STDOUT: "/data/hattisar.db.bak-0.1.0\n",
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("/data/hattisar.db.bak-0.1.0");
+  });
+
+  it("notes the answer flags an upgrade ignores", () => {
+    expect(install(`--yes --version 0.1.0 --dir ${dir}`).status).toBe(0);
+    const before = readFileSync(join(dir, ".env"), "utf8");
+
+    const result = install(
+      `--domain h.example.com --no-managed-boxes --version 0.2.0 --dir ${dir}`,
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stderr).toContain("ignored");
+    expect(result.stderr).toContain(".env");
+    expect(readFileSync(join(dir, ".env"), "utf8")).toBe(before);
+  });
+
+  it.each(["compose pull", "compose stop", "compose run"])(
+    "leaves an install alone when %s fails mid-upgrade",
+    (failing) => {
+      expect(install(`--yes --version 0.1.0 --dir ${dir}`).status).toBe(0);
+      const before = snapshot(dir);
+
+      const result = install(`--version 0.2.0 --dir ${dir}`, { STUB_FAIL: failing });
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toMatch(/^install: /m);
+      expect(snapshot(dir)).toEqual(before);
+    },
+  );
+
+  it("creates nothing when the first pull fails", () => {
+    const result = install(`--yes --version 0.1.0 --dir ${dir}`, { STUB_FAIL: "compose pull" });
+
+    expect(result.status).toBe(1);
+    expect(existsSync(dir)).toBe(false);
+  });
+
+  it("refuses a first install over existing hattisar volumes", () => {
+    const result = install(`--yes --version 0.1.0 --dir ${dir}`, {
+      STUB_VOLUMES: "hattisar_hattisar-data\nhattisar_db-data\n",
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("hattisar_hattisar-data");
+    expect(result.stderr).toContain("docker compose down -v");
+    const calls = dockerCalls();
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatch(
+      /^volume ls -q --filter label=com\.docker\.compose\.project=hattisar /,
+    );
+    expect(existsSync(dir)).toBe(false);
+  });
+
+  it("refuses without openssl", () => {
+    const result = install(`--yes --version 0.1.0 --dir ${dir}`, {
+      PATH: onlyTools(["sh", "grep", "curl"]),
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr.trim()).toBe("install: openssl is required");
+    expect(existsSync(dir)).toBe(false);
+    expect(mutatingCalls()).toEqual([]);
   });
 
   it("leaves an install alone when the download fails", () => {
@@ -181,7 +288,7 @@ describe("install.sh", () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toContain(`file://${releases}/download/v9.9.9/hattisar-9.9.9.tar.gz`);
     expect(snapshot(dir)).toEqual(before);
-    expect(dockerCalls()).toEqual([]);
+    expect(mutatingCalls()).toEqual([]);
   });
 
   it("stops without a terminal when a question is unanswered", () => {
@@ -190,7 +297,7 @@ describe("install.sh", () => {
     expect(result.status).toBe(2);
     expect(result.stderr).toMatch(/--domain|--no-domain/);
     expect(existsSync(dir)).toBe(false);
-    expect(dockerCalls()).toEqual([]);
+    expect(mutatingCalls()).toEqual([]);
   });
 
   it("asks about managed boxes once the domain is answered", () => {
@@ -210,7 +317,7 @@ describe("install.sh", () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toContain(os === "Linux" ? arch : os);
     expect(existsSync(dir)).toBe(false);
-    expect(dockerCalls()).toEqual([]);
+    expect(mutatingCalls()).toEqual([]);
   });
 
   it.each(["--version v0.1.0", "--bogus", "--domain", "--domain not_a.domain", "--dir"])(
@@ -220,7 +327,7 @@ describe("install.sh", () => {
 
       expect(result.status).toBe(2);
       expect(result.stderr).toMatch(/^install: /);
-      expect(dockerCalls()).toEqual([]);
+      expect(mutatingCalls()).toEqual([]);
     },
   );
 
@@ -232,7 +339,7 @@ describe("install.sh", () => {
 
     install(`--yes --version 0.1.0 --dir ${dir}`, {}, half);
 
-    expect(dockerCalls()).toEqual([]);
+    expect(mutatingCalls()).toEqual([]);
     expect(existsSync(dir)).toBe(false);
   });
 });
