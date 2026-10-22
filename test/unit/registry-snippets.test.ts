@@ -295,6 +295,33 @@ describe("saveSnippet", () => {
     }
   });
 
+  it("rejects a rename whose new id belongs to another snippet, leaving both intact", () => {
+    const squatter = saveSnippet(db, projectA, {
+      id: snippetId(null, "new"),
+      name: "other",
+      sql: "select 'squatter'",
+      folderId: null,
+    });
+    const old = save(projectA, "old");
+
+    expect(
+      saveSnippet(db, projectA, { id: old.id, name: "new", sql: "select 2", folderId: null }),
+    ).toEqual({ ok: false, reason: "name-taken" });
+    expect(getSnippet(db, projectA, old.id)).toEqual(old);
+    expect(squatter.ok && getSnippet(db, projectA, squatter.snippet.id)).toEqual(
+      squatter.ok && squatter.snippet,
+    );
+  });
+
+  it.each(["", "a/b", "a\0"])("rejects renaming a snippet to %j", (name) => {
+    const old = save(projectA, "old");
+    expect(saveSnippet(db, projectA, { id: old.id, name, sql: "", folderId: null })).toEqual({
+      ok: false,
+      reason: "invalid-name",
+    });
+    expect(getSnippet(db, projectA, old.id)).toEqual(old);
+  });
+
   it.each(["", "a/b", "a\0"])("rejects the name %j", (name) => {
     expect(
       saveSnippet(db, projectA, { id: snippetId(null, name), name, sql: "", folderId: null }),
@@ -361,6 +388,27 @@ describe("folders", () => {
     expect(getSnippet(db, projectA, nested.id)).toEqual(nested);
     expect(renameFolder(db, projectA, folderId("nope"), "x")).toBe(false);
     expect(renameFolder(db, projectB, reports.id, "x")).toBe(false);
+  });
+
+  it("creates a folder under a renamed folder's old name with a fresh id", () => {
+    const archive = folder(projectA, "reports");
+    renameFolder(db, projectA, archive.id, "archive");
+
+    const reports = createFolder(db, projectA, "reports");
+
+    expect(reports).toEqual({
+      ok: true,
+      folder: { id: expect.any(String), name: "reports", createdAt: expect.any(String) },
+    });
+    const reportsId = reports.ok ? reports.folder.id : "";
+    expect(reportsId).not.toBe(archive.id);
+    expect(reportsId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+    expect(listFolders(db, projectA).map((row) => [row.id, row.name])).toEqual([
+      [archive.id, "archive"],
+      [reportsId, "reports"],
+    ]);
   });
 
   it("refuses to rename a folder to an invalid or taken name", () => {
