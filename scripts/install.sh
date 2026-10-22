@@ -60,16 +60,16 @@ env_value() {
   sed -n "s/^$1=//p" "$2" | tail -n 1
 }
 
-# Sets <key>=<value> in <dir>/.env, replacing the key's line in place or appending one.
+# Sets <key>=<value> in the .env at <file>, replacing the key's line in place or appending one.
 set_env() {
-  tmp_env=$(mktemp "$dir/.env.XXXXXX")
-  KEY=$1 VALUE=$2 awk '
+  tmp_env=$(mktemp "$1.XXXXXX")
+  KEY=$2 VALUE=$3 awk '
     BEGIN { key = ENVIRON["KEY"]; line = key "=" ENVIRON["VALUE"] }
     index($0, key "=") == 1 { if (!done) print line; done = 1; next }
     { print }
     END { if (!done) print line }
-  ' "$dir/.env" >"$tmp_env"
-  mv "$tmp_env" "$dir/.env"
+  ' "$1" >"$tmp_env"
+  mv "$tmp_env" "$1"
 }
 
 main() {
@@ -132,6 +132,7 @@ main() {
   esac
   command -v curl >/dev/null 2>&1 || fail "curl is required"
   command -v docker >/dev/null 2>&1 || fail "Docker is required: https://docs.docker.com/engine/install/"
+  command -v openssl >/dev/null 2>&1 || fail "openssl is required"
   docker compose version >/dev/null 2>&1 || fail "Docker Compose v2 is required (docker compose version failed)"
 
   if [ -f "$dir/.env" ]; then
@@ -139,8 +140,18 @@ main() {
     old_version=$(sed -n 's|.*image: ghcr\.io/itsbohara/hattisar:.*:-\([^}]*\)}.*|\1|p' \
       "$dir/compose.yml" 2>/dev/null | head -n 1)
     valid_version "$old_version" || fail "cannot read the installed version from $dir/compose.yml"
+    if [ -n "$domain_set" ] || [ -n "$managed_boxes" ]; then
+      echo "install: an upgrade keeps $dir/.env, so the domain and managed-boxes flags were ignored; edit .env by hand to change them" >&2
+    fi
   else
     upgrade=
+    # compose.yml fixes `name: hattisar`, so every install dir shares these volumes.
+    volumes=$(docker volume ls -q --filter label=com.docker.compose.project=hattisar) ||
+      fail "cannot list Docker volumes; run with sudo"
+    if [ -n "$volumes" ]; then
+      names=$(printf '%s' "$volumes" | tr '\n' ' ')
+      fail "Docker volumes of an earlier hattisar install exist: ${names% }. Restore the .env of that install into $dir to keep its data, or run docker compose down -v in it to reset deliberately"
+    fi
     if [ -z "$domain_set" ] && [ -z "$yes" ]; then
       has_tty || usage_error "no terminal to ask for a domain; pass --domain <name> or --no-domain"
       ask_domain
@@ -173,37 +184,56 @@ main() {
   echo "Downloading hattisar $version"
   curl -fsSL -o "$stage/bundle.tar.gz" "$url" || fail "could not download $url"
   tar -xzf "$stage/bundle.tar.gz" -C "$stage" || fail "could not unpack $url"
-  [ -f "$stage/hattisar/compose.yml" ] || fail "$url is not a hattisar bundle"
+  bundle=$stage/hattisar
+  [ -f "$bundle/compose.yml" ] || fail "$url is not a hattisar bundle"
 
-  mkdir -p "$dir" 2>/dev/null || fail "cannot create $dir; run with sudo or pass --dir"
-  cp -R "$stage/hattisar/." "$dir/" || fail "cannot write to $dir; run with sudo or pass --dir"
-  sh "$dir/generate-env.sh" "$dir/env.example" "$dir/.env"
-
-  if [ -z "$upgrade" ]; then
-    set_env HATTISAR_BIND 127.0.0.1
+  # The install directory stays untouched until the new images are pulled and, on an upgrade, the
+  # registry is backed up: a failure before then leaves the old install (and its version) intact.
+  if [ -n "$upgrade" ]; then
+    cp "$dir/.env" "$bundle/.env" || fail "cannot read $dir/.env; run with sudo"
+    sh "$bundle/generate-env.sh" "$bundle/env.example" "$bundle/.env" >/dev/null ||
+      fail "could not complete .env for the new version"
+  else
+    sh "$bundle/generate-env.sh" "$bundle/env.example" "$bundle/.env" >/dev/null ||
+      fail "could not generate .env"
+    set_env "$bundle/.env" HATTISAR_BIND 127.0.0.1
     profiles=
     if [ -n "$domain" ]; then
-      set_env HATTISAR_DOMAIN "$domain"
-      set_env HATTISAR_PUBLIC_HOST "$domain"
-      set_env HATTISAR_COOKIE_SECURE true
+      set_env "$bundle/.env" HATTISAR_DOMAIN "$domain"
+      set_env "$bundle/.env" HATTISAR_PUBLIC_HOST "$domain"
+      set_env "$bundle/.env" HATTISAR_COOKIE_SECURE true
       profiles=caddy
     fi
-    set_env HATTISAR_MANAGED_BOXES "$managed_boxes"
+    set_env "$bundle/.env" HATTISAR_MANAGED_BOXES "$managed_boxes"
     if [ "$managed_boxes" = true ]; then
       profiles=${profiles:+$profiles,}managed-boxes
     fi
-    set_env COMPOSE_PROFILES "$profiles"
+    set_env "$bundle/.env" COMPOSE_PROFILES "$profiles"
   fi
 
-  cd "$dir"
-  docker compose pull || fail "docker compose pull failed"
+  (cd "$bundle" && docker compose pull) || fail "docker compose pull failed; nothing was changed"
+
+  backup=
   if [ -n "$upgrade" ]; then
-    docker compose stop hattisar || fail "docker compose stop hattisar failed"
+    (cd "$dir" && docker compose stop hattisar) ||
+      fail "docker compose stop hattisar failed; $old_version is still installed in $dir"
     # old_version passed valid_version above, so it is safe inside this shell command.
-    docker compose run --rm --no-deps --entrypoint sh hattisar -c \
-      "if [ -f /data/hattisar.db ]; then cp -p /data/hattisar.db /data/hattisar.db.bak-$old_version; fi" ||
-      fail "could not back up the registry to /data/hattisar.db.bak-$old_version"
+    copy="set -e; cd /data; [ -f hattisar.db ] || exit 0"
+    copy="$copy; for f in hattisar.db hattisar.db-wal hattisar.db-shm; do"
+    copy="$copy if [ -f \$f ]; then cp -p \$f \$f.bak-$old_version; fi; done"
+    copy="$copy; echo /data/hattisar.db.bak-$old_version"
+    backup=$(cd "$dir" && docker compose run -T --rm --no-deps --entrypoint sh hattisar -c "$copy" </dev/null) ||
+      fail "could not back up the registry; $old_version is still installed in $dir, stopped (docker compose up -d there restarts it)"
+    rm "$bundle/.env"
   fi
+
+  mkdir -p "$dir" 2>/dev/null || fail "cannot create $dir; run with sudo or pass --dir"
+  cp -R "$bundle/." "$dir/" || fail "cannot write to $dir; run with sudo or pass --dir"
+  if [ -n "$upgrade" ]; then
+    sh "$dir/generate-env.sh" "$dir/env.example" "$dir/.env" || fail "could not add new keys to $dir/.env"
+  fi
+
+  cd "$dir" || fail "cannot enter $dir"
   docker compose up -d --wait || fail "docker compose up failed; see docker compose logs in $dir"
 
   domain=$(env_value HATTISAR_DOMAIN .env)
@@ -218,7 +248,9 @@ main() {
   if [ -n "$upgrade" ]; then
     echo "hattisar upgraded from $old_version to $version."
     echo "  URL:      $url"
-    echo "The previous registry, if there was one, is /data/hattisar.db.bak-$old_version in the hattisar-data volume."
+    if [ -n "$backup" ]; then
+      echo "The $old_version registry is backed up to $backup in the hattisar-data volume."
+    fi
   else
     echo "hattisar $version is running."
     echo "  URL:      $url"

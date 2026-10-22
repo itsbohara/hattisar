@@ -44,7 +44,12 @@ line_for() {
     if [ "$name" = "$1" ]; then printf '%s\n' "$n"; fi
   done)
   if [ -n "$bytes" ]; then
-    printf '%s=%s\n' "$1" "$(hex "$bytes")"
+    value=$(hex "$bytes") || value=
+    if [ -z "$value" ]; then
+      echo "generate-env: could not generate $1; is openssl installed?" >&2
+      exit 1
+    fi
+    printf '%s=%s\n' "$1" "$value"
   else
     printf '%s\n' "$2"
   fi
@@ -53,6 +58,8 @@ line_for() {
 umask 077
 
 if [ ! -f "$target" ]; then
+  partial=$(mktemp "$target.XXXXXX")
+  trap 'rm -f "$partial"' EXIT
   while IFS= read -r line || [ -n "$line" ]; do
     key=$(key_of "$line")
     if [ -n "$key" ]; then
@@ -60,7 +67,8 @@ if [ ! -f "$target" ]; then
     else
       printf '%s\n' "$line"
     fi
-  done <"$template" >"$target"
+  done <"$template" >"$partial"
+  mv "$partial" "$target"
   echo "wrote $target with generated secrets"
   exit 0
 fi
