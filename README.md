@@ -156,6 +156,8 @@ Set in `.env` next to `compose.yml` (`docker/.env` in a checkout; template:
 | `HATTISAR_ADMIN_PASSWORD` | — | Required on first boot, ≥ 12 chars. Ignored afterwards. |
 | `HATTISAR_PUBLIC_HOST` | `localhost` | Host shown in connection strings. |
 | `HATTISAR_PORT` | `8000` | Host-published port; the app listens on 8000 inside the container. |
+| `HATTISAR_BIND` | `0.0.0.0` | Host address `HATTISAR_PORT` is published on. The installer sets `127.0.0.1`. |
+| `HATTISAR_DOMAIN` | — | Domain the `caddy` profile serves over HTTPS with a Let's Encrypt certificate, proxying to hattisar. |
 | `HATTISAR_DATA_DIR` | `/data` | SQLite registry and temporary restore files. |
 | `HATTISAR_COOKIE_SECURE` | `false` | `true` behind HTTPS. |
 | `HATTISAR_PURGE_AFTER_DAYS` | `7` | Deleted projects are purged after this many days. |

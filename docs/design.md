@@ -398,7 +398,8 @@ the host shell.
 
 `supabase/studio:2026.10.12-sha-3699278` · `supabase/postgres-meta:v0.100.0` ·
 `supabase/postgres:17.6.1.136` · `supabase/supavisor:2.9.13`. Bumping any of them requires the
-routing e2e (§13) to pass.
+routing e2e (§13) to pass. `caddy:2.11.7` (the installer's `caddy` profile, §17) is outside that
+rule: it never reaches a project database.
 
 ## 13. Testing
 
@@ -591,7 +592,8 @@ A server release is a `v<version>` tag (first `v0.1.0`), separate from the CLI's
    a prerelease version.
 
 The bundle unpacks to `hattisar/`: `compose.yml`, `env.example`, `generate-env.sh`, `volumes/` (the
-db init SQL and `pooler.exs`) and `NOTICE`, the same layout as `docker/` plus the env generator.
+db init SQL, `pooler.exs` and the `Caddyfile`) and `NOTICE`, the same layout as `docker/` plus the
+env generator.
 Its `compose.yml` is `docker/compose.yml` with the hattisar image's default tag replaced by the
 exact version, so an install never drifts: `sh generate-env.sh env.example .env` (fresh secrets,
 never overwriting an existing `.env`), review `.env`, `docker compose up -d`. Nothing is built.
