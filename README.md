@@ -293,6 +293,8 @@ Upgrading the pinned Studio and Postgres images is covered in
   and one per week for 4 weeks by default; manual backups stay until you delete them.
 - **Restore** a backup into the same project (drops and recreates its database, same owner and
   password) or into a new project.
+- **SQL snippets** belong to their project and live in the registry, so they are backed up with
+  the `hattisar-data` volume, not in the project's dump.
 
 **Backups are not point-in-time recovery.** A restore returns the database to the moment the dump
 was taken; everything written since is lost. Production boxes also need box-level PITR (WAL-G,
@@ -328,8 +330,6 @@ acceptable.
 - **Superuser-only Studio actions** fail, because Studio connects as the project's owner.
 - **Studio features hattisar does not serve** are hidden or answered with 404: Authentication,
   Storage, Edge Functions, Realtime, AI assistance, migrations, MCP. Advisors always show no lints.
-- **SQL snippets are shared.** Studio keeps saved snippets in one folder, so they appear in every
-  project's SQL editor and run against whichever project is open.
 - **Backups are not PITR.** A restore needs free disk in `HATTISAR_DATA_DIR` about the size of the
   dump. Objects you added yourself to a project's `extensions` schema are not restored. A backup
   to S3 is uploaded in 5 MiB parts, at most 10,000 of them, so a dump larger than about 48 GB
