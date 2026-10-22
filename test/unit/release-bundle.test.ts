@@ -16,6 +16,7 @@ const bundleFiles = [
   "volumes/db/_supabase.sql",
   "volumes/db/pooler.sql",
   "volumes/pooler/pooler.exs",
+  "volumes/caddy/Caddyfile",
 ];
 
 let outDir: string;
