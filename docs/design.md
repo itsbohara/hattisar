@@ -74,7 +74,7 @@ Order matters; first match wins.
 | `/api/v1/projects/:ref/*` | Unknown/forbidden ref → 404; else pass through. |
 | `POST /api/platform/pg-meta/:ref/query` | hattisar handles it itself (§3.2). |
 | `/api/platform/pg-meta/:ref/*` (other) | Unknown/forbidden ref → 404. Else **strip** any client `x-connection-encrypted`, **set** it to the project's encrypted connection string, pass through to Studio. |
-| `/project/default`, `/project/default/*` | If no project has ref `default`: 302 `/_hs/projects`. Studio's logo reaches it by client-side navigation, so `studio.js` reloads the page whenever Studio navigates from one ref to another, letting this rule apply (and keeping Studio's in-memory snippets, keyed by id alone, from mixing projects, §3.3). |
+| `/project/default`, `/project/default/*` | If no project has ref `default`: 302 `/_hs/projects`. Studio's logo reaches it by client-side navigation, so `studio.js` reloads the page whenever Studio navigates into a different ref than the last project it showed, or into `default`, letting this rule apply (and keeping Studio's in-memory snippets, keyed by id alone, from mixing projects, §3.3). |
 | `/project/:ref`, `/project/:ref/*` | Unknown/forbidden ref → 302 `/_hs/projects`; else pass through. |
 | `/projects`, `/organizations`, `/org/*` | 302 `/_hs/projects` |
 | `/new`, `/new/*` | 302 `/_hs/projects/new` |
