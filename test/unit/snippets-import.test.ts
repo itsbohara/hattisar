@@ -84,7 +84,12 @@ describe("importStudioSnippets", () => {
     const gone = addProject("gone");
     markProjectDeleted(db, gone, "gone_deleted");
 
-    expect(importStudioSnippets(db, snippetsDir)).toEqual({ projects: 2, snippets: 2, folders: 1 });
+    expect(importStudioSnippets(db, snippetsDir)).toEqual({
+      found: true,
+      projects: 2,
+      snippets: 2,
+      folders: 1,
+    });
 
     const reports = folderId("reports");
     for (const project of [alpha, beta]) {
@@ -123,7 +128,12 @@ describe("importStudioSnippets", () => {
   it("sets the marker when the folder is missing", () => {
     addProject("alpha");
 
-    expect(importStudioSnippets(db, snippetsDir)).toEqual({ projects: 1, snippets: 0, folders: 0 });
+    expect(importStudioSnippets(db, snippetsDir)).toEqual({
+      found: false,
+      projects: 1,
+      snippets: 0,
+      folders: 0,
+    });
     expect(getSetting(db, "snippets_imported")).toBeDefined();
   });
 
@@ -131,7 +141,12 @@ describe("importStudioSnippets", () => {
     mkdirSync(snippetsDir);
     addProject("alpha");
 
-    expect(importStudioSnippets(db, snippetsDir)).toEqual({ projects: 1, snippets: 0, folders: 0 });
+    expect(importStudioSnippets(db, snippetsDir)).toEqual({
+      found: true,
+      projects: 1,
+      snippets: 0,
+      folders: 0,
+    });
     expect(getSetting(db, "snippets_imported")).toBeDefined();
   });
 
@@ -141,7 +156,12 @@ describe("importStudioSnippets", () => {
     writeFileSync(join(snippetsDir, "ok.sql"), "select 1");
     const alpha = addProject("alpha");
 
-    expect(importStudioSnippets(db, snippetsDir)).toEqual({ projects: 1, snippets: 1, folders: 0 });
+    expect(importStudioSnippets(db, snippetsDir)).toEqual({
+      found: true,
+      projects: 1,
+      snippets: 1,
+      folders: 0,
+    });
     expect(allSnippets(alpha).map((s) => s.name)).toEqual(["ok"]);
   });
 });
