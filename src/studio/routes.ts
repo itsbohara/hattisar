@@ -22,13 +22,13 @@ export type Route =
 const PROJECTS_PAGE = "/_hs/projects";
 export const API_PREFIX = "/_hs/api";
 
-// Matched case-insensitively and on the decoded path: Studio must never receive a pg-meta request
-// hattisar did not recognise, however the client spells it. Anything under the prefix without a
-// usable ref is a 404, not a pass-through.
-const PG_META_PREFIX = /^\/api\/platform\/pg-meta(?:\/|$)/i;
-const PG_META = /^\/api\/platform\/pg-meta\/([^/]+)(\/.*)?$/i;
+// Matched case-insensitively, on the decoded path and across repeated slashes: Studio must never
+// receive a pg-meta request hattisar did not recognise, however the client spells it. Anything
+// under the prefix without a usable ref is a 404, not a pass-through.
+const PG_META_PREFIX = /^\/api\/+platform\/+pg-meta(?:\/|$)/i;
+const PG_META = /^\/api\/+platform\/+pg-meta\/([^/]+)(\/.*)?$/i;
 // Studio's handlers under this path share one snippet folder across every project, so it is
-// matched as loosely as pg-meta, repeated slashes included: no spelling of it reaches Studio.
+// matched the same way as pg-meta: no spelling of it reaches Studio.
 const CONTENT = /^\/api\/+platform\/+projects\/+([^/]*)\/+content(\/.*)?$/i;
 
 export function classifyRequest(method: string, rawPath: string): Route {
