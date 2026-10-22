@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { folderId, snippetId } from "../snippets/ids.js";
 import type { Registry } from "./db.js";
 
@@ -207,13 +208,17 @@ export function createFolder(
   now: string = new Date().toISOString(),
 ): CreateFolderResult {
   if (!isValidSnippetName(name)) return { ok: false, reason: "invalid-name" };
+  // A renamed folder keeps the id derived from its old name, so a new folder under that old name
+  // needs another id. The browser only learns folder ids from the server, so any uuid will do.
+  const derivedId = folderId(name);
+  const id = getFolder(db, projectId, derivedId) ? randomUUID() : derivedId;
   try {
     const folder = db
       .prepare<[number, string, string, string], FolderRow>(
         `INSERT INTO snippet_folders (project_id, id, name, created_at)
          VALUES (?, ?, ?, ?) RETURNING ${FOLDER_COLUMNS}`,
       )
-      .get(projectId, folderId(name), name, now) as FolderRow;
+      .get(projectId, id, name, now) as FolderRow;
     return { ok: true, folder };
   } catch (error) {
     if (isUniqueViolation(error)) return { ok: false, reason: "name-taken" };
