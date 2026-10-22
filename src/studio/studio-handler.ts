@@ -2,6 +2,8 @@ import type { Context } from "hono";
 import { canAccess } from "../auth/access.js";
 import type { AuthEnv } from "../auth/middleware.js";
 import type { Config } from "../config.js";
+import type { Registry } from "../registry/db.js";
+import { handleContent } from "./content.js";
 import { connectionHeaders, generateTypescriptTypes, type PgMetaLog, runQuery } from "./pg-meta.js";
 import {
   AI_DISABLED_BODY,
@@ -22,13 +24,14 @@ import { classifyRequest } from "./routes.js";
 
 export interface StudioDeps {
   config: Config;
+  db: Registry;
   projects: ProjectSource;
   pgMetaLog: PgMetaLog;
 }
 
 const PROJECT_NOT_FOUND = { message: "Project not found" };
 
-export function createStudioHandler({ config, projects, pgMetaLog }: StudioDeps) {
+export function createStudioHandler({ config, db, projects, pgMetaLog }: StudioDeps) {
   const pgMetaTimeoutMs = config.pgMetaTimeoutSeconds * 1000;
 
   function trace(c: Context, project: ProjectSummary): void {
@@ -100,6 +103,8 @@ export function createStudioHandler({ config, projects, pgMetaLog }: StudioDeps)
         }
         case "run-lints":
           return c.json([]);
+        case "project-content":
+          return await handleContent(c, db, project, c.req.method, route.rest);
         case "project-types": {
           trace(c, project);
           const result = await generateTypescriptTypes(

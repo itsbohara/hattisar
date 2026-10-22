@@ -11,6 +11,7 @@ export type Route =
   | { kind: "run-lints"; ref: string }
   | { kind: "platform-projects" }
   | { kind: "platform-project"; ref: string }
+  | { kind: "project-content"; ref: string; rest: string }
   | { kind: "project-api-pass"; ref: string }
   | { kind: "pg-meta-query"; ref: string }
   | { kind: "pg-meta"; ref: string }
@@ -26,6 +27,9 @@ export const API_PREFIX = "/_hs/api";
 // usable ref is a 404, not a pass-through.
 const PG_META_PREFIX = /^\/api\/platform\/pg-meta(?:\/|$)/i;
 const PG_META = /^\/api\/platform\/pg-meta\/([^/]+)(\/.*)?$/i;
+// Case-insensitive like pg-meta: nothing under it may reach Studio, whose handlers there share one
+// snippet folder across every project.
+const CONTENT = /^\/content(\/.*)?$/i;
 
 export function classifyRequest(method: string, rawPath: string): Route {
   const path = decodePath(rawPath);
@@ -66,6 +70,8 @@ export function classifyRequest(method: string, rawPath: string): Route {
   const project = /^\/api\/(platform|v1)\/projects\/([^/]+)(\/.*)?$/.exec(path);
   if (project?.[2]) {
     const [, api, ref, rest] = project;
+    const content = api === "platform" && rest !== undefined ? CONTENT.exec(rest) : null;
+    if (content) return { kind: "project-content", ref, rest: content[1] ?? "" };
     if (method === "GET" && api === "platform" && rest === undefined) {
       return { kind: "platform-project", ref };
     }
