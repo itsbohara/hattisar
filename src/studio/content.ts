@@ -18,6 +18,7 @@ import {
   type SnippetSummary,
   saveSnippet,
 } from "../registry/snippets.js";
+import { snippetId } from "../snippets/ids.js";
 import type { ProjectSummary } from "./projects-source.js";
 
 // Studio's own limit (its bodyParser sizeLimit "5mb").
@@ -25,6 +26,7 @@ const BODY_LIMIT = 5 * 1024 * 1024;
 const TOO_LARGE = Symbol("too large");
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const VISIBILITIES = ["user", "project", "org", "public"];
+const VISIBILITY_FILTERS = ["user", "project"];
 
 const NOT_FOUND_BODY = { message: "Not found" };
 const CONTENT_NOT_FOUND_BODY = { message: "Content not found." };
@@ -32,7 +34,7 @@ const SNIPPET_IDS_REQUIRED = { error: "Snippet IDs are required" };
 const FOLDER_IDS_REQUIRED = { error: "Folder IDs are required" };
 const INVALID_NAME = "Names must be non-empty and contain no / or NUL";
 
-type ListQuery = Omit<SnippetQuery, "folderId" | "includeSql"> & { visibility?: string };
+type ListQuery = Omit<SnippetQuery, "folderId" | "includeSql">;
 
 export async function handleContent(
   c: Context<AuthEnv>,
@@ -71,8 +73,14 @@ interface Scope {
 
 function listContent({ c, db, projectId, username }: Scope): Response {
   const query = parseListQuery(c);
-  if (query === undefined) return c.json({ data: [] }, 400);
-  if (query.visibility === "project") return c.json({ data: [] });
+  const visibility = c.req.query("visibility");
+  if (
+    query === undefined ||
+    (visibility !== undefined && !VISIBILITY_FILTERS.includes(visibility))
+  ) {
+    return c.json({ data: [] }, 400);
+  }
+  if (visibility === "project") return c.json({ data: [] });
   const page = listSnippets(db, projectId, { ...query, folderId: null, includeSql: true });
   return c.json({
     data: page.items.map((row) => studioSnippetWithContent(row, username)),
@@ -92,21 +100,18 @@ function listFolder({ c, db, projectId, username }: Scope, folderId: string | nu
 }
 
 function parseListQuery(c: Context<AuthEnv>): ListQuery | undefined {
-  const { name, cursor, limit, sort_by, sort_order, visibility } = c.req.query();
+  const { name, cursor, limit, sort_by, sort_order } = c.req.query();
+  if (limit !== undefined && !/^[1-9]\d*$/.test(limit)) return undefined;
   const pageSize = limit === undefined ? 100 : Number(limit);
-  if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 1000) return undefined;
+  if (pageSize > 1000) return undefined;
   if (sort_by !== undefined && sort_by !== "name" && sort_by !== "inserted_at") return undefined;
   if (sort_order !== undefined && sort_order !== "asc" && sort_order !== "desc") return undefined;
-  if (visibility !== undefined && visibility !== "user" && visibility !== "project") {
-    return undefined;
-  }
   return {
     name,
     cursor,
     limit: pageSize,
     sortBy: sort_by ?? "inserted_at",
     sortOrder: sort_order ?? "desc",
-    visibility,
   };
 }
 
@@ -135,21 +140,30 @@ async function upsertSnippet({ c, db, projectId, username }: Scope): Promise<Res
   const content = body.content as { sql: string };
   const folderId =
     body.folder_id === undefined ? (existing?.folderId ?? null) : (body.folder_id as string | null);
+  const name = body.name as string;
+  // Studio's reads derive every id from folder and name, so a new snippet takes that id whatever
+  // the body says; keeping the body's id would let it squat on another name's id.
+  const id = existing ? body.id : snippetId(folderId, name);
+  if (!existing && getSnippet(db, projectId, id)) return nameTaken(c);
   const result = saveSnippet(db, projectId, {
-    id: body.id,
-    name: body.name as string,
+    id,
+    name,
     sql: content.sql,
     folderId,
   });
   if (result.ok) return c.json(studioSnippetWithContent(result.snippet, username));
   switch (result.reason) {
     case "name-taken":
-      return c.json({ error: "A snippet with this name already exists in the folder" }, 409);
+      return nameTaken(c);
     case "unknown-folder":
       return c.json({ error: "Folder not found" }, 400);
     case "invalid-name":
       return c.json({ error: INVALID_NAME }, 400);
   }
+}
+
+function nameTaken(c: Context<AuthEnv>): Response {
+  return c.json({ error: "A snippet with this name already exists in the folder" }, 409);
 }
 
 // Studio validates only a new snippet against its full schema; an update reads just these fields.
@@ -179,7 +193,7 @@ function newSnippetProblem(body: Record<string, unknown>): string | undefined {
 }
 
 function removeSnippets({ c, db, projectId }: Scope): Response {
-  const ids = splitIds(c.req.query("ids"));
+  const ids = queryIds(c);
   if (ids.length === 0 || !ids.every((id) => UUID.test(id))) {
     return c.json(SNIPPET_IDS_REQUIRED, 400);
   }
@@ -200,7 +214,7 @@ async function addFolder({ c, db, projectId }: Scope): Promise<Response> {
 }
 
 function removeFolders({ c, db, projectId }: Scope): Response {
-  const ids = splitIds(c.req.query("ids")).filter(Boolean);
+  const ids = queryIds(c).filter(Boolean);
   if (ids.length === 0) return c.json(FOLDER_IDS_REQUIRED, 400);
   deleteFolders(db, projectId, ids);
   return c.json({});
@@ -219,9 +233,11 @@ async function renameOne({ c, db, projectId }: Scope, id: string): Promise<Respo
     : c.json({ error: "Folder not found" }, 404);
 }
 
-function splitIds(value: string | undefined): string[] {
-  if (value === undefined) return [];
-  return [...new Set(value.split(",").map((id) => id.trim()))];
+// Empty when ids is missing or repeated, which both deletes refuse.
+function queryIds(c: Context<AuthEnv>): string[] {
+  const values = c.req.queries("ids");
+  if (values?.length !== 1) return [];
+  return [...new Set((values[0] as string).split(",").map((id) => id.trim()))];
 }
 
 async function readJson(request: Request): Promise<unknown> {
