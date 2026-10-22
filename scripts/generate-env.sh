@@ -1,6 +1,6 @@
 #!/bin/sh
-# Writes <target> from <template> with every secret freshly generated. Never touches an existing
-# <target>.
+# Writes <target> from <template> with every secret freshly generated. On an existing <target>,
+# appends each key the template has and the target lacks, and never changes an existing line.
 set -eu
 
 if [ $# -ne 2 ]; then
@@ -11,23 +11,68 @@ fi
 template=$1
 target=$2
 
-[ -f "$target" ] && exit 0
+secret_bytes='HATTISAR_SECRET_KEY 32
+HATTISAR_ADMIN_PASSWORD 12
+PG_META_CRYPTO_KEY 32
+POSTGRES_PASSWORD 24
+POOLER_SECRET_KEY_BASE 48
+POOLER_VAULT_ENC_KEY 16
+POOLER_JWT_SECRET 32
+S3_TEST_ACCESS_KEY 10
+S3_TEST_SECRET_KEY 20'
 
 hex() {
   openssl rand -hex "$1"
 }
 
+# Prints the key of a `KEY=value` line; prints nothing for comments, blanks and anything else.
+key_of() {
+  case $1 in
+    [A-Za-z_]*=*) ;;
+    *) return 0 ;;
+  esac
+  key=${1%%=*}
+  case $key in
+    *[!A-Za-z0-9_]*) ;;
+    *) printf '%s\n' "$key" ;;
+  esac
+}
+
+# Prints the line for <key>: a fresh secret if <key> is one, else the template's <line>.
+line_for() {
+  bytes=$(printf '%s\n' "$secret_bytes" | while read -r name n; do
+    if [ "$name" = "$1" ]; then printf '%s\n' "$n"; fi
+  done)
+  if [ -n "$bytes" ]; then
+    printf '%s=%s\n' "$1" "$(hex "$bytes")"
+  else
+    printf '%s\n' "$2"
+  fi
+}
+
 umask 077
 
-sed \
-  -e "s|^HATTISAR_SECRET_KEY=.*|HATTISAR_SECRET_KEY=$(hex 32)|" \
-  -e "s|^HATTISAR_ADMIN_PASSWORD=.*|HATTISAR_ADMIN_PASSWORD=$(hex 12)|" \
-  -e "s|^PG_META_CRYPTO_KEY=.*|PG_META_CRYPTO_KEY=$(hex 32)|" \
-  -e "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=$(hex 24)|" \
-  -e "s|^POOLER_SECRET_KEY_BASE=.*|POOLER_SECRET_KEY_BASE=$(hex 48)|" \
-  -e "s|^POOLER_VAULT_ENC_KEY=.*|POOLER_VAULT_ENC_KEY=$(hex 16)|" \
-  -e "s|^POOLER_JWT_SECRET=.*|POOLER_JWT_SECRET=$(hex 32)|" \
-  -e "s|^S3_TEST_ACCESS_KEY=.*|S3_TEST_ACCESS_KEY=$(hex 10)|" \
-  -e "s|^S3_TEST_SECRET_KEY=.*|S3_TEST_SECRET_KEY=$(hex 20)|" \
-  "$template" >"$target"
-echo "wrote $target with generated secrets"
+if [ ! -f "$target" ]; then
+  while IFS= read -r line || [ -n "$line" ]; do
+    key=$(key_of "$line")
+    if [ -n "$key" ]; then
+      line_for "$key" "$line"
+    else
+      printf '%s\n' "$line"
+    fi
+  done <"$template" >"$target"
+  echo "wrote $target with generated secrets"
+  exit 0
+fi
+
+while IFS= read -r line || [ -n "$line" ]; do
+  key=$(key_of "$line")
+  [ -n "$key" ] || continue
+  grep -q "^$key=" "$target" && continue
+  # Without this, the first appended key would join a last line that has no newline.
+  if [ -s "$target" ] && [ -n "$(tail -c 1 "$target")" ]; then
+    echo >>"$target"
+  fi
+  line_for "$key" "$line" >>"$target"
+  echo "added $key to $target"
+done <"$template"
