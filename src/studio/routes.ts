@@ -27,9 +27,9 @@ export const API_PREFIX = "/_hs/api";
 // usable ref is a 404, not a pass-through.
 const PG_META_PREFIX = /^\/api\/platform\/pg-meta(?:\/|$)/i;
 const PG_META = /^\/api\/platform\/pg-meta\/([^/]+)(\/.*)?$/i;
-// Case-insensitive like pg-meta: nothing under it may reach Studio, whose handlers there share one
-// snippet folder across every project.
-const CONTENT = /^\/content(\/.*)?$/i;
+// Studio's handlers under this path share one snippet folder across every project, so it is
+// matched as loosely as pg-meta, repeated slashes included: no spelling of it reaches Studio.
+const CONTENT = /^\/api\/+platform\/+projects\/+([^/]*)\/+content(\/.*)?$/i;
 
 export function classifyRequest(method: string, rawPath: string): Route {
   const path = decodePath(rawPath);
@@ -42,6 +42,13 @@ export function classifyRequest(method: string, rawPath: string): Route {
     const ref = match[1];
     const isQuery = method === "POST" && match[2]?.toLowerCase() === "/query";
     return isQuery ? { kind: "pg-meta-query", ref } : { kind: "pg-meta", ref };
+  }
+
+  const content = CONTENT.exec(path);
+  if (content) {
+    const ref = content[1];
+    if (!ref) return { kind: "not-found" };
+    return { kind: "project-content", ref, rest: (content[2] ?? "").replace(/\/+/g, "/") };
   }
 
   if (path === "/_hs/healthz" || path === "/_hs/login" || path.startsWith("/_hs/static/")) {
@@ -70,8 +77,6 @@ export function classifyRequest(method: string, rawPath: string): Route {
   const project = /^\/api\/(platform|v1)\/projects\/([^/]+)(\/.*)?$/.exec(path);
   if (project?.[2]) {
     const [, api, ref, rest] = project;
-    const content = api === "platform" && rest !== undefined ? CONTENT.exec(rest) : null;
-    if (content) return { kind: "project-content", ref, rest: content[1] ?? "" };
     if (method === "GET" && api === "platform" && rest === undefined) {
       return { kind: "platform-project", ref };
     }
