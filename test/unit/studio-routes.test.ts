@@ -158,12 +158,21 @@ describe("classifyRequest", () => {
     });
   });
 
+  it.each(["/api/platform/projects/x/contentful", "/api/v1/projects/x/content"])(
+    "leaves %s to the project pass-through",
+    (path) => {
+      expect(classifyRequest("GET", path)).toEqual({ kind: "project-api-pass", ref: "x" });
+    },
+  );
+
   describe("never lets a pg-meta path through without a ref", () => {
     it.each([
       "/api/platform/pg-meta",
       "/api/platform/pg-meta/",
       "/api/platform/pg-meta//tables",
       "/API/Platform/PG-META/spike-b/tables",
+      "/api//platform/pg-meta/spike-b/tables",
+      "/api/platform//pg-meta/spike-b/tables",
     ])("%s", (path) => {
       expect(classifyRequest("GET", path)).toMatchObject({
         kind: expect.stringMatching(/^(pg-meta|not-found)$/),
