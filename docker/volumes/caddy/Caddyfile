@@ -1,0 +1,3 @@
+{$HATTISAR_DOMAIN} {
+	reverse_proxy hattisar:8000
+}

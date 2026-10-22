@@ -142,7 +142,7 @@ services:
       studio:
         condition: service_healthy
     ports:
-      - ${HATTISAR_PORT:-8000}:8000
+      - ${HATTISAR_BIND:-0.0.0.0}:${HATTISAR_PORT:-8000}:8000
     networks:
       - default
       - docker-api
@@ -180,6 +180,24 @@ services:
       POOLER_PORT_TRANSACTION: ${POOLER_PORT_TRANSACTION:-}
       # Literal, never ${DOCKER_HOST}: interpolation would take the host shell's own Docker socket.
       DOCKER_HOST: tcp://docker-proxy:2375
+
+  caddy:
+    image: caddy:2.11.7
+    profiles: [caddy]
+    restart: unless-stopped
+    depends_on:
+      hattisar:
+        condition: service_healthy
+    ports:
+      - 80:80
+      - 443:443
+      - 443:443/udp
+    volumes:
+      - ./volumes/caddy/Caddyfile:/etc/caddy/Caddyfile:ro,z
+      - caddy-data:/data
+      - caddy-config:/config
+    environment:
+      HATTISAR_DOMAIN: ${HATTISAR_DOMAIN:-}
 
   # Managed boxes (§10): the only way hattisar reaches Docker. Reachable from hattisar alone, on an
   # internal network, with no published port. CONTAINERS with POST also covers start, stop and
@@ -230,3 +248,5 @@ volumes:
   db-config:
   hattisar-data:
   studio-snippets:
+  caddy-data:
+  caddy-config:
