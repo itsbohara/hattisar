@@ -54,6 +54,10 @@ function importSharedSnippets(registry: Registry): void {
   try {
     const counts = importStudioSnippets(registry, STUDIO_SNIPPETS_DIR);
     if (!counts) return;
+    if (!counts.found) {
+      console.log(`hattisar: no Studio snippets at ${STUDIO_SNIPPETS_DIR}; nothing imported`);
+      return;
+    }
     console.log(
       `hattisar: imported ${counts.snippets} snippets and ${counts.folders} folders from Studio into ${counts.projects} projects`,
     );

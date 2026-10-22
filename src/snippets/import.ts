@@ -1,4 +1,4 @@
-import { type Dirent, readdirSync, readFileSync, type Stats, statSync } from "node:fs";
+import { type Dirent, existsSync, readdirSync, readFileSync, type Stats, statSync } from "node:fs";
 import { join } from "node:path";
 import type { Registry } from "../registry/db.js";
 import { listProjects } from "../registry/projects.js";
@@ -28,6 +28,8 @@ interface StudioFolder {
 }
 
 export interface ImportCounts {
+  // False when the directory does not exist, e.g. a compose file without the read-only mount.
+  found: boolean;
   projects: number;
   snippets: number;
   folders: number;
@@ -37,6 +39,7 @@ export interface ImportCounts {
 // Studio itself ignores deeper directories and non-.sql files, so they are not snippets.
 export function importStudioSnippets(db: Registry, dir: string): ImportCounts | undefined {
   if (getSetting(db, IMPORTED_SETTING) !== undefined) return undefined;
+  const found = existsSync(dir);
   const entries = readEntries(dir);
   const root = readSnippets(dir, entries);
   const folders = entries
@@ -56,6 +59,7 @@ export function importStudioSnippets(db: Registry, dir: string): ImportCounts | 
   })();
 
   return {
+    found,
     projects: projects.length,
     snippets: root.length + folders.reduce((sum, folder) => sum + folder.snippets.length, 0),
     folders: folders.length,
