@@ -136,6 +136,28 @@ describe("classifyRequest", () => {
     expect(classifyRequest("GET", path)).toEqual({ kind: "not-found" });
   });
 
+  describe("never lets a content path past hattisar's snippet handler", () => {
+    it.each([
+      ["/api/Platform/projects/abc/content", ""],
+      ["/API/platform/projects/abc/content/count", "/count"],
+      ["/api/platform/Projects/abc/CONTENT/item/x", "/item/x"],
+      ["/api/platform/projects/abc//content", ""],
+      ["/api//platform///projects/abc/content/folders", "/folders"],
+      ["/api/platform/projects/abc/content//folders//x", "/folders/x"],
+      ["/api/platform/projects/abc/%63ontent/count", "/count"],
+    ])("%s", (path, rest) => {
+      expect(classifyRequest("GET", path)).toEqual({ kind: "project-content", ref: "abc", rest });
+    });
+
+    it.each([
+      "/api/platform/projects//content",
+      "/api/platform/projects///content/count",
+      "/API/Platform/Projects//Content",
+    ])("answers %s without a ref with not-found", (path) => {
+      expect(classifyRequest("PUT", path)).toEqual({ kind: "not-found" });
+    });
+  });
+
   describe("never lets a pg-meta path through without a ref", () => {
     it.each([
       "/api/platform/pg-meta",

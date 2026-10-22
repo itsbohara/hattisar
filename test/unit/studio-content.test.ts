@@ -113,16 +113,15 @@ function project(ref: string): number {
 }
 
 function request(ref: string, path: string, init?: RequestInit): Promise<Response> {
+  return rawRequest(`/api/platform/projects/${ref}/content${path}`, init);
+}
+
+function rawRequest(path: string, init?: RequestInit): Promise<Response> {
   const headers = new Headers(init?.headers);
   headers.set("cookie", cookie);
   headers.set("origin", "http://hattisar.test");
   if (init?.body !== undefined) headers.set("content-type", "application/json");
-  return Promise.resolve(
-    app.request(`http://hattisar.test/api/platform/projects/${ref}/content${path}`, {
-      ...init,
-      headers,
-    }),
-  );
+  return Promise.resolve(app.request(`http://hattisar.test${path}`, { ...init, headers }));
 }
 
 function seed(ref: string, name: string, sql: string, folder: string | null = null) {
@@ -231,15 +230,25 @@ describe("GET content", () => {
     expect(body.data.map((s) => s.name)).toEqual(["new", "old"]);
   });
 
-  it.each(["limit=0", "limit=1001", "limit=abc", "sort_by=id", "sort_order=up", "visibility=org"])(
-    "answers %s with 400 {data:[]}",
-    async (query) => {
-      seed("alpha", "x", "1");
-      const response = await request("alpha", `?${query}`);
-      expect(response.status).toBe(400);
-      expect(await response.json()).toEqual({ data: [] });
-    },
-  );
+  it.each([
+    "limit=0",
+    "limit=1001",
+    "limit=abc",
+    "limit=",
+    "limit=1e2",
+    "limit=0x10",
+    "limit=010",
+    "limit=+5",
+    "limit=%205",
+    "sort_by=id",
+    "sort_order=up",
+    "visibility=org",
+  ])("answers %s with 400 {data:[]}", async (query) => {
+    seed("alpha", "x", "1");
+    const response = await request("alpha", `?${query}`);
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ data: [] });
+  });
 
   it("answers visibility=project with no snippets", async () => {
     seed("alpha", "x", "1");
@@ -343,6 +352,55 @@ describe("PUT content", () => {
     expect(getSnippet(registry, project("alpha"), snippetId(null, "x"))).toBeUndefined();
   });
 
+  it("refuses a chunked body over 5 MB with 413", async () => {
+    const chunk = new TextEncoder().encode("-".repeat(1024 * 1024));
+    let sent = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (sent++ < 6) controller.enqueue(chunk);
+        else controller.close();
+      },
+    });
+    const response = await request("alpha", "", {
+      method: "PUT",
+      body,
+      duplex: "half",
+    } as RequestInit);
+    expect(response.status).toBe(413);
+  });
+
+  it("stores a new snippet under the id its folder and name derive, not the id sent", async () => {
+    const response = await put("alpha", studioBody("a", "select 'a'", null, snippetId(null, "c")));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ id: snippetId(null, "a"), name: "a" });
+    expect(getSnippet(registry, project("alpha"), snippetId(null, "c"))).toBeUndefined();
+
+    const c = await put("alpha", studioBody("c", "select 'c'"));
+    expect(c.status).toBe(200);
+    expect(await c.json()).toMatchObject({ id: snippetId(null, "c"), name: "c" });
+    expect(getSnippet(registry, project("alpha"), snippetId(null, "a"))).toMatchObject({
+      name: "a",
+      sql: "select 'a'",
+    });
+  });
+
+  it("refuses a new snippet sent under another id whose name is taken with 409", async () => {
+    seed("alpha", "a", "select 'a'");
+    const response = await put("alpha", studioBody("a", "other", null, snippetId(null, "c")));
+    expect(response.status).toBe(409);
+    expect(getSnippet(registry, project("alpha"), snippetId(null, "a"))?.sql).toBe("select 'a'");
+  });
+
+  it("renames onto a name only while no snippet has it", async () => {
+    const b = seed("alpha", "b", "select 'b'");
+    seed("alpha", "c", "select 'c'");
+    expect((await put("alpha", studioBody("c", "x", null, b.id))).status).toBe(409);
+    await request("alpha", `?ids=${snippetId(null, "c")}`, { method: "DELETE" });
+    const renamed = await put("alpha", studioBody("c", "x", null, b.id));
+    expect(renamed.status).toBe(200);
+    expect(await renamed.json()).toMatchObject({ id: snippetId(null, "c"), name: "c" });
+  });
+
   it("accepts a body just under 5 MB", async () => {
     const response = await put("alpha", studioBody("x", "-".repeat(5 * 1024 * 1024 - 1024)));
     expect(response.status).toBe(200);
@@ -361,14 +419,17 @@ describe("DELETE content", () => {
     expect(getSnippet(registry, project("alpha"), snippetId(null, "c"))).toBeDefined();
   });
 
-  it.each(["", "?ids=", "?ids=not-a-uuid", `?ids=${snippetId(null, "a")},nope`])(
-    "answers %s with 400",
-    async (query) => {
-      const response = await request("alpha", query, { method: "DELETE" });
-      expect(response.status).toBe(400);
-      expect(await response.json()).toEqual({ error: "Snippet IDs are required" });
-    },
-  );
+  it.each([
+    "",
+    "?ids=",
+    "?ids=not-a-uuid",
+    `?ids=${snippetId(null, "a")},nope`,
+    `?ids=${snippetId(null, "a")}&ids=${snippetId(null, "b")}`,
+  ])("answers %s with 400", async (query) => {
+    const response = await request("alpha", query, { method: "DELETE" });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "Snippet IDs are required" });
+  });
 });
 
 describe("GET content/item/:id", () => {
@@ -484,6 +545,25 @@ describe("content/folders", () => {
       data: { folders: { id: string }[] };
     };
     expect(listed.data.folders.map((f) => f.id)).toEqual([kept]);
+  });
+
+  it("ignores visibility on folder listings", async () => {
+    const folder = seedFolder("alpha", "f");
+    seed("alpha", "root", "1");
+    for (const path of ["/folders?visibility=org", `/folders/${folder}?visibility=project`]) {
+      expect((await request("alpha", path)).status).toBe(200);
+    }
+    const body = (await (await request("alpha", "/folders?visibility=project")).json()) as {
+      data: { contents: unknown[] };
+    };
+    expect(body.data.contents).toHaveLength(1);
+  });
+
+  it("refuses repeated ids params on a folder delete with 400", async () => {
+    const f = seedFolder("alpha", "f");
+    const g = seedFolder("alpha", "g");
+    const response = await request("alpha", `/folders?ids=${f}&ids=${g}`, { method: "DELETE" });
+    expect(response.status).toBe(400);
   });
 
   it("refuses a folder delete without ids with 400", async () => {
@@ -617,6 +697,26 @@ describe("project isolation", () => {
 });
 
 describe("fail closed", () => {
+  it.each([
+    "/API/platform/projects/alpha/content",
+    "/api/Platform/Projects/alpha/CONTENT",
+    "/api/platform/projects/alpha//content",
+  ])("serves %s from the snippet store", async (path) => {
+    seed("alpha", "x", "1");
+    const response = await rawRequest(path);
+    expect(response.status).toBe(200);
+    expect(((await response.json()) as { data: unknown[] }).data).toHaveLength(1);
+  });
+
+  it.each([
+    "/API/platform/projects/nope/content",
+    "/api/Platform/projects/gone/content/count",
+    "/api/platform/projects/nope//content",
+    "/api/platform/projects//content",
+  ])("answers %s with 404", async (path) => {
+    expect((await rawRequest(path)).status).toBe(404);
+  });
+
   it.each([
     ["PATCH", ""],
     ["POST", ""],
