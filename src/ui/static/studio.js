@@ -55,8 +55,9 @@
   let lastRef = PROJECT.exec(location.pathname)?.[1];
   function reloadOnProjectChange() {
     const ref = PROJECT.exec(location.pathname)?.[1];
-    const changed =
-      ref !== undefined && ref !== lastRef && (lastRef !== undefined || ref === "default");
+    if (ref === undefined) return;
+    // lastRef stays the last project seen, so A, then a non-project page, then B still reloads.
+    const changed = ref !== lastRef && (lastRef !== undefined || ref === "default");
     lastRef = ref;
     if (changed) location.reload();
   }
