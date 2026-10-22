@@ -100,9 +100,9 @@ git tag cli-v0.2.0 && git push origin cli-v0.2.0   # tests, publishes to npm, cr
 ```
 
 Server releases work the same way: bump `version` in `package.json` through a PR, then tag the
-merged commit `v<version>`. That publishes the image and the compose bundle. After the first
-release, make the GHCR package public once in its package settings; the first run fails its
-public-pull check until then, so re-run the job.
+merged commit `v<version>`. That publishes the image, the compose bundle and `install.sh`. After
+the first release, make the GHCR package public once in its package settings; the first run fails
+its public-pull check until then, so re-run the job.
 
 ```sh
 git tag v0.1.0 && git push origin v0.1.0   # tests, pushes the image, creates the GitHub release
@@ -156,6 +156,8 @@ Set in `.env` next to `compose.yml` (`docker/.env` in a checkout; template:
 | `HATTISAR_ADMIN_PASSWORD` | — | Required on first boot, ≥ 12 chars. Ignored afterwards. |
 | `HATTISAR_PUBLIC_HOST` | `localhost` | Host shown in connection strings. |
 | `HATTISAR_PORT` | `8000` | Host-published port; the app listens on 8000 inside the container. |
+| `HATTISAR_BIND` | `0.0.0.0` | Host address `HATTISAR_PORT` is published on. The installer sets `127.0.0.1`. |
+| `HATTISAR_DOMAIN` | — | Domain the `caddy` profile serves over HTTPS with a Let's Encrypt certificate, proxying to hattisar. |
 | `HATTISAR_DATA_DIR` | `/data` | SQLite registry and temporary restore files. |
 | `HATTISAR_COOKIE_SECURE` | `false` | `true` behind HTTPS. |
 | `HATTISAR_PURGE_AFTER_DAYS` | `7` | Deleted projects are purged after this many days. |
@@ -182,7 +184,35 @@ stores, region, bucket, keys, path style, key prefix). The secret key is stored 
 Production runs `docker/compose.yml` without the development override. The hattisar image is
 published to `ghcr.io/itsbohara/hattisar`.
 
-**From a release** — nothing is built. Download `hattisar-<version>.tar.gz` from the
+### Install
+
+On a Linux server (`x86_64` or `aarch64`) with curl, openssl, Docker and Compose v2:
+
+```sh
+curl -fsSL https://github.com/itsbohara/hattisar/releases/latest/download/install.sh | sudo sh
+```
+
+It asks for a domain and whether to turn managed boxes on (the default, and what `--yes` picks;
+pass `--no-managed-boxes` to keep them off), installs into `/opt/hattisar`, and prints the URL
+and admin password. To answer up front:
+
+```sh
+curl -fsSL https://github.com/itsbohara/hattisar/releases/latest/download/install.sh \
+  | sudo sh -s -- --domain hattisar.example.com --yes
+```
+
+With a domain, Caddy serves it over HTTPS with a Let's Encrypt certificate (ports 80 and 443 must
+reach the server). Without one, hattisar listens on `127.0.0.1:8000` only: reach it with
+`ssh -L 8000:localhost:8000 <server>` or your own proxy to `127.0.0.1:8000`. To upgrade, run the
+same command again; it backs up the registry first and only adds new keys to `.env`. Every
+option is in [`docs/design.md` §17](docs/design.md#17-installer).
+
+Don't install on a Docker host that also runs a checkout's `pnpm stack:up`: both use the compose
+project `hattisar`, so they would share containers and volumes.
+
+### From a release by hand
+
+Nothing is built. Download `hattisar-<version>.tar.gz` from the
 [GitHub release](https://github.com/itsbohara/hattisar/releases), then:
 
 ```sh
@@ -191,7 +221,9 @@ sh generate-env.sh env.example .env   # fresh secrets; then review .env
 docker compose up -d
 ```
 
-**From a checkout** — builds the image from [`docker/Dockerfile`](docker/Dockerfile):
+### From a checkout
+
+Builds the image from [`docker/Dockerfile`](docker/Dockerfile):
 
 ```sh
 sh scripts/dev-env.sh     # generate docker/.env with fresh secrets, then edit it
@@ -200,10 +232,12 @@ docker compose -f docker/compose.yml -f docker/compose.source.yml up -d --build
 
 Before exposing it:
 
-- **TLS** — put hattisar behind a reverse proxy that terminates HTTPS (Caddy, nginx, Traefik) and
-  set `HATTISAR_COOKIE_SECURE=true`. Compose publishes `HATTISAR_PORT` on every interface; firewall
-  it so only the proxy reaches it. The proxy must pass the browser's `Host` header through
-  unchanged: hattisar compares it with `Origin` on every POST, and answers a mismatch with 403.
+- **TLS** — the installer's domain option sets this up (Caddy, `HATTISAR_BIND=127.0.0.1`).
+  Otherwise put hattisar behind a reverse proxy that terminates HTTPS (Caddy, nginx, Traefik) and
+  set `HATTISAR_COOKIE_SECURE=true`. Compose publishes `HATTISAR_PORT` on `HATTISAR_BIND`, every
+  interface by default; set it to `127.0.0.1` or firewall the port so only the proxy reaches it.
+  The proxy must pass the browser's `Host` header through unchanged: hattisar compares it with
+  `Origin` on every POST, and answers a mismatch with 403.
 - **Public host** — set `HATTISAR_PUBLIC_HOST` to the name apps use to reach the boxes; it goes
   into every connection string.
 - **Pooler ports** — 54322 and 6543 are published for apps on the shared box. Close them if no
@@ -215,12 +249,13 @@ Before exposing it:
 - **PITR** — dumps restore to the moment of the dump. For production boxes also run box-level
   point-in-time recovery (WAL-G, pgBackRest) on the Postgres servers themselves.
 - **Shared box** — development only. Put production projects on a registered or managed box.
-- **Managed boxes** — off by default; see the security note below before turning them on.
+- **Managed boxes** — off in a hand install, on by default with the installer; see the security
+  note below.
 
-To upgrade a release, replace `compose.yml`, `volumes/` and `generate-env.sh` with the ones from
-the new bundle, compare `env.example` with `.env` for new keys, then run
-`docker compose pull && docker compose up -d`. To upgrade a checkout, pull and run the same
-`up -d --build`. Registry migrations run at boot.
+To upgrade an install, run the installer again. To upgrade a release by hand, replace
+`compose.yml`, `volumes/` and `generate-env.sh` with the ones from the new bundle, compare
+`env.example` with `.env` for new keys, then run `docker compose pull && docker compose up -d`.
+To upgrade a checkout, pull and run the same `up -d --build`. Registry migrations run at boot.
 Upgrading the pinned Studio and Postgres images is covered in
 [`docs/upgrading-studio.md`](docs/upgrading-studio.md).
 

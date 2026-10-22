@@ -27,7 +27,7 @@ stage=$(mktemp -d)
 trap 'rm -rf "$stage"' EXIT
 
 bundle="$stage/hattisar"
-mkdir -p "$bundle/volumes/db" "$bundle/volumes/pooler"
+mkdir -p "$bundle/volumes/db" "$bundle/volumes/pooler" "$bundle/volumes/caddy"
 
 pinned="image: ghcr.io/itsbohara/hattisar:\${HATTISAR_VERSION:-$version}"
 sed "s|image: ghcr\.io/itsbohara/hattisar:\${HATTISAR_VERSION:-latest}|$pinned|" \
@@ -42,6 +42,7 @@ cp "$root/docker/env.example" "$root/docker/NOTICE" "$root/scripts/generate-env.
 cp "$root/docker/volumes/db/roles.sql" "$root/docker/volumes/db/_supabase.sql" \
   "$root/docker/volumes/db/pooler.sql" "$bundle/volumes/db/"
 cp "$root/docker/volumes/pooler/pooler.exs" "$bundle/volumes/pooler/"
+cp "$root/docker/volumes/caddy/Caddyfile" "$bundle/volumes/caddy/"
 
 tarball="$out_dir/hattisar-$version.tar.gz"
 COPYFILE_DISABLE=1 tar -czf "$tarball" -C "$stage" hattisar

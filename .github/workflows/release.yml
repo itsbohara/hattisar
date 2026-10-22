@@ -84,6 +84,7 @@ jobs:
       - name: Create the GitHub release
         run: |
           gh release create "$GITHUB_REF_NAME" "$RUNNER_TEMP/hattisar-$VERSION.tar.gz" \
+            scripts/install.sh \
             --title "hattisar $VERSION" --generate-notes \
             ${PRERELEASE:+--prerelease}
         env:

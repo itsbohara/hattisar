@@ -398,7 +398,8 @@ the host shell.
 
 `supabase/studio:2026.10.12-sha-3699278` · `supabase/postgres-meta:v0.100.0` ·
 `supabase/postgres:17.6.1.136` · `supabase/supavisor:2.9.13`. Bumping any of them requires the
-routing e2e (§13) to pass.
+routing e2e (§13) to pass. `caddy:2.11.7` (the installer's `caddy` profile, §17) is outside that
+rule: it never reaches a project database.
 
 ## 13. Testing
 
@@ -418,7 +419,7 @@ routing e2e (§13) to pass.
 ## 14. Out of v1
 
 The post-v1 roadmap is the GitHub milestone "Roadmap": a release pipeline (§16), a one-line
-installer, per-project SQL snippets, pooler for non-shared boxes (J3), a WAL-G point-in-time
+installer (§17), per-project SQL snippets, pooler for non-shared boxes (J3), a WAL-G point-in-time
 recovery recipe in the docs, and a plain-Postgres boxes spike (E3). Parked, each until its
 condition holds:
 
@@ -587,11 +588,12 @@ A server release is a `v<version>` tag (first `v0.1.0`), separate from the CLI's
    containing `-`) gets only the `<version>` tag.
 4. Smoke-tests the pushed image on each platform, then checks it can be pulled anonymously.
 5. Builds the bundle `hattisar-<version>.tar.gz` with `scripts/release-bundle.sh` and creates the
-   GitHub release `v<version>` with the bundle attached and generated notes, marked prerelease for
-   a prerelease version.
+   GitHub release `v<version>` with the bundle and `install.sh` (§17) attached and generated
+   notes, marked prerelease for a prerelease version.
 
 The bundle unpacks to `hattisar/`: `compose.yml`, `env.example`, `generate-env.sh`, `volumes/` (the
-db init SQL and `pooler.exs`) and `NOTICE`, the same layout as `docker/` plus the env generator.
+db init SQL, `pooler.exs` and the `Caddyfile`) and `NOTICE`, the same layout as `docker/` plus the
+env generator.
 Its `compose.yml` is `docker/compose.yml` with the hattisar image's default tag replaced by the
 exact version, so an install never drifts: `sh generate-env.sh env.example .env` (fresh secrets,
 never overwriting an existing `.env`), review `.env`, `docker compose up -d`. Nothing is built.
@@ -604,3 +606,70 @@ checkout in production mode).
 The GHCR package is public; a package's first push can create it private, in which case it is made
 public once in its settings. Public packages cost nothing to store or pull.
 
+
+## 17. Installer
+
+`install.sh` is attached to every server release (§16), so the one-line install is
+
+```sh
+curl -fsSL https://github.com/itsbohara/hattisar/releases/latest/download/install.sh | sudo sh
+```
+
+and `| sudo sh -s -- <options>` passes options. It is POSIX sh, wrapped in one function called on
+its last line, so a truncated download runs nothing. It runs on Linux `x86_64` and `aarch64` with
+curl, openssl, Docker and Compose v2, and refuses anything else before touching the disk.
+
+Options: `--dir <path>` (default `/opt/hattisar`), `--version <x.y.z>` (default: the latest
+release, from the redirect of `releases/latest`, so prereleases are never picked by default),
+`--domain <name>` or `--no-domain`, `--managed-boxes` or `--no-managed-boxes`, and `--yes` (take
+the defaults for every unanswered question: no domain, managed boxes on). Questions are read from
+`/dev/tty`, since stdin is the script itself; with no terminal and an unanswered question it stops
+with exit 2 naming the flag to pass.
+
+The download is unpacked into a temporary directory and the images are pulled from there; the
+install directory is written only after that succeeds (and, on an upgrade, after the backup), so a
+failure before then leaves it as it was. A bundle whose `compose.yml` lacks `HATTISAR_BIND`, or,
+when a domain is served, has no `volumes/caddy/Caddyfile`, predates the installer and is refused.
+
+**First install** (the directory has no `.env`):
+
+1. Refuses if Docker volumes of the compose project the directory would form already exist: they
+   hold an earlier install's data, encrypted with its `.env`. Restoring that `.env`, or
+   `docker compose down -v` in the old install as a deliberate reset, is the way on.
+2. Asks "Domain for hattisar (empty: localhost only)". With a domain it sets
+   `HATTISAR_DOMAIN`, `HATTISAR_PUBLIC_HOST` to the domain and `HATTISAR_COOKIE_SECURE=true`, and
+   enables the `caddy` profile: Caddy serves the domain on 80/443 with a Let's Encrypt certificate
+   and proxies to hattisar. Either way `HATTISAR_BIND=127.0.0.1`, so hattisar's own port is never
+   public; without a domain it is reached through an SSH tunnel or the operator's own proxy.
+3. Asks "Enable managed boxes? [Y/n]", noting that hattisar then reaches Docker through the
+   socket proxy (§10). Yes sets `HATTISAR_MANAGED_BOXES=true` and adds `managed-boxes` to
+   `COMPOSE_PROFILES`.
+4. Downloads `hattisar-<version>.tar.gz` from the release; `generate-env.sh env.example .env`
+   writes fresh secrets, and the answers go into `.env`, including `COMPOSE_PROFILES`, so a plain
+   `docker compose up -d` in the directory keeps them.
+5. `docker compose pull`, copies the bundle and `.env` into the directory, `docker compose up -d
+   --wait`.
+6. Prints the URL, the admin username and the admin password.
+
+**Re-running it upgrades** (the directory has a `.env`): no questions; answer flags are ignored
+with a note, since `.env` is edited by hand. It downloads the bundle, pulls, stops hattisar, and
+copies the registry (`hattisar.db` and any `-wal`/`-shm`) to `<file>.bak-<old version>` inside the
+`hattisar-data` volume when it exists; a `hattisar.db.bak-<old version>` left by an earlier attempt
+is kept with its set, never overwritten. Only then does it replace every bundle file but never
+`.env`, run `generate-env.sh` to add keys new in `env.example` (§16), and start the stack. The old
+version is read from the pinned image line of the `compose.yml` being replaced. It prints the URL
+but not the password, which may have changed since first boot. A version below the installed one
+(numeric major.minor.patch, a prerelease below its release) is refused, since the registry may
+carry migrations it cannot read; the refusal prints the manual rollback (restore the `.bak-<version>`
+files, set `HATTISAR_VERSION` in `.env`), as does a failed start after an upgrade.
+
+`generate-env.sh <template> <target>` writes a missing target with every secret generated; on an
+existing target it appends each key the template has and the target lacks, generating it if it is
+a secret and copying the template's value otherwise, and never changes an existing line. If a
+secret cannot be generated (no openssl) it fails, leaving a missing target unwritten.
+
+`docker/compose.yml` publishes hattisar on `${HATTISAR_BIND:-0.0.0.0}:${HATTISAR_PORT:-8000}`; a
+checkout keeps today's behaviour. The `caddy` service (profile `caddy`, pinned `caddy` image) reads
+`volumes/caddy/Caddyfile` from the bundle, keeps certificates in the `caddy-data` volume, and is
+the only service the installer publishes on all interfaces apart from the shared box's pooler
+ports (§5), which apps on other hosts use.
