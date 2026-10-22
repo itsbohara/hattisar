@@ -97,7 +97,8 @@ export function markProjectRestored(db: Registry, id: number): void {
   ).run(id);
 }
 
-// Cascades to the project's backup rows and schedule; the S3 objects are the caller's concern.
+// Cascades to the project's backup rows, schedule and snippets; the S3 objects are the caller's
+// concern.
 export function deleteProject(db: Registry, id: number): void {
   db.prepare<[number]>("DELETE FROM projects WHERE id = ?").run(id);
 }
