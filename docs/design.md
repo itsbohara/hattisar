@@ -617,7 +617,7 @@ curl -fsSL https://github.com/itsbohara/hattisar/releases/latest/download/instal
 
 and `| sudo sh -s -- <options>` passes options. It is POSIX sh, wrapped in one function called on
 its last line, so a truncated download runs nothing. It runs on Linux `x86_64` and `aarch64` with
-Docker and Compose v2, and refuses anything else before touching the disk.
+curl, openssl, Docker and Compose v2, and refuses anything else before touching the disk.
 
 Options: `--dir <path>` (default `/opt/hattisar`), `--version <x.y.z>` (default: the latest
 release, from the redirect of `releases/latest`, so prereleases are never picked by default),
@@ -626,32 +626,42 @@ the defaults for every unanswered question: no domain, managed boxes on). Questi
 `/dev/tty`, since stdin is the script itself; with no terminal and an unanswered question it stops
 with exit 2 naming the flag to pass.
 
+The download is unpacked into a temporary directory and the images are pulled from there; the
+install directory is written only after that succeeds (and, on an upgrade, after the backup), so a
+failure before then leaves it as it was.
+
 **First install** (the directory has no `.env`):
 
-1. Downloads `hattisar-<version>.tar.gz` from the release and unpacks it into the directory.
-2. `generate-env.sh env.example .env` writes fresh secrets.
-3. Asks "Domain for hattisar (empty: localhost only)". With a domain it sets
+1. Refuses if Docker volumes of the compose project the directory would form already exist: they
+   hold an earlier install's data, encrypted with its `.env`. Restoring that `.env`, or
+   `docker compose down -v` in the old install as a deliberate reset, is the way on.
+2. Asks "Domain for hattisar (empty: localhost only)". With a domain it sets
    `HATTISAR_DOMAIN`, `HATTISAR_PUBLIC_HOST` to the domain and `HATTISAR_COOKIE_SECURE=true`, and
    enables the `caddy` profile: Caddy serves the domain on 80/443 with a Let's Encrypt certificate
    and proxies to hattisar. Either way `HATTISAR_BIND=127.0.0.1`, so hattisar's own port is never
    public; without a domain it is reached through an SSH tunnel or the operator's own proxy.
-4. Asks "Enable managed boxes? [Y/n]", noting that hattisar then reaches Docker through the
+3. Asks "Enable managed boxes? [Y/n]", noting that hattisar then reaches Docker through the
    socket proxy (§10). Yes sets `HATTISAR_MANAGED_BOXES=true` and adds `managed-boxes` to
    `COMPOSE_PROFILES`.
-5. Writes those answers into `.env`, including `COMPOSE_PROFILES`, so a plain `docker compose up
-   -d` in the directory keeps them; then `docker compose pull` and `docker compose up -d --wait`.
+4. Downloads `hattisar-<version>.tar.gz` from the release; `generate-env.sh env.example .env`
+   writes fresh secrets, and the answers go into `.env`, including `COMPOSE_PROFILES`, so a plain
+   `docker compose up -d` in the directory keeps them.
+5. `docker compose pull`, copies the bundle and `.env` into the directory, `docker compose up -d
+   --wait`.
 6. Prints the URL, the admin username and the admin password.
 
-**Re-running it upgrades** (the directory has a `.env`): no questions. It downloads the bundle,
-replaces every bundle file but never `.env`, runs `generate-env.sh` to add keys new in
-`env.example` (§16), pulls, stops hattisar, copies the registry to
-`/data/hattisar.db.bak-<old version>` inside the `hattisar-data` volume, and starts the stack. The
-old version is read from the pinned image line of the `compose.yml` being replaced. It prints the
-URL but not the password, which may have changed since first boot.
+**Re-running it upgrades** (the directory has a `.env`): no questions; answer flags are ignored
+with a note, since `.env` is edited by hand. It downloads the bundle, pulls, stops hattisar, and
+copies the registry (`hattisar.db` and any `-wal`/`-shm`) to `<file>.bak-<old version>` inside the
+`hattisar-data` volume when it exists. Only then does it replace every bundle file but never
+`.env`, run `generate-env.sh` to add keys new in `env.example` (§16), and start the stack. The old
+version is read from the pinned image line of the `compose.yml` being replaced. It prints the URL
+but not the password, which may have changed since first boot.
 
 `generate-env.sh <template> <target>` writes a missing target with every secret generated; on an
 existing target it appends each key the template has and the target lacks, generating it if it is
-a secret and copying the template's value otherwise, and never changes an existing line.
+a secret and copying the template's value otherwise, and never changes an existing line. If a
+secret cannot be generated (no openssl) it fails, leaving a missing target unwritten.
 
 `docker/compose.yml` publishes hattisar on `${HATTISAR_BIND:-0.0.0.0}:${HATTISAR_PORT:-8000}`; a
 checkout keeps today's behaviour. The `caddy` service (profile `caddy`, pinned `caddy` image) reads
