@@ -24,14 +24,18 @@ if [ "$1 $2" = "compose version" ]; then
   exit 0
 fi
 echo "$* cwd=$PWD" >>"$DOCKER_LOG"
-case "$*" in
-  "volume ls"*) printf '%s' "\${STUB_VOLUMES:-}" ;;
-  "compose run"*) printf '%s' "\${STUB_RUN_STDOUT:-}" ;;
-esac
 if [ -n "\${STUB_FAIL:-}" ]; then
   case "$*" in "$STUB_FAIL"*) exit 1 ;; esac
 fi
-exit 0
+case "$*" in
+  "volume ls"*) printf '%s' "\${STUB_VOLUMES:-}" ;;
+  "compose run"*)
+    # Runs the backup script against STUB_DATA standing in for the volume's /data.
+    [ -n "\${STUB_DATA:-}" ] || exit 0
+    while [ $# -gt 1 ] && [ "$1" != -c ]; do shift; done
+    printf '%s\n' "$2" | sed "s|/data|$STUB_DATA|g" | sh
+    ;;
+esac
 `;
 
 const stubUname = `#!/bin/sh
@@ -47,13 +51,35 @@ let work: string;
 let dir: string;
 let log: string;
 
+function release(version: string, alter?: (bundle: string) => void) {
+  const out = join(releases, "download", `v${version}`);
+  mkdirSync(out, { recursive: true });
+  const tarball = execFileSync("sh", [join(root, "scripts/release-bundle.sh"), version, out], {
+    encoding: "utf8",
+  }).trim();
+  if (!alter) return;
+  const unpacked = join(releases, `unpacked-${version}`);
+  mkdirSync(unpacked);
+  execFileSync("tar", ["-xzf", tarball, "-C", unpacked]);
+  alter(join(unpacked, "hattisar"));
+  execFileSync("tar", ["-czf", tarball, "-C", unpacked, "hattisar"], {
+    env: { ...process.env, COPYFILE_DISABLE: "1" },
+  });
+}
+
 beforeAll(() => {
   releases = mkdtempSync(join(tmpdir(), "hattisar-install-releases-"));
-  for (const version of ["0.1.0", "0.2.0"]) {
-    const out = join(releases, "download", `v${version}`);
-    mkdirSync(out, { recursive: true });
-    execFileSync("sh", [join(root, "scripts/release-bundle.sh"), version, out]);
-  }
+  release("0.1.0");
+  release("0.2.0");
+  // Bundles from before the installer: no HATTISAR_BIND in compose.yml, then no Caddyfile.
+  release("0.0.8", (bundle) => {
+    const compose = join(bundle, "compose.yml");
+    writeFileSync(
+      compose,
+      readFileSync(compose, "utf8").replaceAll(`\${HATTISAR_BIND:-0.0.0.0}:`, ""),
+    );
+  });
+  release("0.0.9", (bundle) => rmSync(join(bundle, "volumes/caddy"), { recursive: true }));
 });
 
 afterAll(() => {
@@ -207,13 +233,131 @@ describe("install.sh", () => {
 
   it("names the registry backup when one was taken", () => {
     expect(install(`--yes --version 0.1.0 --dir ${dir}`).status).toBe(0);
+    const data = join(work, "data");
+    mkdirSync(data);
+    writeFileSync(join(data, "hattisar.db"), "registry");
+    writeFileSync(join(data, "hattisar.db-wal"), "wal");
 
-    const result = install(`--version 0.2.0 --dir ${dir}`, {
-      STUB_RUN_STDOUT: "/data/hattisar.db.bak-0.1.0\n",
-    });
+    const result = install(`--version 0.2.0 --dir ${dir}`, { STUB_DATA: data });
 
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toContain("/data/hattisar.db.bak-0.1.0");
+    expect(readFileSync(join(data, "hattisar.db.bak-0.1.0"), "utf8")).toBe("registry");
+    expect(readFileSync(join(data, "hattisar.db-wal.bak-0.1.0"), "utf8")).toBe("wal");
+    expect(existsSync(join(data, "hattisar.db-shm.bak-0.1.0"))).toBe(false);
+    expect(result.stdout).toContain("hattisar.db.bak-0.1.0");
+    expect(result.stdout).toContain("hattisar.db-wal.bak-0.1.0");
+  });
+
+  it("keeps a backup an earlier attempt already took", () => {
+    expect(install(`--yes --version 0.1.0 --dir ${dir}`).status).toBe(0);
+    const data = join(work, "data");
+    mkdirSync(data);
+    writeFileSync(join(data, "hattisar.db"), "half-migrated");
+    writeFileSync(join(data, "hattisar.db-wal"), "wal");
+    writeFileSync(join(data, "hattisar.db.bak-0.1.0"), "clean");
+
+    const result = install(`--version 0.2.0 --dir ${dir}`, { STUB_DATA: data });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(readFileSync(join(data, "hattisar.db.bak-0.1.0"), "utf8")).toBe("clean");
+    expect(existsSync(join(data, "hattisar.db-wal.bak-0.1.0"))).toBe(false);
+    expect(result.stdout).toMatch(/hattisar\.db\.bak-0\.1\.0.*kept/);
+  });
+
+  it("refuses a bundle from before the installer", () => {
+    const result = install(`--yes --version 0.0.8 --dir ${dir}`);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      "hattisar 0.0.8 predates the installer; pass --version <newer>",
+    );
+    expect(existsSync(dir)).toBe(false);
+    expect(mutatingCalls()).toEqual([]);
+  });
+
+  it("refuses a domain with a bundle that has no Caddyfile", () => {
+    const result = install(`--domain h.example.com --yes --version 0.0.9 --dir ${dir}`);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      "hattisar 0.0.9 predates the installer; pass --version <newer>",
+    );
+    expect(existsSync(dir)).toBe(false);
+    expect(mutatingCalls()).toEqual([]);
+    expect(install(`--no-domain --yes --version 0.0.9 --dir ${dir}`).status).toBe(0);
+  });
+
+  it("explains where things stand when the first start fails", () => {
+    const result = install(`--yes --version 0.1.0 --dir ${dir}`, { STUB_FAIL: "compose up" });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(`${dir}/.env`);
+    expect(result.stderr).toMatch(/re-run/i);
+    expect(result.stderr).toContain("docker compose down -v");
+    expect(result.stderr).not.toContain(env().get("HATTISAR_ADMIN_PASSWORD"));
+    expect(result.stdout).not.toContain(env().get("HATTISAR_ADMIN_PASSWORD"));
+  });
+
+  it("explains how to roll back when the upgraded stack fails to start", () => {
+    expect(install(`--yes --version 0.1.0 --dir ${dir}`).status).toBe(0);
+    const data = join(work, "data");
+    mkdirSync(data);
+    writeFileSync(join(data, "hattisar.db"), "registry");
+
+    const result = install(`--version 0.2.0 --dir ${dir}`, {
+      STUB_DATA: data,
+      STUB_FAIL: "compose up",
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("hattisar.db.bak-0.1.0");
+    expect(result.stderr).toContain("HATTISAR_VERSION=0.1.0");
+    expect(result.stderr).toMatch(/roll back/);
+  });
+
+  it.each([
+    ["0.2.0", "0.1.0"],
+    ["0.2.0", "0.2.0-rc.1"],
+  ])("refuses to downgrade %s to %s", (installed, target) => {
+    expect(install(`--yes --version ${installed} --dir ${dir}`).status).toBe(0);
+    const before = snapshot(dir);
+    writeFileSync(log, "");
+
+    const result = install(`--version ${target} --dir ${dir}`);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(installed);
+    expect(result.stderr).toContain(target);
+    expect(result.stderr).toContain("backup");
+    expect(snapshot(dir)).toEqual(before);
+    expect(mutatingCalls()).toEqual([]);
+  });
+
+  it("re-runs the installed version", () => {
+    expect(install(`--yes --version 0.1.0 --dir ${dir}`).status).toBe(0);
+
+    expect(install(`--version 0.1.0 --dir ${dir}`).status).toBe(0);
+  });
+
+  it("warns when .env pins HATTISAR_VERSION", () => {
+    expect(install(`--yes --version 0.1.0 --dir ${dir}`).status).toBe(0);
+    writeFileSync(
+      join(dir, ".env"),
+      `${readFileSync(join(dir, ".env"), "utf8")}HATTISAR_VERSION=0.1.0\n`,
+    );
+
+    const result = install(`--version 0.2.0 --dir ${dir}`);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stderr).toMatch(/^install: .*HATTISAR_VERSION=0\.1\.0/m);
+  });
+
+  it("says when the Docker daemon cannot be reached", () => {
+    const result = install(`--yes --version 0.1.0 --dir ${dir}`, { STUB_FAIL: "volume ls" });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("cannot reach the Docker daemon");
+    expect(existsSync(dir)).toBe(false);
   });
 
   it("notes the answer flags an upgrade ignores", () => {
@@ -226,7 +370,16 @@ describe("install.sh", () => {
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stderr).toContain("ignored");
-    expect(result.stderr).toContain(".env");
+    for (const key of [
+      "HATTISAR_DOMAIN",
+      "HATTISAR_PUBLIC_HOST",
+      "HATTISAR_COOKIE_SECURE",
+      "HATTISAR_MANAGED_BOXES",
+      "COMPOSE_PROFILES",
+      "docker compose up -d",
+    ]) {
+      expect(result.stderr).toContain(key);
+    }
     expect(readFileSync(join(dir, ".env"), "utf8")).toBe(before);
   });
 
