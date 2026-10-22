@@ -13,6 +13,8 @@ const TABLES = [
   "schema_migrations",
   "sessions",
   "settings",
+  "snippet_folders",
+  "snippets",
   "users",
 ];
 
