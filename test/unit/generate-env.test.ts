@@ -65,12 +65,33 @@ describe("generate-env.sh", () => {
     }
   });
 
-  it("leaves an existing target untouched", () => {
+  it("leaves a complete target untouched", () => {
     const target = join(dir, ".env");
-    writeFileSync(target, "HATTISAR_SECRET_KEY=keep-me\n");
+    generate(target);
+    const before = readFileSync(target, "utf8");
 
     expect(generate(target)).toBe("");
-    expect(readFileSync(target, "utf8")).toBe("HATTISAR_SECRET_KEY=keep-me\n");
+    expect(readFileSync(target, "utf8")).toBe(before);
+  });
+
+  it("adds keys the template has and the target lacks", () => {
+    const target = join(dir, ".env");
+    generate(target);
+    const before = readFileSync(target, "utf8")
+      .split("\n")
+      .filter((line) => !/^(POOLER_JWT_SECRET|HATTISAR_PURGE_AFTER_DAYS)=/.test(line))
+      .join("\n");
+    writeFileSync(target, before);
+
+    const output = generate(target);
+
+    expect(output).toContain(`added POOLER_JWT_SECRET to ${target}`);
+    expect(output).toContain(`added HATTISAR_PURGE_AFTER_DAYS to ${target}`);
+    const after = readFileSync(target, "utf8");
+    expect(after.startsWith(before)).toBe(true);
+    const env = values(target);
+    expect(env.get("POOLER_JWT_SECRET")).toMatch(/^[0-9a-f]{64}$/);
+    expect(env.get("HATTISAR_PURGE_AFTER_DAYS")).toBe("7");
   });
 
   it("refuses missing arguments", () => {
