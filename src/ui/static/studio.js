@@ -47,19 +47,22 @@
     if (event.persisted && leftForConnect) location.reload();
   });
 
-  // Studio's logo links to /project/default, its built-in project, and navigates there without a
-  // request hattisar could redirect (design §3). A full load lets the server decide. Never on page
-  // load or within /project/default: a hattisar project with ref "default" would reload forever.
+  // A client-side move into another project gets a full load. Studio's logo links to
+  // /project/default, its built-in project, without a request hattisar could redirect (design §3).
+  // And Studio keeps snippets in memory by id alone, while hattisar gives the same name the same id
+  // in every project (§3.3): without a reload, B's editor would show and autosave A's snippet.
+  // Never on page load or within one ref: a hattisar project with ref "default" would reload forever.
   let lastRef = PROJECT.exec(location.pathname)?.[1];
-  function loadDefaultFromServer() {
+  function reloadOnProjectChange() {
     const ref = PROJECT.exec(location.pathname)?.[1];
-    const entered = ref === "default" && lastRef !== "default";
+    const changed =
+      ref !== undefined && ref !== lastRef && (lastRef !== undefined || ref === "default");
     lastRef = ref;
-    if (entered) location.reload();
+    if (changed) location.reload();
   }
 
   function onNavigate() {
-    loadDefaultFromServer();
+    reloadOnProjectChange();
     redirectConnect();
   }
 
