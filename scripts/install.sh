@@ -87,7 +87,7 @@ version_below() {
 
 # Prints to stderr how to put back the registry backed up as *.bak-<version> and run <version>.
 rollback_steps() {
-  restore="cd /data && rm -f hattisar.db-wal hattisar.db-shm"
+  restore="cd /data && test -f hattisar.db.bak-$1 && rm -f hattisar.db-wal hattisar.db-shm"
   restore="$restore && for f in hattisar.db*.bak-$1; do cp -p \"\$f\" \"\${f%.bak-$1}\"; done"
   {
     echo "To roll back to $1, in $dir:"
