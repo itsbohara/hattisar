@@ -628,7 +628,8 @@ with exit 2 naming the flag to pass.
 
 The download is unpacked into a temporary directory and the images are pulled from there; the
 install directory is written only after that succeeds (and, on an upgrade, after the backup), so a
-failure before then leaves it as it was.
+failure before then leaves it as it was. A bundle whose `compose.yml` lacks `HATTISAR_BIND`, or,
+when a domain is served, has no `volumes/caddy/Caddyfile`, predates the installer and is refused.
 
 **First install** (the directory has no `.env`):
 
@@ -653,10 +654,14 @@ failure before then leaves it as it was.
 **Re-running it upgrades** (the directory has a `.env`): no questions; answer flags are ignored
 with a note, since `.env` is edited by hand. It downloads the bundle, pulls, stops hattisar, and
 copies the registry (`hattisar.db` and any `-wal`/`-shm`) to `<file>.bak-<old version>` inside the
-`hattisar-data` volume when it exists. Only then does it replace every bundle file but never
+`hattisar-data` volume when it exists; a `hattisar.db.bak-<old version>` left by an earlier attempt
+is kept with its set, never overwritten. Only then does it replace every bundle file but never
 `.env`, run `generate-env.sh` to add keys new in `env.example` (§16), and start the stack. The old
 version is read from the pinned image line of the `compose.yml` being replaced. It prints the URL
-but not the password, which may have changed since first boot.
+but not the password, which may have changed since first boot. A version below the installed one
+(numeric major.minor.patch, a prerelease below its release) is refused, since the registry may
+carry migrations it cannot read; the refusal prints the manual rollback (restore the `.bak-<version>`
+files, set `HATTISAR_VERSION` in `.env`), as does a failed start after an upgrade.
 
 `generate-env.sh <template> <target>` writes a missing target with every secret generated; on an
 existing target it appends each key the template has and the target lacks, generating it if it is

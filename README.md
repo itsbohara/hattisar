@@ -207,6 +207,9 @@ reach the server). Without one, hattisar listens on `127.0.0.1:8000` only: reach
 same command again; it backs up the registry first and only adds new keys to `.env`. Every
 option is in [`docs/design.md` §17](docs/design.md#17-installer).
 
+Don't install on a Docker host that also runs a checkout's `pnpm stack:up`: both use the compose
+project `hattisar`, so they would share containers and volumes.
+
 ### From a release by hand
 
 Nothing is built. Download `hattisar-<version>.tar.gz` from the
