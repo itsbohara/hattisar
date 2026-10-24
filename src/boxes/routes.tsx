@@ -97,7 +97,7 @@ export function boxRoutes(deps: BoxServiceDeps & { managed?: ManagedBoxes }): Ho
   app.post("/_hs/boxes/:id/remove", async (c) => {
     const box = getBoxById(db, boxId(c.req.param("id")));
     let result: RemoveResult;
-    if (box?.kind === "registered") result = removeBox(db, box);
+    if (box?.kind === "registered") result = await removeBox(deps, box);
     else if (box?.kind === "managed" && managed) result = await managed.remove(box);
     else return c.notFound();
     if (result.ok) return c.redirect(BOXES_PAGE, 302);

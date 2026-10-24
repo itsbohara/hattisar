@@ -1,5 +1,5 @@
 import { serve } from "@hono/node-server";
-import { backupDeps, createApp, projectServiceDeps } from "./app.js";
+import { backupDeps, createApp, poolerTenants, projectServiceDeps } from "./app.js";
 import { seedAdmin } from "./auth/seed.js";
 import { removeStaleRestoreDirs } from "./backups/restore.js";
 import { runScheduledBackups } from "./backups/scheduled.js";
@@ -8,6 +8,7 @@ import { seedSharedBox } from "./boxes/shared.js";
 import { type Config, ConfigError, loadConfig } from "./config.js";
 import { Scheduler } from "./jobs.js";
 import { createManagedBoxes, type ManagedBoxes } from "./managed/service.js";
+import type { PoolerTenants } from "./pooler/tenants.js";
 import { purgeExpiredProjects } from "./projects/lifecycle.js";
 import { deleteExpiredApiTokens } from "./registry/api-tokens.js";
 import { openRegistry, type Registry } from "./registry/db.js";
@@ -67,9 +68,13 @@ function importSharedSnippets(registry: Registry): void {
   }
 }
 
-function managedBoxesOrExit(config: Config, registry: Registry): ManagedBoxes | undefined {
+function managedBoxesOrExit(
+  config: Config,
+  registry: Registry,
+  pooler: PoolerTenants,
+): ManagedBoxes | undefined {
   try {
-    return createManagedBoxes(config, registry, deriveSecretKey(config.secretKey));
+    return createManagedBoxes(config, registry, deriveSecretKey(config.secretKey), pooler);
   } catch (error) {
     registry.close();
     exitOnConfigError(error);
@@ -79,8 +84,9 @@ function managedBoxesOrExit(config: Config, registry: Registry): ManagedBoxes | 
 const config = configOrExit();
 const registry = await seededRegistry(config);
 importSharedSnippets(registry);
-const managed = managedBoxesOrExit(config, registry);
-const app = createApp(config, registry, managed);
+const pooler = poolerTenants(config, registry);
+const managed = managedBoxesOrExit(config, registry, pooler);
+const app = createApp(config, registry, managed, pooler);
 const scheduler = new Scheduler();
 const projectDeps = projectServiceDeps(config, registry, managed);
 scheduler.register("purge-deleted-projects", HOUR_MS, (now) =>
@@ -99,6 +105,10 @@ scheduler.register("scheduled-backups", MINUTE_MS, (now) =>
 scheduler.start();
 const server = serve({ fetch: app.fetch, port: LISTEN_PORT }, (info) => {
   console.log(`hattisar listening on :${info.port}`);
+});
+void pooler.reconcile().catch((error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error);
+  console.error(`hattisar: pooler tenant reconcile failed: ${message}`);
 });
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {

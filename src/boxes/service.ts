@@ -1,3 +1,4 @@
+import type { PoolerTenants } from "../pooler/tenants.js";
 import {
   type Box,
   deleteBox,
@@ -44,6 +45,7 @@ export interface BoxServiceDeps {
   db: Registry;
   secretKey: Buffer;
   check: (conn: BoxConnection) => Promise<E1Result>;
+  pooler: PoolerTenants;
 }
 
 export type BoxResult = { ok: true; box: Box } | { ok: false; problems: string[] };
@@ -141,6 +143,7 @@ export async function registerBox(deps: BoxServiceDeps, form: BoxForm): Promise<
     poolerTransactionPort: null,
     containerName: null,
   });
+  await deps.pooler.ensure(box);
   return { ok: true, box };
 }
 
@@ -164,7 +167,9 @@ export async function editBox(deps: BoxServiceDeps, box: Box, form: BoxForm): Pr
         ? box.adminPasswordEnc
         : encryptSecret(form.adminPassword, deps.secretKey),
   });
-  return { ok: true, box: getBoxById(deps.db, box.id) as Box };
+  const updated = getBoxById(deps.db, box.id) as Box;
+  await deps.pooler.ensure(updated);
+  return { ok: true, box: updated };
 }
 
 export type RemoveResult = { ok: true } | { ok: false; problem: string };
@@ -176,9 +181,10 @@ export function boxInUseProblem(db: Registry, box: Box): string | undefined {
   return `Box ${box.name} still has ${projects} ${noun} (including any in Trash). Delete and purge them before removing the box.`;
 }
 
-export function removeBox(db: Registry, box: Box): RemoveResult {
+export async function removeBox({ db, pooler }: BoxServiceDeps, box: Box): Promise<RemoveResult> {
   const problem = boxInUseProblem(db, box);
   if (problem !== undefined) return { ok: false, problem };
+  await pooler.drop(box);
   deleteBox(db, box.id);
   return { ok: true };
 }
