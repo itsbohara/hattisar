@@ -11,6 +11,7 @@ import { getBoxByName, getSharedBox, listBoxes } from "../../src/registry/boxes.
 import { openRegistry, type Registry } from "../../src/registry/db.js";
 import { insertProject } from "../../src/registry/projects.js";
 import { decryptSecret, deriveSecretKey } from "../../src/registry/secrets.js";
+import { RecordingPooler } from "../helpers/pooler.js";
 
 const secretKey = deriveSecretKey("b".repeat(32));
 const PASSWORD = "box-admin-password-not-echoed";
@@ -19,6 +20,7 @@ let dataDir: string;
 let db: Registry;
 let checked: BoxConnection[];
 let nextResult: E1Result;
+let pooler: RecordingPooler;
 let app: ReturnType<typeof boxRoutes>;
 
 function config(env: Record<string, string> = {}) {
@@ -38,9 +40,11 @@ beforeEach(() => {
   db = openRegistry(dataDir);
   checked = [];
   nextResult = { ok: true, problems: [] };
+  pooler = new RecordingPooler(db);
   app = boxRoutes({
     db,
     secretKey,
+    pooler,
     check: async (conn) => {
       checked.push(conn);
       return nextResult;
@@ -116,6 +120,13 @@ describe("registering a box", () => {
     expect(decryptSecret(box?.adminPasswordEnc ?? "", secretKey)).toBe(PASSWORD);
   });
 
+  it("ensures the new box's pooler tenant", async () => {
+    await post("/_hs/boxes", form);
+    expect(pooler.calls).toEqual([
+      { action: "ensure", box: getBoxByName(db, "prod-eu"), rowExists: true },
+    ]);
+  });
+
   it("renders every E1 problem with the entered values but never the password", async () => {
     nextResult = { ok: false, problems: ["Missing role: anon", "Missing role: service_role"] };
     const response = await post("/_hs/boxes", form);
@@ -126,6 +137,7 @@ describe("registering a box", () => {
     expect(html).toContain('value="pg.internal"');
     expect(html).not.toContain(PASSWORD);
     expect(listBoxes(db)).toEqual([]);
+    expect(pooler.calls).toEqual([]);
   });
 
   it("rejects an invalid name and port without connecting", async () => {
@@ -166,6 +178,16 @@ describe("editing and removing", () => {
     expect(updated?.adminPasswordEnc).toBe(box.adminPasswordEnc);
   });
 
+  it("ensures the pooler tenant against the updated row", async () => {
+    const box = await registered();
+    pooler.calls = [];
+    await post(`/_hs/boxes/${box.id}`, { ...form, sslmode: "disable", host: "pg2.internal" });
+    expect(pooler.calls).toEqual([
+      { action: "ensure", box: getBoxByName(db, "prod-eu"), rowExists: true },
+    ]);
+    expect(pooler.calls[0]?.box).toMatchObject({ host: "pg2.internal", sslmode: "disable" });
+  });
+
   it("refuses to remove a box that has projects", async () => {
     const box = await registered();
     insertProject(db, {
@@ -176,16 +198,20 @@ describe("editing and removing", () => {
       ownerRole: "alpha_owner",
       ownerPasswordEnc: "v1:x:y:z",
     });
+    pooler.calls = [];
     const response = await post(`/_hs/boxes/${box.id}/remove`, {});
     expect(response.status).toBe(409);
     expect(await response.text()).toContain("Box prod-eu still has 1 project");
     expect(getBoxByName(db, "prod-eu")).toBeDefined();
+    expect(pooler.calls).toEqual([]);
   });
 
-  it("removes a box without projects", async () => {
+  it("removes a box without projects, dropping its pooler tenant first", async () => {
     const box = await registered();
+    pooler.calls = [];
     expect((await post(`/_hs/boxes/${box.id}/remove`, {})).status).toBe(302);
     expect(getBoxByName(db, "prod-eu")).toBeUndefined();
+    expect(pooler.calls).toEqual([{ action: "drop", box, rowExists: true }]);
   });
 
   it("does not let the UI edit or remove the shared box", async () => {

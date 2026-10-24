@@ -18,6 +18,7 @@ import {
   type Project,
 } from "../../src/registry/projects.js";
 import { decryptSecret, deriveSecretKey, encryptSecret } from "../../src/registry/secrets.js";
+import { RecordingPooler } from "../helpers/pooler.js";
 import { signInToRegistry } from "../helpers/session.js";
 
 const secretKey = deriveSecretKey("m".repeat(32));
@@ -86,6 +87,7 @@ let db: Registry;
 let docker: FakeDocker;
 let checked: BoxConnection[];
 let e1Problems: string[];
+let pooler: RecordingPooler;
 let managed: ManagedBoxes;
 
 beforeEach(() => {
@@ -95,9 +97,11 @@ beforeEach(() => {
   docker = new FakeDocker();
   checked = [];
   e1Problems = [];
+  pooler = new RecordingPooler(db);
   managed = new ManagedBoxes({
     db,
     secretKey,
+    pooler,
     docker,
     publicHost: "db.example.test",
     portRange: { start: 55000, end: 55009 },
@@ -143,6 +147,7 @@ describe("creating a managed box", () => {
       publicPort: 55001,
       containerName: "hattisar-box-prod-eu",
     });
+    expect(pooler.calls).toEqual([{ action: "ensure", box, rowExists: true }]);
     const container = docker.containers.get("hattisar-box-prod-eu");
     expect(container?.spec).toMatchObject({
       box: "prod-eu",
@@ -194,6 +199,7 @@ describe("creating a managed box", () => {
     expect(getBoxByName(db, "prod-eu")).toBeUndefined();
     expect(docker.containers.size).toBe(0);
     expect(docker.volumes.size).toBe(0);
+    expect(pooler.calls).toEqual([]);
   });
 
   it("leaves a same-named container alone when creating its own fails", async () => {
@@ -220,10 +226,18 @@ describe("creating a managed box", () => {
 });
 
 describe("removing a managed box", () => {
-  it("removes the container and volume, then the row", async () => {
+  it("drops the pooler tenant, removes the container and volume, then the row", async () => {
     await managed.create("prod-eu");
     const box = getBoxByName(db, "prod-eu") as Box;
+    pooler.calls = [];
+    const removeContainer = docker.removeContainer.bind(docker);
+    docker.removeContainer = async (name: string) => {
+      docker.calls.push(`pooler calls: ${pooler.calls.map((call) => call.action).join(",")}`);
+      await removeContainer(name);
+    };
     expect(await managed.remove(box)).toEqual({ ok: true });
+    expect(pooler.calls).toEqual([{ action: "drop", box, rowExists: true }]);
+    expect(docker.calls).toContain("pooler calls: drop");
     expect(docker.containers.size).toBe(0);
     expect(docker.volumes.size).toBe(0);
     expect(getBoxByName(db, "prod-eu")).toBeUndefined();
@@ -233,9 +247,11 @@ describe("removing a managed box", () => {
     await managed.create("prod-eu");
     const box = getBoxByName(db, "prod-eu") as Box;
     seedProject(box, "my-app");
+    pooler.calls = [];
     const result = await managed.remove(box);
     expect(result.ok).toBe(false);
     expect(docker.containers.size).toBe(1);
+    expect(pooler.calls).toEqual([]);
   });
 
   it("keeps the row when Docker refuses", async () => {
@@ -293,6 +309,7 @@ describe("managed lifecycle hook", () => {
     expect(docker.containers.size).toBe(0);
     expect(docker.volumes.size).toBe(0);
     expect(getBoxByName(db, "prod-eu")).toBeUndefined();
+    expect(pooler.calls.at(-1)).toMatchObject({ action: "drop", box: { id: box.id } });
   });
 
   it("starts a stopped box to purge one of several deleted projects, then stops it again", async () => {
@@ -317,11 +334,11 @@ describe("managed lifecycle hook", () => {
 
 describe("with managed boxes off", () => {
   it("builds no Docker client", () => {
-    expect(createManagedBoxes(loadConfig(env), db, secretKey)).toBeUndefined();
+    expect(createManagedBoxes(loadConfig(env), db, secretKey, pooler)).toBeUndefined();
   });
 
   it("serves no managed-box pages or options", async () => {
-    const app = createApp(loadConfig(env), db);
+    const app = createApp(loadConfig(env), db, undefined, pooler);
     const cookie = signInToRegistry(db);
     const get = (path: string) => app.request(path, { headers: { cookie } });
     expect((await get("/_hs/managed-boxes/new")).status).toBe(404);
@@ -336,7 +353,7 @@ describe("with managed boxes off", () => {
   });
 
   it("offers them when on", async () => {
-    const app = createApp(loadConfig(env), db, managed);
+    const app = createApp(loadConfig(env), db, managed, pooler);
     const cookie = signInToRegistry(db);
     const get = (path: string) => app.request(path, { headers: { cookie } });
     expect((await get("/_hs/managed-boxes/new")).status).toBe(200);
