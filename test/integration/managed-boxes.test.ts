@@ -4,7 +4,7 @@ import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { connectionStrings, createProject, fetchWith } from "../helpers/projects.js";
 import { postForm, signIn } from "../helpers/session.js";
-import { registryRows, registrySql } from "../stack.js";
+import { registryRows, registrySql, stackEnv } from "../stack.js";
 
 // Needs the stack with the managed-boxes profile and HATTISAR_MANAGED_BOXES=true (pnpm stack:up).
 const baseUrl = process.env.HATTISAR_URL ?? "http://localhost:8000";
@@ -137,8 +137,8 @@ describe("a project on a new dedicated box", () => {
 
   it("gives the project a direct connection string that works from the host", async () => {
     const strings = await connectionStrings(baseUrl, cookie, ref);
-    expect(strings).toHaveLength(1);
-    url = strings[0] as string;
+    expect(strings).toHaveLength(3);
+    url = strings[2] as string;
     const parsed = new URL(url);
     expect(parsed.username).toBe(`hs_${dbName}_owner`);
     expect(parsed.port).toBe(String(boxRow(ref)?.publicPort));
@@ -149,6 +149,19 @@ describe("a project on a new dedicated box", () => {
       return (await client.query<{ user: string }>("select current_user as user")).rows[0]?.user;
     });
     expect(user).toBe(`hs_${dbName}_owner`);
+  });
+
+  it("gives it a session string that works from the host through the pooler", async () => {
+    const env = stackEnv();
+    const [session] = await connectionStrings(baseUrl, cookie, ref);
+    const parsed = new URL(session as string);
+    expect(parsed.username).toBe(`hs_${dbName}_owner.${env.POOLER_TENANT_ID}-${ref}`);
+    expect(parsed.port).toBe(env.POOLER_PORT_SESSION || "54322");
+    const rows = await withClient(
+      session as string,
+      async (client) => (await client.query("select current_user, current_database()")).rows,
+    );
+    expect(rows).toEqual([{ current_user: `hs_${dbName}_owner`, current_database: dbName }]);
   });
 
   it("stops the container on soft delete", async () => {
