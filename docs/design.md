@@ -252,15 +252,18 @@ every eligible box at boot (after listening, never holding up boot):
 1. Box stores a tenant: `GET /api/tenants/<id>`. Present with the box's `db_host` and `db_port` →
    done. Present but different → `PUT` without `users`. Supavisor terminates a tenant's pools on
    every update, so an unchanged tenant is never PUT. 404 → step 2.
-2. As the box admin, in `postgres`: create or alter role `hattisar_pooler` `LOGIN PASSWORD` with
-   the SCRAM verifier of a new random password; `CREATE SCHEMA IF NOT EXISTS hattisar_pooler`;
-   `CREATE OR REPLACE FUNCTION hattisar_pooler.get_auth(p_usename text) RETURNS TABLE(username
-   text, password text) LANGUAGE sql SECURITY DEFINER SET search_path = ''`, returning `rolname`
-   and `rolpassword` (NULL once `rolvaliduntil` has passed) from `pg_catalog.pg_authid` where
-   `rolname = p_usename AND rolcanlogin AND NOT rolsuper`; `EXECUTE` revoked from `PUBLIC` and
-   granted, with `USAGE` on the schema, to `hattisar_pooler`. The password is new on every
-   (re)create and hattisar never stores it.
-3. `PUT /api/tenants/<id>` with the full tenant below. Supavisor logs in as `hattisar_pooler` and
+2. As the box admin, in `postgres`: create or alter the tenant's own role
+   `hattisar_pooler_<first 12 hex of sha256(tenant id)>` `LOGIN PASSWORD` with the SCRAM verifier
+   of a new random password. One role per tenant, because several boxes (or hattisar installs) can
+   point at one server and a shared role's new password would break the other tenants. Then
+   `CREATE SCHEMA IF NOT EXISTS hattisar_pooler`; `CREATE OR REPLACE FUNCTION
+   hattisar_pooler.get_auth(p_usename text) RETURNS TABLE(username text, password text) LANGUAGE
+   sql SECURITY DEFINER SET search_path = ''`, returning `rolname` and `rolpassword` (NULL once
+   `rolvaliduntil` has passed) from `pg_catalog.pg_authid` where `rolname = p_usename AND
+   rolcanlogin AND NOT rolsuper`; `EXECUTE` revoked from `PUBLIC` and granted, with `USAGE` on the
+   schema, to the tenant's role. The password is new on every (re)create and hattisar never
+   stores it.
+3. `PUT /api/tenants/<id>` with the full tenant below. Supavisor logs in as the tenant's role and
    runs the auth query before creating it; a leftover tenant with that id is overwritten, its
    users included.
 4. Only then store `pooler_tenant` and the two ports.
@@ -269,14 +272,16 @@ every eligible box at boot (after listening, never holding up boot):
 {"tenant": {"db_host": "<host>", "db_port": 5432, "db_database": "postgres",
   "require_user": false, "auth_query": "SELECT * FROM hattisar_pooler.get_auth($1)",
   "upstream_ssl": false, "ip_version": "auto", "default_pool_size": 20, "default_max_clients": 100,
-  "users": [{"db_user": "hattisar_pooler", "db_password": "<password>", "mode_type": "transaction",
+  "users": [{"db_user": "<tenant role>", "db_password": "<password>", "mode_type": "transaction",
              "pool_size": 20, "is_manager": true}]}}
 ```
 
 **Drop** (box removed, or a registered box edited to `require`/`verify-full`):
 `GET /api/tenants/<id>/terminate`, then `DELETE /api/tenants/<id>` (404 counts as done), then clear
 the pooler fields. Best effort: a failure is logged and the removal goes on; a later tenant with
-the same id overwrites the leftover (step 3). The role and function stay on a registered box.
+the same id overwrites the leftover (step 3). On a registered box hattisar then drops the tenant's
+role as the box admin, also best effort; the `hattisar_pooler` schema and function stay, since
+other tenants on that server may use them.
 
 **Supavisor down or refusing:** the box is saved without pooler fields, its projects get the
 direct string only, the Boxes page shows "Pooler pending" for it, and the next boot or edit
