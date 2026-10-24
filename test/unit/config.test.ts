@@ -6,6 +6,7 @@ const required = {
   PG_META_CRYPTO_KEY: "meta-crypto-key",
   POSTGRES_PASSWORD: "postgres-password",
   POOLER_TENANT_ID: "hattisar",
+  POOLER_JWT_SECRET: "pooler-jwt-secret",
 };
 
 function load(overrides: Record<string, string | undefined> = {}) {
@@ -43,7 +44,12 @@ describe("loadConfig", () => {
       pgMetaCryptoKey: required.PG_META_CRYPTO_KEY,
       pgMetaTimeoutSeconds: 120,
       postgresPassword: required.POSTGRES_PASSWORD,
-      pooler: { tenantId: "hattisar", portSession: 54322, portTransaction: 6543 },
+      pooler: {
+        tenantId: "hattisar",
+        jwtSecret: required.POOLER_JWT_SECRET,
+        portSession: 54322,
+        portTransaction: 6543,
+      },
       debug: false,
     });
   });
@@ -77,12 +83,19 @@ describe("loadConfig", () => {
     expect(load({ HATTISAR_PORT: "" }).port).toBe(8000);
   });
 
-  it.each(["HATTISAR_SECRET_KEY", "PG_META_CRYPTO_KEY", "POSTGRES_PASSWORD", "POOLER_TENANT_ID"])(
-    "fails naming %s when it is missing",
-    (name) => {
-      expect(errorOf({ [name]: undefined }).message).toBe(`${name} is required`);
-    },
-  );
+  it.each([
+    "HATTISAR_SECRET_KEY",
+    "PG_META_CRYPTO_KEY",
+    "POSTGRES_PASSWORD",
+    "POOLER_TENANT_ID",
+    "POOLER_JWT_SECRET",
+  ])("fails naming %s when it is missing", (name) => {
+    expect(errorOf({ [name]: undefined }).message).toBe(`${name} is required`);
+  });
+
+  it("reads the pooler JWT secret", () => {
+    expect(load().pooler.jwtSecret).toBe(required.POOLER_JWT_SECRET);
+  });
 
   it("rejects a short secret key without echoing it", () => {
     const message = errorOf({ HATTISAR_SECRET_KEY: "too-short" }).message;
