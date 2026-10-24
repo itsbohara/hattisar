@@ -40,7 +40,8 @@ that `projects url --json` prints the chosen connection object and `logout` prin
 
 `projects url` prints one URL with the real password: the session pooler on a box with a tenant,
 direct otherwise. `--transaction` picks the transaction pooler and `--direct` the direct
-connection instead. Migrations stay with the official `supabase` CLI: `supabase db push --db-url "$(hattisar projects url my-app)"`.
+connection instead. Migrations stay with the official `supabase` CLI:
+`supabase db push --db-url "$(hattisar projects url my-app)"`.
 
 `projects restore` takes a project back out of the trash. `backups restore` replaces a project's
 data with one of its backups.

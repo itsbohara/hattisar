@@ -141,10 +141,10 @@ database that exists nowhere (`hattisar_no_project`), so a Studio route hattisar
 — including one a future Studio adds — fails instead of reading another project's data.
 
 The stack (`docker/compose.yml`) is `db` (the shared box, `supabase/postgres`), `meta`, `studio`,
-`supavisor` (one pooler tenant per box, registered by hattisar through Supavisor's API) and `hattisar`, plus `docker-proxy` under the
-`managed-boxes` profile. Only hattisar, the pooler and managed boxes publish host ports. hattisar keeps its own
-state in SQLite in the `hattisar-data` volume. The full design is in
-[`docs/design.md`](docs/design.md).
+`supavisor` (one pooler tenant per box, registered by hattisar through Supavisor's API) and
+`hattisar`, plus `docker-proxy` under the `managed-boxes` profile. Only hattisar, the pooler and
+managed boxes publish host ports. hattisar keeps its own state in SQLite in the `hattisar-data`
+volume. The full design is in [`docs/design.md`](docs/design.md).
 
 ## Configuration
 
