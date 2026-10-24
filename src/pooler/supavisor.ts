@@ -45,7 +45,6 @@ export class SupavisorError extends Error {
   }
 }
 
-// What the pooler service needs from Supavisor; SupavisorApi is the real one, tests may substitute.
 export interface TenantApi {
   get(id: string): Promise<TenantInfo | undefined>;
   put(id: string, tenant: TenantBody, scrub?: string): Promise<void>;
@@ -77,6 +76,21 @@ async function errorField(response: Response): Promise<string | undefined> {
   }
 }
 
+// Ensure PUTs whenever host or port differ, and every PUT drops the tenant's pools, so a body we
+// cannot read must fail rather than yield undefined fields. JSON parse errors quote the body.
+async function tenantInfo(response: Response): Promise<TenantInfo | undefined> {
+  try {
+    const body: unknown = await response.json();
+    const data = (body as { data?: { db_host?: unknown; db_port?: unknown } | null } | null)?.data;
+    const { db_host: dbHost, db_port: dbPort } = data ?? {};
+    return typeof dbHost === "string" && Number.isInteger(dbPort)
+      ? { dbHost, dbPort: dbPort as number }
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export class SupavisorApi implements TenantApi {
   private readonly jwtSecret: string;
   private readonly baseUrl: string;
@@ -96,10 +110,17 @@ export class SupavisorApi implements TenantApi {
   }
 
   async get(id: string): Promise<TenantInfo | undefined> {
-    const response = await this.request("GET", tenantPath(id), [404]);
+    const path = tenantPath(id);
+    const response = await this.request("GET", path, [404]);
     if (response.status === 404) return undefined;
-    const { data } = (await response.json()) as { data: { db_host: string; db_port: number } };
-    return { dbHost: data.db_host, dbPort: data.db_port };
+    const tenant = await tenantInfo(response);
+    if (tenant === undefined) {
+      throw new SupavisorError(
+        `Supavisor GET ${path} failed: unexpected response`,
+        response.status,
+      );
+    }
+    return tenant;
   }
 
   async put(id: string, tenant: TenantBody, scrub?: string): Promise<void> {
