@@ -270,6 +270,17 @@ describe("removing a managed box", () => {
   });
 });
 
+it("ensures the pooler tenant after starting a managed box", async () => {
+  await managed.create("prod-eu");
+  const box = getBoxByName(db, "prod-eu") as Box;
+  await managed.stop(box);
+  pooler.calls = [];
+  docker.calls = [];
+  await managed.start(box);
+  expect(docker.calls).toContain("start hattisar-box-prod-eu");
+  expect(pooler.calls).toEqual([{ action: "ensure", box, rowExists: true }]);
+});
+
 describe("managed lifecycle hook", () => {
   let box: Box;
   let hook: ReturnType<typeof managedLifecycle>;

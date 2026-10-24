@@ -8,7 +8,8 @@ import {
 } from "../../src/pooler/role.js";
 
 const PASSWORD = "plain-pooler-password";
-const ROLE = poolerRoleFor("hattisar-b1");
+const KEY = Buffer.alloc(32, 1);
+const ROLE = poolerRoleFor(KEY, "hattisar-b1");
 
 let sql: string[];
 let params: unknown[][];
@@ -37,14 +38,18 @@ beforeEach(() => {
 });
 
 describe("poolerRoleFor", () => {
-  it("derives a stable role from the tenant id's sha256", () => {
-    expect(poolerRoleFor("hattisar-b1")).toBe("hattisar_pooler_0f7b62bfffbe");
-    expect(poolerRoleFor("hattisar-b1")).toHaveLength(28);
-    expect(poolerRoleFor("hattisar-b1")).toBe(poolerRoleFor("hattisar-b1"));
+  it("derives a stable role from an HMAC of the tenant id under the install key", () => {
+    expect(ROLE).toBe("hattisar_pooler_bd4134478277");
+    expect(ROLE).toHaveLength(28);
+    expect(poolerRoleFor(KEY, "hattisar-b1")).toBe(ROLE);
   });
 
   it("gives each tenant its own role", () => {
-    expect(poolerRoleFor("hattisar-b2")).not.toBe(poolerRoleFor("hattisar-b1"));
+    expect(poolerRoleFor(KEY, "hattisar-b2")).not.toBe(ROLE);
+  });
+
+  it("gives each install its own role for the same tenant id", () => {
+    expect(poolerRoleFor(Buffer.alloc(32, 2), "hattisar-b1")).not.toBe(ROLE);
   });
 });
 

@@ -79,8 +79,8 @@ const admin: AdminClientRunner = async (conn, run, database) => {
   return run({} as pg.Client);
 };
 
-function service(ports = { portSession: 54322, portTransaction: 6543 }) {
-  return createPoolerTenants({ db, secretKey, api, admin, tenantPrefix: "hattisar", ...ports });
+function service(ports = { portSession: 54322, portTransaction: 6543 }, tenantPrefix = "hattisar") {
+  return createPoolerTenants({ db, secretKey, api, admin, tenantPrefix, ...ports });
 }
 
 function addBox(overrides: Partial<NewBox> = {}): Box {
@@ -151,8 +151,8 @@ describe("ensure on a new eligible box", () => {
     expect(api.puts).toHaveLength(1);
     const put = api.puts[0];
     expect(put?.id).toBe("hattisar-b1");
-    expect(install.mock.calls[0]?.[1]).toBe(poolerRoleFor("hattisar-b1"));
-    expect(put?.tenant.users?.[0]?.db_user).toBe(poolerRoleFor("hattisar-b1"));
+    expect(install.mock.calls[0]?.[1]).toBe(poolerRoleFor(secretKey, "hattisar-b1"));
+    expect(put?.tenant.users?.[0]?.db_user).toBe(poolerRoleFor(secretKey, "hattisar-b1"));
     expect(put?.tenant.users?.[0]?.db_password).toBe(password);
     expect(put?.scrub).toBe(password);
     expect(api.calls).toEqual(["admin db.b1", "put hattisar-b1"]);
@@ -169,7 +169,7 @@ describe("ensure on a new eligible box", () => {
     const box = addBox();
     await service().ensure(box);
     expect(poolerFields(box.id).poolerTenant).toBe(`hattisar-b1-${box.id}`);
-    expect(install.mock.calls[0]?.[1]).toBe(poolerRoleFor(`hattisar-b1-${box.id}`));
+    expect(install.mock.calls[0]?.[1]).toBe(poolerRoleFor(secretKey, `hattisar-b1-${box.id}`));
   });
 
   it("keeps the fields null and warns without the password when the PUT fails", async () => {
@@ -186,6 +186,25 @@ describe("ensure on a new eligible box", () => {
     expect(warn).toHaveBeenCalledTimes(1);
     expect(String(warn.mock.calls[0]?.[0])).not.toContain(password);
     expect(String(warn.mock.calls[0]?.[0])).toContain("b1");
+  });
+
+  it("never installs a role for an invalid tenant id", async () => {
+    const box = addBox();
+    await expect(
+      service({ portSession: 54322, portTransaction: 6543 }, "bad.prefix").ensure(box),
+    ).resolves.toBeUndefined();
+    expect(install).not.toHaveBeenCalled();
+    expect(api.calls).toEqual([]);
+    expect(poolerFields(box.id)).toEqual(NO_POOLER);
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it("scrubs the box admin password from the warning", async () => {
+    const box = addBox();
+    install.mockRejectedValueOnce(new Error("auth failed for admin-pw"));
+    await service().ensure(box);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0]?.[0])).not.toContain("admin-pw");
   });
 
   it("keeps the fields null and warns when installing the role fails", async () => {
@@ -207,15 +226,16 @@ describe("ensure on a box with a stored tenant", () => {
     expect(adminCalls).toEqual([]);
   });
 
-  it("puts the tenant without users when the host differs", async () => {
+  it("recreates the tenant with its role on the box's server when the host differs", async () => {
     const box = withTenant();
     api.tenants.set("hattisar-b1", { dbHost: "db.old", dbPort: 5432 });
     await service().ensure(box);
-    expect(adminCalls).toEqual([]);
-    expect(api.puts).toHaveLength(1);
-    expect(api.puts[0]?.id).toBe("hattisar-b1");
+    expect(adminCalls).toEqual([{ host: "db.b1", database: "postgres" }]);
+    expect(install.mock.calls[0]?.[1]).toBe(poolerRoleFor(secretKey, "hattisar-b1"));
+    expect(api.calls).toEqual(["get hattisar-b1", "admin db.b1", "put hattisar-b1"]);
     expect(api.puts[0]?.tenant.db_host).toBe("db.b1");
-    expect(api.puts[0]?.tenant).not.toHaveProperty("users");
+    expect(api.puts[0]?.tenant.users?.[0]?.db_password).toBe(install.mock.calls[0]?.[2]);
+    expect(poolerFields(box.id).poolerTenant).toBe("hattisar-b1");
   });
 
   it("recreates a missing tenant with a new password under the same id", async () => {
@@ -294,7 +314,7 @@ describe("drop", () => {
     expect(api.calls).toEqual(["remove hattisar-b1", "admin db.b1"]);
     expect(adminCalls).toEqual([{ host: "db.b1", database: "postgres" }]);
     expect(dropRole).toHaveBeenCalledTimes(1);
-    expect(dropRole.mock.calls[0]?.[1]).toBe(poolerRoleFor("hattisar-b1"));
+    expect(dropRole.mock.calls[0]?.[1]).toBe(poolerRoleFor(secretKey, "hattisar-b1"));
     expect(poolerFields(box.id)).toEqual(NO_POOLER);
     expect(warn).not.toHaveBeenCalled();
   });
@@ -310,12 +330,13 @@ describe("drop", () => {
 
   it("clears the fields and warns when dropping the role fails", async () => {
     const box = withTenant();
-    dropRole.mockRejectedValueOnce(new Error("connection refused"));
+    dropRole.mockRejectedValueOnce(new Error("connection refused for admin-pw"));
     await expect(service().drop(box)).resolves.toBeUndefined();
     expect(api.removed).toEqual(["hattisar-b1"]);
     expect(poolerFields(box.id)).toEqual(NO_POOLER);
     expect(warn).toHaveBeenCalledTimes(1);
     expect(String(warn.mock.calls[0]?.[0])).toContain("connection refused");
+    expect(String(warn.mock.calls[0]?.[0])).not.toContain("admin-pw");
   });
 
   it("leaves a managed box's role alone", async () => {

@@ -87,10 +87,6 @@ describe("tenantBody", () => {
       ],
     });
   });
-
-  it("leaves users out without a manager", () => {
-    expect(tenantBody({ host: "h", port: 5433 })).not.toHaveProperty("users");
-  });
 });
 
 describe("poolerStatus", () => {
