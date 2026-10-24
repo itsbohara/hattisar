@@ -232,4 +232,21 @@ describe("editing and removing", () => {
     expect(html).toContain("dev only");
     expect(html).toContain("Managed by environment");
   });
+
+  it("shows each box's pooler tenant, pending state or direct-only", async () => {
+    seedSharedBox(db, config(), secretKey);
+    await post("/_hs/boxes", { ...form, name: "tenanted", sslmode: "disable" });
+    db.prepare(
+      "UPDATE boxes SET pooler_tenant = 'hattisar-tenanted' WHERE name = 'tenanted'",
+    ).run();
+    await post("/_hs/boxes", { ...form, name: "pending", sslmode: "disable" });
+    await post("/_hs/boxes", { ...form, name: "secure" });
+    const html = await (await app.request("/_hs/boxes")).text();
+    const row = (name: string) =>
+      html.split("<tr").find((chunk) => chunk.includes(`data-box="${name}"`)) ?? "";
+    expect(row("shared")).toContain("hattisar");
+    expect(row("tenanted")).toContain("hattisar-tenanted");
+    expect(row("pending")).toContain("Pooler pending");
+    expect(row("secure")).toContain("Direct only");
+  });
 });
