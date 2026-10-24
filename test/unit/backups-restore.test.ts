@@ -89,7 +89,13 @@ beforeEach(() => {
   sql = [];
   restoreFails.value = false;
   deps = { db, secretKey, pgBinDir: "/unused", dataDir, backupHourUtc: 2 };
-  projectDeps = { db, secretKey, admin: fakeAdmin, refreshPooler: async () => {} };
+  projectDeps = {
+    db,
+    secretKey,
+    admin: fakeAdmin,
+    refreshPooler: async () => {},
+    poolerHost: "localhost",
+  };
 });
 
 afterEach(() => {

@@ -35,7 +35,7 @@ vi.mock("../../src/boxes/admin-client.js", async (importOriginal) => {
   };
 });
 
-vi.mock("../../src/projects/pooler.js", () => ({ refreshSharedPooler: async () => {} }));
+vi.mock("../../src/projects/pooler.js", () => ({ refreshPooler: async () => {} }));
 
 vi.mock("../../src/backups/s3.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../src/backups/s3.js")>()),
@@ -104,6 +104,7 @@ beforeEach(() => {
     loadConfig({
       HATTISAR_SECRET_KEY: SECRET,
       HATTISAR_DATA_DIR: dataDir,
+      HATTISAR_PUBLIC_HOST: "shared.test",
       PG_META_CRYPTO_KEY: "unit-test-crypto-key",
       POSTGRES_PASSWORD: "unused",
       POOLER_TENANT_ID: "hattisar",

@@ -100,6 +100,7 @@ beforeEach(() => {
     secretKey,
     admin: fakeAdmin,
     refreshPooler: async () => {},
+    poolerHost: "localhost",
     onLifecycle: async (_box, project, event) => {
       events.push({ ref: project.ref, event });
     },

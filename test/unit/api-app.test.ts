@@ -281,7 +281,13 @@ describe("projects", () => {
     api.route(
       API_PREFIX,
       apiRoutes(
-        { db, secretKey, admin: fakeAdmin, refreshPooler: async () => {} },
+        {
+          db,
+          secretKey,
+          admin: fakeAdmin,
+          refreshPooler: async () => {},
+          poolerHost: "pool.example.com",
+        },
         { db, secretKey, pgBinDir: "/unused", dataDir, backupHourUtc: 2 },
       ),
     );
@@ -390,12 +396,52 @@ describe("projects", () => {
       {
         label: "Session pooler",
         kind: "session",
-        url: `postgresql://hs_my_app_owner.hattisar:${password}@localhost:54322/my_app`,
+        url: `postgresql://hs_my_app_owner.hattisar:${password}@pool.example.com:54322/my_app`,
       },
       {
         label: "Transaction pooler",
         kind: "transaction",
-        url: `postgresql://hs_my_app_owner.hattisar:${password}@localhost:6543/my_app`,
+        url: `postgresql://hs_my_app_owner.hattisar:${password}@pool.example.com:6543/my_app`,
+      },
+    ]);
+  });
+
+  it("answers /connections for a box with a tenant with session, transaction and direct", async () => {
+    const box = insertBox(db, {
+      name: "b1",
+      kind: "registered",
+      devOnly: false,
+      host: "10.0.0.5",
+      port: 5432,
+      adminUser: "postgres",
+      adminPasswordEnc: encryptSecret(BOX_ADMIN_PASSWORD, secretKey),
+      sslmode: "disable",
+      publicHost: "db.example.com",
+      publicPort: 5433,
+      poolerTenant: "hattisar-b1",
+      poolerSessionPort: 54322,
+      poolerTransactionPort: 6543,
+      containerName: null,
+    });
+    await create({ name: "XYZ", ref: "xyz", boxId: box.id });
+    const response = await call("GET", "/projects/xyz/connections");
+    expect(response.status).toBe(200);
+    const password = encodeURIComponent(passwordOf("xyz"));
+    expect(await response.json()).toEqual([
+      {
+        label: "Session pooler",
+        kind: "session",
+        url: `postgresql://hs_xyz_owner.hattisar-b1:${password}@pool.example.com:54322/xyz`,
+      },
+      {
+        label: "Transaction pooler",
+        kind: "transaction",
+        url: `postgresql://hs_xyz_owner.hattisar-b1:${password}@pool.example.com:6543/xyz`,
+      },
+      {
+        label: "Direct",
+        kind: "direct",
+        url: `postgresql://hs_xyz_owner:${password}@db.example.com:5433/xyz`,
       },
     ]);
   });

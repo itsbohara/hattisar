@@ -86,6 +86,7 @@ beforeEach(() => {
       refreshPooler: async (_box, project, password) => {
         refreshed.push({ ref: project.ref, password });
       },
+      poolerHost: "db.example.test",
       backupHourUtc: 2,
     }),
   );
