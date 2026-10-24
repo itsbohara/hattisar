@@ -24,6 +24,7 @@ export interface Config {
   postgresPassword: string;
   pooler: {
     tenantId: string;
+    jwtSecret: string;
     portSession: number;
     portTransaction: number;
   };
@@ -147,6 +148,7 @@ export function loadConfig(env: Env = process.env): Config {
     postgresPassword: read.required("POSTGRES_PASSWORD"),
     pooler: {
       tenantId: read.required("POOLER_TENANT_ID"),
+      jwtSecret: read.required("POOLER_JWT_SECRET"),
       portSession: read.port("POOLER_PORT_SESSION", 54322),
       portTransaction: read.port("POOLER_PORT_TRANSACTION", 6543),
     },

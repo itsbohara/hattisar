@@ -177,6 +177,7 @@ services:
       PG_META_CRYPTO_KEY: ${PG_META_CRYPTO_KEY}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POOLER_TENANT_ID: ${POOLER_TENANT_ID}
+      POOLER_JWT_SECRET: ${POOLER_JWT_SECRET}
       POOLER_PORT_SESSION: ${POOLER_PORT_SESSION:-}
       POOLER_PORT_TRANSACTION: ${POOLER_PORT_TRANSACTION:-}
       # Literal, never ${DOCKER_HOST}: interpolation would take the host shell's own Docker socket.

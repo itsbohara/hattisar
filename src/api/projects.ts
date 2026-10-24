@@ -69,7 +69,7 @@ function createFields(body: Record<string, unknown>): CreateFields | string[] {
 }
 
 export function projectApiRoutes(deps: ProjectApiDeps): Hono<ApiEnv> {
-  const { db, secretKey } = deps;
+  const { db, secretKey, poolerHost } = deps;
   const app = new Hono<ApiEnv>();
   const accessible = (c: Context<ApiEnv>, status?: ProjectStatus) =>
     findAccessibleProject(db, c.var.user, c.req.param("ref") ?? "", status);
@@ -119,7 +119,7 @@ export function projectApiRoutes(deps: ProjectApiDeps): Hono<ApiEnv> {
   app.get("/:ref", (c) => {
     const found = accessible(c);
     if (!found) return notFound(c);
-    const connections = (connectionStrings(found, secretKey) ?? []).map(
+    const connections = (connectionStrings(found, secretKey, poolerHost) ?? []).map(
       ({ label, kind, masked }) => ({ label, kind, masked }),
     );
     return c.json({ ...projectJson(found), connections });
@@ -128,7 +128,7 @@ export function projectApiRoutes(deps: ProjectApiDeps): Hono<ApiEnv> {
   app.get("/:ref/connections", (c) => {
     const found = accessible(c);
     if (!found) return notFound(c);
-    const strings = connectionStrings(found, secretKey);
+    const strings = connectionStrings(found, secretKey, poolerHost);
     if (strings === undefined) return apiError(c, 502, UNREADABLE_PASSWORD);
     return c.json(strings.map(({ label, kind, url }) => ({ label, kind, url })));
   });

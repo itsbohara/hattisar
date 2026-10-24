@@ -64,6 +64,7 @@ beforeEach(() => {
       PG_META_CRYPTO_KEY: "unit",
       POSTGRES_PASSWORD: "box-admin",
       POOLER_TENANT_ID: "hattisar",
+      POOLER_JWT_SECRET: "pooler-jwt-secret",
     }),
     secretKey,
   );
@@ -88,7 +89,13 @@ beforeEach(() => {
   sql = [];
   restoreFails.value = false;
   deps = { db, secretKey, pgBinDir: "/unused", dataDir, backupHourUtc: 2 };
-  projectDeps = { db, secretKey, admin: fakeAdmin, refreshPooler: async () => {} };
+  projectDeps = {
+    db,
+    secretKey,
+    admin: fakeAdmin,
+    refreshPooler: async () => {},
+    poolerHost: "localhost",
+  };
 });
 
 afterEach(() => {

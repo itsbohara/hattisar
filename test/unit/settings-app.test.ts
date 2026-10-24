@@ -43,6 +43,7 @@ const ENV = {
   PG_META_CRYPTO_KEY: "unit-test-crypto-key",
   POSTGRES_PASSWORD: "unused",
   POOLER_TENANT_ID: "hattisar",
+  POOLER_JWT_SECRET: "pooler-jwt-secret",
   STUDIO_URL: "http://127.0.0.1:9",
 };
 

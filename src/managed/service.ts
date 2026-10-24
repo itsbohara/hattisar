@@ -8,6 +8,7 @@ import {
   type RemoveResult,
 } from "../boxes/service.js";
 import type { Config, PortRange } from "../config.js";
+import type { PoolerTenants } from "../pooler/tenants.js";
 import { type Box, deleteBox, getBoxByName, insertBox, listBoxes } from "../registry/boxes.js";
 import type { Registry } from "../registry/db.js";
 import { encryptSecret } from "../registry/secrets.js";
@@ -47,6 +48,7 @@ export interface ManagedBoxDeps {
   portRange: PortRange;
   check: (conn: BoxConnection) => Promise<E1Result>;
   waitReady: (conn: BoxConnection) => Promise<void>;
+  pooler: PoolerTenants;
 }
 
 class ProblemsError extends Error {
@@ -75,6 +77,7 @@ export class ManagedBoxes {
   async remove(box: Box): Promise<RemoveResult> {
     const problem = boxInUseProblem(this.deps.db, box);
     if (problem !== undefined) return { ok: false, problem };
+    await this.deps.pooler.drop(box);
     try {
       await this.deps.docker.removeContainer(containerOf(box), box.name);
       await this.deps.docker.removeVolume(volumeNameFor(box.name), box.name);
@@ -88,6 +91,7 @@ export class ManagedBoxes {
   async start(box: Box): Promise<void> {
     await this.deps.docker.start(containerOf(box), box.name);
     await this.deps.waitReady(boxConnection(box, this.deps.secretKey));
+    await this.deps.pooler.ensure(box);
   }
 
   async stop(box: Box): Promise<void> {
@@ -143,6 +147,7 @@ export class ManagedBoxes {
         poolerTransactionPort: null,
         containerName,
       });
+      await this.deps.pooler.ensure(box);
       return { ok: true, box };
     } catch (error) {
       const problems =
@@ -210,7 +215,12 @@ export class ManagedBoxes {
 }
 
 // No Docker client exists unless managed boxes are on.
-export function createManagedBoxes(config: Config, db: Registry, secretKey: Buffer) {
+export function createManagedBoxes(
+  config: Config,
+  db: Registry,
+  secretKey: Buffer,
+  pooler: PoolerTenants,
+) {
   if (!config.managedBoxes) return undefined;
   return new ManagedBoxes({
     db,
@@ -220,5 +230,6 @@ export function createManagedBoxes(config: Config, db: Registry, secretKey: Buff
     portRange: config.managedPortRange,
     check: checkBox,
     waitReady: (conn) => waitUntilReady(conn),
+    pooler,
   });
 }

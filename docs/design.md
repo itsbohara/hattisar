@@ -36,8 +36,10 @@ browser ──► hattisar :8000 ──► studio:3000 (internal only)
               ├─► meta:8080  (hattisar's own /query handling)
               ├─► boxes      (admin ops: create db/role, dumps)
               ├─► S3         (backups)
+              ├─► supavisor:4000 (tenant API, §5.1)
               └─► docker-socket-proxy (only when managed boxes are on)
-apps ──► supavisor :54322/:6543 ──► shared box     |   apps ──► other boxes directly
+apps ──► supavisor :54322/:6543 ──► boxes with a pooler tenant (§5.1)
+apps ──► box public host/port   ──► any non-shared box directly
 ```
 
 Lean stack (`docker/compose.yml`, compose project `hattisar`): `db` (supabase/postgres),
@@ -178,7 +180,8 @@ Numbered migrations in `src/registry/migrations/`, applied at boot, tracked in
 - `boxes(id, name UNIQUE, kind CHECK in ('shared','registered','managed'), dev_only INT,
   host, port, admin_user, admin_password_enc, sslmode, public_host, public_port,
   pooler_tenant NULL, pooler_session_port NULL, pooler_transaction_port NULL,
-  container_name NULL, created_at)`
+  container_name NULL, created_at)` — the three pooler fields are all set or all NULL; set means
+  the box has a Supavisor tenant (§5.1).
 - `projects(id, ref UNIQUE, name, box_id → boxes, db_name, owner_role,
   owner_password_enc, status CHECK in ('active','deleted'), deleted_at NULL,
   deleted_db_name NULL, created_at)`
@@ -217,12 +220,79 @@ credentials are re-entered, because only the shared box is re-seeded from env at
   host/port, `dev_only` checkbox.
 - **managed** — started by hattisar (§10).
 
+Every kind except a registered box with `sslmode` `require` or `verify-full` gets a pooler tenant
+(§5.1).
+
 **E1 compatibility check** (on register, and before creating a managed box's first project),
 connecting as the admin: `server_version_num ≥ 150000`; roles `supabase_admin`, `anon`,
 `authenticated`, `service_role` exist; extensions `pgcrypto`, `uuid-ossp`, `pg_stat_statements`
 are in `pg_available_extensions`; admin is superuser (the H2 baseline needs it for
 `pg_stat_statements` and `ALTER SCHEMA public OWNER`).
 Failure lists every unmet item. A box with projects (any status) cannot be removed.
+
+### 5.1 Pooler tenants (J3)
+
+One Supavisor, the compose `supavisor` service, pools every box with a tenant. Its session
+(`POOLER_PORT_SESSION`) and transaction (`POOLER_PORT_TRANSACTION`) ports serve all tenants:
+Supavisor takes the tenant from the user name after its last `.`, and the client's database name
+picks the database, so one tenant per box covers all its projects. Supavisor runs the auth query
+in the tenant's `postgres` database as the tenant's manager role, so project databases need
+nothing for it.
+
+- **shared** — tenant `POOLER_TENANT_ID`, created by `docker/volumes/pooler/pooler.exs` when
+  Supavisor starts (manager `pgbouncer`, `pgbouncer.get_auth`). hattisar never changes it.
+- **managed**, and **registered with `sslmode = disable`** — tenant `<POOLER_TENANT_ID>-<box name>`
+  (`-<box id>` appended if another box already stores that id), created by hattisar. The id is
+  stored once and kept when the box is renamed: it is in every app's connection string.
+- **registered with `require` or `verify-full`** — none. Clients reach Supavisor without TLS, and
+  Supavisor cannot check an upstream host name; pooling these is a follow-up.
+
+**Ensure** runs after a managed box is created or started, after a box is registered or edited,
+and for every eligible box at boot (after listening, never holding up boot) and every 10 minutes
+after, so a box left without a tenant while Supavisor was down catches up:
+1. Box stores a tenant: `GET /api/tenants/<id>`. Present with the box's `db_host` and `db_port` →
+   done. Supavisor terminates a tenant's pools on every update, so an unchanged tenant is never PUT.
+   Present but different (the box moved), or 404 → step 2, keeping the stored id.
+2. As the box admin, in `postgres`: create or alter the tenant's own role
+   `hattisar_pooler_<first 12 hex of HMAC-SHA256(HATTISAR_SECRET_KEY, tenant id)>` `LOGIN PASSWORD` with the SCRAM verifier
+   of a new random password. One role per tenant, because several boxes (or hattisar installs) can
+   point at one server and a shared role's new password would break the other tenants; the key
+   keeps two installs with the same tenant id apart. Then
+   `CREATE SCHEMA IF NOT EXISTS hattisar_pooler`; `CREATE OR REPLACE FUNCTION
+   hattisar_pooler.get_auth(p_usename text) RETURNS TABLE(username text, password text) LANGUAGE
+   sql SECURITY DEFINER SET search_path = ''`, returning `rolname` and `rolpassword` (NULL once
+   `rolvaliduntil` has passed) from `pg_catalog.pg_authid` where `rolname = p_usename AND
+   rolcanlogin AND NOT rolsuper`; `EXECUTE` revoked from `PUBLIC` and granted, with `USAGE` on the
+   schema, to the tenant's role. The password is new on every (re)create and hattisar never
+   stores it.
+3. `PUT /api/tenants/<id>` with the full tenant below. Supavisor logs in as the tenant's role and
+   runs the auth query before creating it; a leftover tenant with that id is overwritten, its
+   users included.
+4. Only then store `pooler_tenant` and the two ports.
+
+```json
+{"tenant": {"db_host": "<host>", "db_port": 5432, "db_database": "postgres",
+  "require_user": false, "auth_query": "SELECT * FROM hattisar_pooler.get_auth($1)",
+  "upstream_ssl": false, "ip_version": "auto", "default_pool_size": 20, "default_max_clients": 100,
+  "users": [{"db_user": "<tenant role>", "db_password": "<password>", "mode_type": "transaction",
+             "pool_size": 20, "is_manager": true}]}}
+```
+
+**Drop** (box removed, or a registered box edited to `require`/`verify-full`):
+`GET /api/tenants/<id>/terminate`, then `DELETE /api/tenants/<id>` (404 counts as done), then clear
+the pooler fields. Best effort: a failure is logged and the removal goes on; a later tenant with
+the same id overwrites the leftover (step 3). On a registered box hattisar then drops the tenant's
+role as the box admin, also best effort; the `hattisar_pooler` schema and function stay, since
+other tenants on that server may use them.
+
+**Supavisor down or refusing:** the box is saved without pooler fields, its projects get the
+direct string only, the Boxes page shows "Pooler pending" for it, and the next ensure
+retries. Messages shown or logged have the generated and box admin passwords scrubbed.
+
+hattisar reaches the API at `http://supavisor:4000` (compose network only, no published port) with
+`Authorization: Bearer <JWT>`: HS256 with `POOLER_JWT_SECRET` (Supavisor's `API_JWT_SECRET`),
+claims `{"exp": <now + 60 s>}`. Every boot rewrites the two pooler ports from env on each box that
+has a tenant, as it does for the shared box.
 
 ## 6. Auth (F3)
 
@@ -258,8 +328,7 @@ escape helpers, never string concatenation):
 4. In `<db>`: run `sql/baseline.sql` with the owner substituted (H2): `extensions` schema;
    `pgcrypto`, `uuid-ossp`, `pg_stat_statements` in it; `public` owned by owner; `USAGE` on
    `extensions` to owner; `ALTER DATABASE <db> SET search_path = "$user", public, extensions`.
-   Anything the shared box's pooler needs for the owner role to authenticate (verified in
-   implementation) also goes here.
+   Nothing for the pooler: its auth query runs in the box's `postgres` database (§5.1).
 5. Insert registry row.
 Any failure → drop what was created (db, role), no registry row, error shown.
 
@@ -273,13 +342,19 @@ Studio would be owned by `supabase_admin` and the app's role would get `permissi
 management) fail with a permission error; hattisar's own admin operations still use the box admin.
 
 **Connection strings (J1)** on the project page, password masked with reveal + copy:
-- box with pooler fields: session `postgresql://<owner>.<tenant>:<pw>@<public_host>:<session_port>/<db>`
-  and transaction (same, `<transaction_port>`).
-- other boxes: `postgresql://<owner>:<pw>@<public_host>:<public_port>/<db>`.
+- box with pooler fields: session
+  `postgresql://<owner>.<tenant>:<pw>@<HATTISAR_PUBLIC_HOST>:<session_port>/<db>` and transaction
+  (same, `<transaction_port>`). The host is always `HATTISAR_PUBLIC_HOST`, where Supavisor is
+  published, never the box's `public_host`.
+- direct: `postgresql://<owner>:<pw>@<public_host>:<public_port>/<db>`, on every box except the
+  shared one, whose `db` publishes no port.
+- order: session, transaction, direct; a box without pooler fields has only direct.
 - shared/dev-only boxes show a "development only" badge.
 
 **Rotate owner password:** `ALTER ROLE … PASSWORD …`, store encrypted, show new strings. Never
-reads the old password, so it works when the stored one will not decrypt.
+reads the old password, so it works when the stored one will not decrypt. On a box with a tenant,
+one login through the pooler with the new password follows, because Supavisor refetches a cached
+secret only after a login fails.
 
 **Soft delete (M2)** — confirm by typing the ref: `REVOKE CONNECT … FROM <owner>`; terminate
 backends on the db; `ALTER DATABASE <db> RENAME TO <db>__deleted_<YYYYMMDD>` (suffix `_2`, `_3`…
@@ -288,7 +363,7 @@ project list; shown under Trash.
 
 The owner role **keeps LOGIN**. Apps still running against a deleted project then pass pooler
 authentication and fail on `CONNECT`, instead of failing authentication — Supavisor counts auth
-failures per tenant/IP and would otherwise lock out every project on the shared box. Revoked
+failures per tenant/IP and would otherwise lock out every project on the box. Revoked
 `CONNECT` on its only database is what stops the role.
 
 Known limitation (shared box): every role can connect to the box's `postgres`, `_supabase` and
@@ -348,7 +423,8 @@ reveal, live search and loading sizes. The theme follows `prefers-color-scheme` 
 `<html data-theme>` from it, so there is no flash. Pages: Login, Projects, New project (name, ref with live slug hint, box picker — each
 option labelled; dev-only boxes carry the warning "Best for development only — shares one Postgres
 with other projects"), Project (three tabs, below), Trash, Boxes (list, register, edit, remove,
-"New managed box" when enabled), Settings. Errors render inline, never as a stack trace.
+"New managed box" when enabled; each row shows its pooler tenant, "Pooler pending" when an
+eligible box has none yet, or "Direct only"), Settings. Errors render inline, never as a stack trace.
 
 Projects (`/_hs/projects`) shows the active projects as cards or as a list. `?view=grid|list`
 picks the view and is remembered in `hs_projects_view`; `?q=` filters by name or ref (the inline
@@ -394,8 +470,8 @@ password, volume `hattisar_box_<name>`, container `hattisar-box-<name>` on the c
 host port = first free in `HATTISAR_MANAGED_PORT_RANGE` (default `55000-55999`), labels
 `hattisar.managed=true`, `hattisar.box=<name>`. Wait until ready, run E1, register as kind
 `managed` (`host` = container name, `port` 5432, `public_host` = `HATTISAR_PUBLIC_HOST`,
-`public_port` = the host port). The New-project form offers "New dedicated box" which does this
-then creates the project on it.
+`public_port` = the host port), then ensure its pooler tenant (§5.1). The New-project form
+offers "New dedicated box" which does this then creates the project on it.
 
 Implementation notes (Task 12): the proxy sits on its own internal `docker-api` network that only
 hattisar joins. Two read-only calls are unfiltered by label — listing containers to learn which host
@@ -409,7 +485,7 @@ upgrading managed boxes is post-v1.
 hattisar only lists/starts/stops/removes containers and volumes carrying `hattisar.managed=true`;
 every Docker call filters on it. A managed box whose only project is soft-deleted is stopped;
 restore starts it; purge removes container and volume. Removing a managed box with no projects
-removes container and volume.
+drops its pooler tenant (§5.1) and removes container and volume.
 
 ## 11. Configuration
 
@@ -433,8 +509,9 @@ removes container and volume.
 | `PG_META_CRYPTO_KEY` | — | shared with meta |
 | `HATTISAR_PG_META_TIMEOUT_SECONDS` | `120` | hattisar's own `/query` and `/generators/typescript` calls; 504 when exceeded; the timeout only stops hattisar waiting, postgres-meta keeps running the statement until its own query timeout |
 | `POSTGRES_PASSWORD` | — | shared box admin |
-| `POOLER_TENANT_ID`, `POOLER_PORT_SESSION` (54322), `POOLER_PORT_TRANSACTION` (6543) | | shared box pooler |
-| `POOLER_SECRET_KEY_BASE`, `POOLER_VAULT_ENC_KEY`, `POOLER_JWT_SECRET` | — | Supavisor's own secrets; generated by `scripts/dev-env.sh` |
+| `POOLER_TENANT_ID`, `POOLER_PORT_SESSION` (54322), `POOLER_PORT_TRANSACTION` (6543) | | shared box tenant and the pooler ports for every tenant; other tenant ids are prefixed with `POOLER_TENANT_ID` (§5.1) |
+| `POOLER_JWT_SECRET` | — | required; Supavisor's `API_JWT_SECRET`, which hattisar signs its tenant API calls with (§5.1) |
+| `POOLER_SECRET_KEY_BASE`, `POOLER_VAULT_ENC_KEY` | — | Supavisor's own secrets; generated by `scripts/dev-env.sh` |
 
 `HATTISAR_PORT` is the host-published port only; the app listens on 8000 inside the container.
 `DOCKER_HOST` is set explicitly in compose for the `managed-boxes` profile, never inherited from
@@ -465,7 +542,7 @@ rule: it never reaches a project database.
 ## 14. Out of v1
 
 The post-v1 roadmap is the GitHub milestone "Roadmap": a release pipeline (§16), a one-line
-installer (§17), per-project SQL snippets (§3.3), pooler for non-shared boxes (J3), a WAL-G
+installer (§17), per-project SQL snippets (§3.3), pooler for non-shared boxes (J3, §5.1), a WAL-G
 point-in-time recovery recipe in the docs, and a plain-Postgres boxes spike (E3). Parked, each until
 its condition holds:
 
@@ -575,7 +652,7 @@ hattisar login <url>                 hattisar logout              hattisar whoam
 hattisar projects list [--deleted]
 hattisar projects create <name> [--ref <ref>] [--box <id> | --new-box]
 hattisar projects show <ref>
-hattisar projects url <ref> [--transaction]
+hattisar projects url <ref> [--transaction | --direct]
 hattisar projects rotate <ref>
 hattisar projects delete <ref> --confirm <ref>
 hattisar projects restore <ref>
@@ -589,8 +666,9 @@ Global: --json, --help, --version
 - `projects restore` takes a project out of Trash; `backups restore` replaces a project's data
   with one of its backups. `--confirm` must equal the ref, else exit 2 before any request.
 - `projects url <ref>` prints exactly one URL with the real password: the first connection (the
-  session pooler on the shared box, direct elsewhere), so `$(hattisar projects url x)` works.
-  `--transaction` picks the transaction pooler and exits 1 if the box has none.
+  session pooler on a box with a tenant, direct otherwise), so `$(hattisar projects url x)` works.
+  `--transaction` picks the transaction pooler and exits 1 if the box has none; `--direct` picks
+  the direct connection and exits 1 if there is none (the shared box). Both together exit 2.
 - `login <url>` reads the token from a hidden prompt on a TTY, or from stdin otherwise, checks it
   with `GET /me` and only then saves it. There is no flag for the token: secrets stay out of argv.
   A URL with credentials, a query or a fragment, or not http(s), is refused without being echoed.
@@ -717,5 +795,5 @@ secret cannot be generated (no openssl) it fails, leaving a missing target unwri
 `docker/compose.yml` publishes hattisar on `${HATTISAR_BIND:-0.0.0.0}:${HATTISAR_PORT:-8000}`; a
 checkout keeps today's behaviour. The `caddy` service (profile `caddy`, pinned `caddy` image) reads
 `volumes/caddy/Caddyfile` from the bundle, keeps certificates in the `caddy-data` volume, and is
-the only service the installer publishes on all interfaces apart from the shared box's pooler
-ports (§5), which apps on other hosts use.
+the only service the installer publishes on all interfaces apart from the pooler
+ports (§5.1), which apps on other hosts use.

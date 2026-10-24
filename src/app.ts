@@ -14,7 +14,9 @@ import type { Config } from "./config.js";
 import { managedLifecycle } from "./managed/lifecycle.js";
 import { managedBoxRoutes } from "./managed/routes.js";
 import type { ManagedBoxes } from "./managed/service.js";
-import { refreshSharedPooler } from "./projects/pooler.js";
+import { SupavisorApi } from "./pooler/supavisor.js";
+import { createPoolerTenants, type PoolerTenants } from "./pooler/tenants.js";
+import { refreshPooler } from "./projects/pooler.js";
 import { projectRoutes } from "./projects/routes.js";
 import type { ProjectServiceDeps } from "./projects/service.js";
 import { RegistryProjectSource } from "./projects/studio-source.js";
@@ -47,7 +49,8 @@ export function projectServiceDeps(
     db: registry,
     secretKey: deriveSecretKey(config.secretKey),
     admin: withAdminClient,
-    refreshPooler: refreshSharedPooler,
+    refreshPooler,
+    poolerHost: config.publicHost,
     onLifecycle: managed && managedLifecycle(registry, managed),
   };
 }
@@ -63,11 +66,25 @@ export function backupDeps(config: Config, registry: Registry): BackupDeps {
   };
 }
 
+// Shared by the HTTP routes, managed boxes and the boot reconcile in main.ts.
+export function poolerTenants(config: Config, registry: Registry): PoolerTenants {
+  return createPoolerTenants({
+    db: registry,
+    secretKey: deriveSecretKey(config.secretKey),
+    api: new SupavisorApi({ jwtSecret: config.pooler.jwtSecret }),
+    admin: withAdminClient,
+    tenantPrefix: config.pooler.tenantId,
+    portSession: config.pooler.portSession,
+    portTransaction: config.pooler.portTransaction,
+  });
+}
+
 // `managed` is present only when HATTISAR_MANAGED_BOXES is on (see createManagedBoxes).
 export function createApp(
   config: Config,
   registry: Registry,
   managed?: ManagedBoxes,
+  pooler: PoolerTenants = poolerTenants(config, registry),
 ): Hono<AuthEnv> {
   const app = new Hono<AuthEnv>();
   const pgMetaLog = new PgMetaLog();
@@ -99,7 +116,7 @@ export function createApp(
     }),
   );
   app.route("/", uiRoutes());
-  app.route("/", boxRoutes({ db: registry, secretKey, check: checkBox, managed }));
+  app.route("/", boxRoutes({ db: registry, secretKey, check: checkBox, pooler, managed }));
   if (managed) app.route("/", managedBoxRoutes(managed));
   app.route("/", projectRoutes({ ...projectDeps, backupHourUtc: config.backupHourUtc, managed }));
   app.route("/", trashRoutes({ ...projectDeps, purgeAfterDays: config.purgeAfterDays }));

@@ -35,7 +35,7 @@ vi.mock("../../src/boxes/admin-client.js", async (importOriginal) => {
   };
 });
 
-vi.mock("../../src/projects/pooler.js", () => ({ refreshSharedPooler: async () => {} }));
+vi.mock("../../src/projects/pooler.js", () => ({ refreshPooler: async () => {} }));
 
 vi.mock("../../src/backups/s3.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../src/backups/s3.js")>()),
@@ -104,9 +104,11 @@ beforeEach(() => {
     loadConfig({
       HATTISAR_SECRET_KEY: SECRET,
       HATTISAR_DATA_DIR: dataDir,
+      HATTISAR_PUBLIC_HOST: "shared.test",
       PG_META_CRYPTO_KEY: "unit-test-crypto-key",
       POSTGRES_PASSWORD: "unused",
       POOLER_TENANT_ID: "hattisar",
+      POOLER_JWT_SECRET: "pooler-jwt-secret",
       STUDIO_URL: "http://127.0.0.1:9",
     }),
     db,
@@ -412,6 +414,26 @@ describe("projects", () => {
     });
   });
 
+  it("prints the session, transaction or direct URL of a box with a tenant", async () => {
+    const { id } = box("pooled", "registered", true);
+    await loggedInWithProject("rrr", ["--box", String(id)]);
+    const session = (await cli(["projects", "url", "rrr"])).stdout;
+    const transaction = (await cli(["projects", "url", "rrr", "--transaction"])).stdout;
+    const direct = (await cli(["projects", "url", "rrr", "--direct"])).stdout;
+    expect(session).toContain("@shared.test:54322/");
+    expect(transaction).toContain("@shared.test:6543/");
+    expect(direct).toMatch(/^postgresql:\/\/hs_rrr_owner:[^@]+@pooled\.test:54322\/rrr\n$/);
+  });
+
+  it("fails --direct on the shared box", async () => {
+    await loggedInWithProject("rrr");
+    expect(await cli(["projects", "url", "rrr", "--direct"])).toEqual({
+      code: 1,
+      stdout: "",
+      stderr: "hattisar: rrr has no direct connection\n",
+    });
+  });
+
   it("deletes only with --confirm set to the ref, then restores from the trash", async () => {
     await loggedInWithProject();
     const missing = await cli(["projects", "delete", "my-app"]);
@@ -527,6 +549,10 @@ describe("usage", () => {
     [["projects", "show"], "hattisar: missing <ref>"],
     [["projects", "show", "a", "b"], "hattisar: unexpected argument b"],
     [["projects", "list", "--transaction"], "hattisar: unknown option --transaction"],
+    [
+      ["projects", "url", "a", "--direct", "--transaction"],
+      "hattisar: give either --transaction or --direct, not both",
+    ],
     [["projects", "delete", "a"], "hattisar: projects delete needs --confirm <ref>"],
     [["backups", "restore", "a", "1"], "hattisar: backups restore needs --confirm <ref>"],
     [["projects", "delete", "a", "--confirm"], "hattisar: --confirm needs a value"],
@@ -556,10 +582,12 @@ describe("usage", () => {
   it("prints help and the version on stdout", async () => {
     const help = await cli(["--help"]);
     expect(help.code).toBe(0);
-    expect(help.stdout).toContain("projects url <ref> [--transaction]");
+    expect(help.stdout).toContain("projects url <ref> [--transaction | --direct]");
     expect(await cli(["projects", "url", "--help"])).toMatchObject({
       code: 0,
-      stdout: expect.stringMatching(/^usage: hattisar projects url <ref> \[--transaction\]\n/),
+      stdout: expect.stringMatching(
+        /^usage: hattisar projects url <ref> \[--transaction \| --direct\]\n/,
+      ),
     });
     const { version } = JSON.parse(readFileSync("cli/package.json", "utf8")) as { version: string };
     expect(await cli(["--version"])).toEqual({ code: 0, stdout: `${version}\n`, stderr: "" });

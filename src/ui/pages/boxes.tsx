@@ -1,5 +1,6 @@
 import { SSL_MODES } from "../../boxes/admin-client.js";
 import type { BoxFormValues } from "../../boxes/service.js";
+import { poolerStatus } from "../../pooler/tenant-spec.js";
 import type { Box } from "../../registry/boxes.js";
 import { Layout } from "../layout.js";
 
@@ -35,6 +36,12 @@ function BoxActions({ box, managedEnabled }: { box: Box; managedEnabled: boolean
       {box.kind === "shared" ? "Managed by environment" : "Managed by hattisar"}
     </span>
   );
+}
+
+function PoolerCell({ box }: { box: Box }) {
+  const status = poolerStatus(box);
+  if (status.kind === "tenant") return <code>{status.id}</code>;
+  return <span class="hint">{status.kind === "pending" ? "Pooler pending" : "Direct only"}</span>;
 }
 
 export function BoxesPage({
@@ -77,6 +84,7 @@ export function BoxesPage({
               <th>Name</th>
               <th>Kind</th>
               <th>Host</th>
+              <th>Pooler</th>
               <th>Projects</th>
               <th />
             </tr>
@@ -91,6 +99,9 @@ export function BoxesPage({
                 <td>{box.kind}</td>
                 <td>
                   <code>{`${box.host}:${box.port}`}</code>
+                </td>
+                <td>
+                  <PoolerCell box={box} />
                 </td>
                 <td>{projectCount}</td>
                 <td class="row-actions">

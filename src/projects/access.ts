@@ -39,9 +39,10 @@ export function accessibleProject(
 export function connectionStrings(
   { project, box }: ProjectAndBox,
   secretKey: Buffer,
+  poolerHost: string,
 ): ConnectionString[] | undefined {
   try {
-    return ownerConnectionStrings(box, project, ownerPassword(project, secretKey));
+    return ownerConnectionStrings(box, project, ownerPassword(project, secretKey), poolerHost);
   } catch (error) {
     if (error instanceof SecretError) return undefined;
     throw error;

@@ -100,7 +100,7 @@ async function renameAway(client: pg.Client, project: Project, now: Date): Promi
 // other sessions, so the owner's apps and pools would reconnect straight away and keep the database
 // in use. If the rename still fails, CONNECT is granted back so the project stays usable. The role
 // keeps LOGIN on purpose (§7): a NOLOGIN role fails Supavisor's auth, and its auth-failure breakers
-// would then refuse pooler logins for every project on the shared box.
+// would then refuse pooler logins for every project on the box.
 export async function softDeleteProject(
   deps: ProjectServiceDeps,
   project: Project,

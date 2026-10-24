@@ -4,16 +4,32 @@ import {
   ownerConnectionStrings,
   type ProjectEndpoint,
 } from "../../src/projects/connection-strings.js";
+import type { Box } from "../../src/registry/boxes.js";
 
-const pooled: ProjectEndpoint = {
-  publicHost: "db.example.test",
+type Endpoint = ProjectEndpoint & Pick<Box, "kind">;
+
+const POOLER_HOST = "pool.example.com";
+
+const registered: Endpoint = {
+  kind: "registered",
+  publicHost: "db.example.com",
+  publicPort: 5433,
+  poolerTenant: "hattisar-b1",
+  poolerSessionPort: 54322,
+  poolerTransactionPort: 6543,
+};
+
+const shared: Endpoint = {
+  kind: "shared",
+  publicHost: "localhost",
   publicPort: 54322,
   poolerTenant: "hattisar",
   poolerSessionPort: 54322,
   poolerTransactionPort: 6543,
 };
 
-const direct: ProjectEndpoint = {
+const unpooled: Endpoint = {
+  kind: "registered",
   publicHost: "pg.example.test",
   publicPort: 5433,
   poolerTenant: null,
@@ -21,41 +37,60 @@ const direct: ProjectEndpoint = {
   poolerTransactionPort: null,
 };
 
-const project = { dbName: "my_app", ownerRole: "hs_my_app_owner" };
+const project = { dbName: "x", ownerRole: "hs_x_owner" };
 
 describe("ownerConnectionStrings", () => {
-  it("offers session and transaction pooler strings with <owner>.<tenant>", () => {
-    expect(ownerConnectionStrings(pooled, project, "pw")).toEqual([
+  it("offers session, transaction and direct strings for a box with a tenant", () => {
+    expect(ownerConnectionStrings(registered, project, "pw", POOLER_HOST)).toEqual([
       {
         kind: "session",
         label: "Session pooler",
-        url: "postgresql://hs_my_app_owner.hattisar:pw@db.example.test:54322/my_app",
-        masked: `postgresql://hs_my_app_owner.hattisar:${MASK}@db.example.test:54322/my_app`,
+        url: "postgresql://hs_x_owner.hattisar-b1:pw@pool.example.com:54322/x",
+        masked: `postgresql://hs_x_owner.hattisar-b1:${MASK}@pool.example.com:54322/x`,
       },
       {
         kind: "transaction",
         label: "Transaction pooler",
-        url: "postgresql://hs_my_app_owner.hattisar:pw@db.example.test:6543/my_app",
-        masked: `postgresql://hs_my_app_owner.hattisar:${MASK}@db.example.test:6543/my_app`,
+        url: "postgresql://hs_x_owner.hattisar-b1:pw@pool.example.com:6543/x",
+        masked: `postgresql://hs_x_owner.hattisar-b1:${MASK}@pool.example.com:6543/x`,
       },
-    ]);
-  });
-
-  it("offers one direct string for a box without a pooler", () => {
-    expect(ownerConnectionStrings(direct, project, "pw")).toEqual([
       {
         kind: "direct",
         label: "Direct",
-        url: "postgresql://hs_my_app_owner:pw@pg.example.test:5433/my_app",
-        masked: `postgresql://hs_my_app_owner:${MASK}@pg.example.test:5433/my_app`,
+        url: "postgresql://hs_x_owner:pw@db.example.com:5433/x",
+        masked: `postgresql://hs_x_owner:${MASK}@db.example.com:5433/x`,
       },
     ]);
   });
 
+  it("offers no direct string on the shared box", () => {
+    const strings = ownerConnectionStrings(shared, project, "pw", POOLER_HOST);
+    expect(strings.map(({ kind }) => kind)).toEqual(["session", "transaction"]);
+    expect(strings[0]?.url).toBe("postgresql://hs_x_owner.hattisar:pw@pool.example.com:54322/x");
+  });
+
+  it("offers one direct string for a box without a tenant", () => {
+    expect(ownerConnectionStrings(unpooled, project, "pw", POOLER_HOST)).toEqual([
+      {
+        kind: "direct",
+        label: "Direct",
+        url: "postgresql://hs_x_owner:pw@pg.example.test:5433/x",
+        masked: `postgresql://hs_x_owner:${MASK}@pg.example.test:5433/x`,
+      },
+    ]);
+  });
+
+  it("never puts the password in a masked string", () => {
+    for (const box of [registered, shared, unpooled]) {
+      for (const { masked } of ownerConnectionStrings(box, project, "s3cret!", POOLER_HOST)) {
+        expect(masked).not.toContain("s3cret");
+        expect(masked).toContain(MASK);
+      }
+    }
+  });
+
   it("URL-encodes the password", () => {
-    const [string] = ownerConnectionStrings(direct, project, "a/b+c=d");
-    expect(string?.url).toBe(
-      "postgresql://hs_my_app_owner:a%2Fb%2Bc%3Dd@pg.example.test:5433/my_app",
-    );
+    const [string] = ownerConnectionStrings(unpooled, project, "a/b+c=d", POOLER_HOST);
+    expect(string?.url).toBe("postgresql://hs_x_owner:a%2Fb%2Bc%3Dd@pg.example.test:5433/x");
   });
 });

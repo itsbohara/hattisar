@@ -74,18 +74,19 @@ function boxIdFrom(value: string): number | undefined {
 export interface ProjectPageDeps {
   db: Registry;
   secretKey: Buffer;
+  poolerHost: string;
   backupHourUtc: number;
 }
 
 export function renderProjectDetail(
   c: Context<AuthEnv>,
-  { db, secretKey, backupHourUtc }: ProjectPageDeps,
+  { db, secretKey, poolerHost, backupHourUtc }: ProjectPageDeps,
   { project, box }: ProjectAndBox,
   tab: ProjectTab,
   notice?: ProjectPageNotice,
   status: 200 | 400 | 409 | 502 = 200,
 ) {
-  const strings = connectionStrings({ project, box }, secretKey);
+  const strings = connectionStrings({ project, box }, secretKey, poolerHost);
   return renderPage(
     c,
     <ProjectPage

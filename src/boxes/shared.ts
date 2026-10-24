@@ -4,8 +4,6 @@ import type { Registry } from "../registry/db.js";
 import { encryptSecret } from "../registry/secrets.js";
 
 export const SHARED_BOX_NAME = "shared";
-// The compose supavisor service as hattisar reaches it inside the network, like host "db" below.
-export const SHARED_POOLER = { host: "supavisor", port: 5432 } as const;
 
 // Env is the source of truth for the shared box: every boot rewrites its env-derived fields.
 export function seedSharedBox(db: Registry, config: Config, secretKey: Buffer): void {

@@ -109,21 +109,26 @@ const show: Command = {
 const url: Command = {
   name: "projects url",
   args: ["ref"],
-  options: ["transaction"],
-  usage: "projects url <ref> [--transaction]",
+  options: ["transaction", "direct"],
+  usage: "projects url <ref> [--transaction | --direct]",
   summary: "Print the connection URL with its password",
   async run({ io, json, api }, [ref = ""], values) {
+    if (values.transaction && values.direct) {
+      throw new UsageError("give either --transaction or --direct, not both", usageLine(url));
+    }
+    const wanted = values.transaction ? "transaction" : values.direct ? "direct" : undefined;
     const connections = await api()<(Connection & { url: string })[]>(
       "GET",
       `${path(ref)}/connections`,
     );
-    const connection = values.transaction
-      ? connections.find(({ kind }) => kind === "transaction")
-      : connections[0];
+    const connection =
+      wanted === undefined ? connections[0] : connections.find(({ kind }) => kind === wanted);
     if (connection === undefined) {
       throw new CliError(
         EXIT.api,
-        values.transaction ? `${ref} has no transaction pooler` : `${ref} has no connection URL`,
+        wanted === undefined
+          ? `${ref} has no connection URL`
+          : `${ref} has no ${wanted === "direct" ? "direct connection" : "transaction pooler"}`,
       );
     }
     if (json) printJson(io.stdout, connection);
