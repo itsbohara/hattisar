@@ -61,7 +61,12 @@ describe("tenantIdFor", () => {
 
 describe("tenantBody", () => {
   it("builds the full tenant with the manager user", () => {
-    expect(tenantBody({ host: "hattisar-box-b1", port: 5432 }, "pw")).toEqual({
+    expect(
+      tenantBody(
+        { host: "hattisar-box-b1", port: 5432 },
+        { role: "hattisar_pooler_abc", password: "pw" },
+      ),
+    ).toEqual({
       db_host: "hattisar-box-b1",
       db_port: 5432,
       db_database: "postgres",
@@ -73,7 +78,7 @@ describe("tenantBody", () => {
       default_max_clients: 100,
       users: [
         {
-          db_user: "hattisar_pooler",
+          db_user: "hattisar_pooler_abc",
           db_password: "pw",
           mode_type: "transaction",
           pool_size: 20,
@@ -83,8 +88,8 @@ describe("tenantBody", () => {
     });
   });
 
-  it("leaves users out without a password", () => {
-    expect(tenantBody({ host: "h", port: 5433 }, undefined)).not.toHaveProperty("users");
+  it("leaves users out without a manager", () => {
+    expect(tenantBody({ host: "h", port: 5433 })).not.toHaveProperty("users");
   });
 });
 

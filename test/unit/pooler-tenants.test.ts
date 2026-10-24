@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type pg from "pg";
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 import type { AdminClientRunner } from "../../src/boxes/admin-client.js";
-import { installPoolerRole } from "../../src/pooler/role.js";
+import { dropPoolerRole, installPoolerRole, poolerRoleFor } from "../../src/pooler/role.js";
 import {
   SupavisorError,
   type TenantApi,
@@ -26,10 +26,12 @@ import { deriveSecretKey, encryptSecret } from "../../src/registry/secrets.js";
 vi.mock("../../src/pooler/role.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../src/pooler/role.js")>()),
   installPoolerRole: vi.fn(async () => undefined),
+  dropPoolerRole: vi.fn(async () => undefined),
 }));
 
 const secretKey = deriveSecretKey("p".repeat(32));
 const install = vi.mocked(installPoolerRole);
+const dropRole = vi.mocked(dropPoolerRole);
 
 class FakeApi implements TenantApi {
   tenants = new Map<string, TenantInfo>();
@@ -127,6 +129,7 @@ beforeEach(() => {
   api = new FakeApi();
   adminCalls = [];
   install.mockClear();
+  dropRole.mockClear();
   warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 });
 
@@ -143,11 +146,13 @@ describe("ensure on a new eligible box", () => {
 
     expect(adminCalls).toEqual([{ host: "db.b1", database: "postgres" }]);
     expect(install).toHaveBeenCalledTimes(1);
-    const password = install.mock.calls[0]?.[1];
+    const password = install.mock.calls[0]?.[2];
     expect(password).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(api.puts).toHaveLength(1);
     const put = api.puts[0];
     expect(put?.id).toBe("hattisar-b1");
+    expect(install.mock.calls[0]?.[1]).toBe(poolerRoleFor("hattisar-b1"));
+    expect(put?.tenant.users?.[0]?.db_user).toBe(poolerRoleFor("hattisar-b1"));
     expect(put?.tenant.users?.[0]?.db_password).toBe(password);
     expect(put?.scrub).toBe(password);
     expect(api.calls).toEqual(["admin db.b1", "put hattisar-b1"]);
@@ -164,18 +169,19 @@ describe("ensure on a new eligible box", () => {
     const box = addBox();
     await service().ensure(box);
     expect(poolerFields(box.id).poolerTenant).toBe(`hattisar-b1-${box.id}`);
+    expect(install.mock.calls[0]?.[1]).toBe(poolerRoleFor(`hattisar-b1-${box.id}`));
   });
 
   it("keeps the fields null and warns without the password when the PUT fails", async () => {
     const box = addBox();
     api.putError = new SupavisorError("Supavisor PUT failed: bad", 400);
     install.mockImplementationOnce(async () => {
-      api.putError = new SupavisorError(`Supavisor PUT failed: ${install.mock.calls[0]?.[1]}`, 400);
+      api.putError = new SupavisorError(`Supavisor PUT failed: ${install.mock.calls[0]?.[2]}`, 400);
     });
 
     await expect(service().ensure(box)).resolves.toBeUndefined();
 
-    const password = install.mock.calls[0]?.[1] as string;
+    const password = install.mock.calls[0]?.[2] as string;
     expect(poolerFields(box.id)).toEqual(NO_POOLER);
     expect(warn).toHaveBeenCalledTimes(1);
     expect(String(warn.mock.calls[0]?.[0])).not.toContain(password);
@@ -218,7 +224,7 @@ describe("ensure on a box with a stored tenant", () => {
     expect(adminCalls).toHaveLength(1);
     expect(api.puts).toHaveLength(1);
     expect(api.puts[0]?.id).toBe("hattisar-b1");
-    expect(api.puts[0]?.tenant.users?.[0]?.db_password).toBe(install.mock.calls[0]?.[1]);
+    expect(api.puts[0]?.tenant.users?.[0]?.db_password).toBe(install.mock.calls[0]?.[2]);
     expect(poolerFields(box.id)).toEqual({
       poolerTenant: "hattisar-b1",
       poolerSessionPort: 54322,
@@ -277,15 +283,20 @@ it("does not recreate the tenant of a box deleted after a drop", async () => {
   await tenants.ensure(box);
   expect(install).not.toHaveBeenCalled();
   expect(api.puts).toHaveLength(0);
-  expect(api.calls).toEqual(["remove hattisar-b1"]);
+  expect(api.calls).toEqual(["remove hattisar-b1", "admin db.b1"]);
 });
 
 describe("drop", () => {
-  it("removes the tenant and clears the fields", async () => {
+  it("removes the tenant, clears the fields, then drops a registered box's role", async () => {
     const box = withTenant();
     await service().drop(box);
     expect(api.removed).toEqual(["hattisar-b1"]);
+    expect(api.calls).toEqual(["remove hattisar-b1", "admin db.b1"]);
+    expect(adminCalls).toEqual([{ host: "db.b1", database: "postgres" }]);
+    expect(dropRole).toHaveBeenCalledTimes(1);
+    expect(dropRole.mock.calls[0]?.[1]).toBe(poolerRoleFor("hattisar-b1"));
     expect(poolerFields(box.id)).toEqual(NO_POOLER);
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it("clears the fields and warns when the removal fails", async () => {
@@ -293,7 +304,27 @@ describe("drop", () => {
     api.removeError = new SupavisorError("Supavisor unreachable", 0);
     await expect(service().drop(box)).resolves.toBeUndefined();
     expect(poolerFields(box.id)).toEqual(NO_POOLER);
+    expect(dropRole).toHaveBeenCalledTimes(1);
     expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it("clears the fields and warns when dropping the role fails", async () => {
+    const box = withTenant();
+    dropRole.mockRejectedValueOnce(new Error("connection refused"));
+    await expect(service().drop(box)).resolves.toBeUndefined();
+    expect(api.removed).toEqual(["hattisar-b1"]);
+    expect(poolerFields(box.id)).toEqual(NO_POOLER);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0]?.[0])).toContain("connection refused");
+  });
+
+  it("leaves a managed box's role alone", async () => {
+    const box = withTenant({ kind: "managed" });
+    await service().drop(box);
+    expect(api.removed).toEqual(["hattisar-b1"]);
+    expect(adminCalls).toEqual([]);
+    expect(dropRole).not.toHaveBeenCalled();
+    expect(poolerFields(box.id)).toEqual(NO_POOLER);
   });
 
   it("does nothing for a box without a tenant", async () => {
@@ -343,6 +374,7 @@ describe("reconcile", () => {
       "admin db.b1",
       "put hattisar-b1",
       "remove hattisar-c1",
+      "admin db.c1",
     ]);
     expect(poolerFields(first.id).poolerTenant).toBe("hattisar-a1");
     expect(poolerFields(second.id).poolerTenant).toBe("hattisar-b1");
