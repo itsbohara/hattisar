@@ -247,15 +247,17 @@ nothing for it.
 - **registered with `require` or `verify-full`** — none. Clients reach Supavisor without TLS, and
   Supavisor cannot check an upstream host name; pooling these is a follow-up.
 
-**Ensure** runs after a managed box is created, after a box is registered or edited, and for
-every eligible box at boot (after listening, never holding up boot):
+**Ensure** runs after a managed box is created or started, after a box is registered or edited,
+and for every eligible box at boot (after listening, never holding up boot) and every 10 minutes
+after, so a box left without a tenant while Supavisor was down catches up:
 1. Box stores a tenant: `GET /api/tenants/<id>`. Present with the box's `db_host` and `db_port` →
-   done. Present but different → `PUT` without `users`. Supavisor terminates a tenant's pools on
-   every update, so an unchanged tenant is never PUT. 404 → step 2.
+   done. Supavisor terminates a tenant's pools on every update, so an unchanged tenant is never PUT.
+   Present but different (the box moved), or 404 → step 2, keeping the stored id.
 2. As the box admin, in `postgres`: create or alter the tenant's own role
-   `hattisar_pooler_<first 12 hex of sha256(tenant id)>` `LOGIN PASSWORD` with the SCRAM verifier
+   `hattisar_pooler_<first 12 hex of HMAC-SHA256(HATTISAR_SECRET_KEY, tenant id)>` `LOGIN PASSWORD` with the SCRAM verifier
    of a new random password. One role per tenant, because several boxes (or hattisar installs) can
-   point at one server and a shared role's new password would break the other tenants. Then
+   point at one server and a shared role's new password would break the other tenants; the key
+   keeps two installs with the same tenant id apart. Then
    `CREATE SCHEMA IF NOT EXISTS hattisar_pooler`; `CREATE OR REPLACE FUNCTION
    hattisar_pooler.get_auth(p_usename text) RETURNS TABLE(username text, password text) LANGUAGE
    sql SECURITY DEFINER SET search_path = ''`, returning `rolname` and `rolpassword` (NULL once
@@ -284,8 +286,8 @@ role as the box admin, also best effort; the `hattisar_pooler` schema and functi
 other tenants on that server may use them.
 
 **Supavisor down or refusing:** the box is saved without pooler fields, its projects get the
-direct string only, the Boxes page shows "Pooler pending" for it, and the next boot or edit
-retries. Messages shown or logged have the generated password scrubbed.
+direct string only, the Boxes page shows "Pooler pending" for it, and the next ensure
+retries. Messages shown or logged have the generated and box admin passwords scrubbed.
 
 hattisar reaches the API at `http://supavisor:4000` (compose network only, no published port) with
 `Authorization: Bearer <JWT>`: HS256 with `POOLER_JWT_SECRET` (Supavisor's `API_JWT_SECRET`),
