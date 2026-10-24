@@ -1,6 +1,6 @@
 import pg from "pg";
 import { ignoreIdleErrors } from "../boxes/admin-client.js";
-import { SHARED_POOLER } from "../boxes/shared.js";
+import { POOLER_ENDPOINT } from "../pooler/endpoint.js";
 import type { Box } from "../registry/boxes.js";
 import type { Project } from "../registry/projects.js";
 
@@ -26,10 +26,10 @@ async function tryConnect(config: pg.ClientConfig): Promise<boolean> {
 // cache. Until then a rotated-out password keeps working through the pooler and the first login
 // with the new one is refused. One login with the new password (refused once, then accepted)
 // brings the cache up to date. Best effort: the password change itself has already happened.
-export const refreshSharedPooler: PoolerRefresher = async (box, project, password) => {
-  if (box.kind !== "shared" || box.poolerTenant === null) return;
+export const refreshPooler: PoolerRefresher = async (box, project, password) => {
+  if (box.poolerTenant === null) return;
   const config: pg.ClientConfig = {
-    ...SHARED_POOLER,
+    ...POOLER_ENDPOINT,
     user: `${project.ownerRole}.${box.poolerTenant}`,
     password,
     database: project.dbName,

@@ -16,7 +16,7 @@ import { managedBoxRoutes } from "./managed/routes.js";
 import type { ManagedBoxes } from "./managed/service.js";
 import { SupavisorApi } from "./pooler/supavisor.js";
 import { createPoolerTenants, type PoolerTenants } from "./pooler/tenants.js";
-import { refreshSharedPooler } from "./projects/pooler.js";
+import { refreshPooler } from "./projects/pooler.js";
 import { projectRoutes } from "./projects/routes.js";
 import type { ProjectServiceDeps } from "./projects/service.js";
 import { RegistryProjectSource } from "./projects/studio-source.js";
@@ -49,7 +49,8 @@ export function projectServiceDeps(
     db: registry,
     secretKey: deriveSecretKey(config.secretKey),
     admin: withAdminClient,
-    refreshPooler: refreshSharedPooler,
+    refreshPooler,
+    poolerHost: config.publicHost,
     onLifecycle: managed && managedLifecycle(registry, managed),
   };
 }

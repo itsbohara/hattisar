@@ -37,6 +37,7 @@ export interface ProjectServiceDeps {
   secretKey: Buffer;
   admin: AdminClientRunner;
   refreshPooler: PoolerRefresher;
+  poolerHost: string;
   onLifecycle?: LifecycleHook;
 }
 

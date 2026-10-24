@@ -24,22 +24,31 @@ export interface ConnectionString {
 }
 
 export function ownerConnectionStrings(
-  box: ProjectEndpoint,
+  box: ProjectEndpoint & Pick<Box, "kind">,
   project: Pick<Project, "dbName" | "ownerRole">,
   password: string,
+  poolerHost: string,
 ): ConnectionString[] {
-  const build = (kind: ConnectionKind, user: string, port: number): ConnectionString => {
+  const build = (
+    kind: ConnectionKind,
+    user: string,
+    host: string,
+    port: number,
+  ): ConnectionString => {
     const url = (secret: string) =>
-      `postgresql://${user}:${secret}@${box.publicHost}:${port}/${project.dbName}`;
+      `postgresql://${user}:${secret}@${host}:${port}/${project.dbName}`;
     return { kind, label: LABELS[kind], url: url(encodeURIComponent(password)), masked: url(MASK) };
   };
+  const direct = build("direct", project.ownerRole, box.publicHost, box.publicPort);
   const { poolerTenant, poolerSessionPort, poolerTransactionPort } = box;
-  if (poolerTenant !== null && poolerSessionPort !== null && poolerTransactionPort !== null) {
-    const user = `${project.ownerRole}.${poolerTenant}`;
-    return [
-      build("session", user, poolerSessionPort),
-      build("transaction", user, poolerTransactionPort),
-    ];
+  if (poolerTenant === null || poolerSessionPort === null || poolerTransactionPort === null) {
+    return [direct];
   }
-  return [build("direct", project.ownerRole, box.publicPort)];
+  const user = `${project.ownerRole}.${poolerTenant}`;
+  const pooled = [
+    build("session", user, poolerHost, poolerSessionPort),
+    build("transaction", user, poolerHost, poolerTransactionPort),
+  ];
+  // The shared box's db publishes no port.
+  return box.kind === "shared" ? pooled : [...pooled, direct];
 }
