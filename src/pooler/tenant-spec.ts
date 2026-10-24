@@ -1,5 +1,5 @@
 import type { Box } from "../registry/boxes.js";
-import { POOLER_AUTH_QUERY, POOLER_ROLE } from "./role.js";
+import { POOLER_AUTH_QUERY } from "./role.js";
 import type { TenantBody } from "./supavisor.js";
 
 const POOL_SIZE = 20;
@@ -25,7 +25,12 @@ export function tenantIdFor(
   return new Set(taken).has(id) ? `${id}-${box.id}` : id;
 }
 
-export function tenantBody(box: Pick<Box, "host" | "port">, password?: string): TenantBody {
+export interface TenantManager {
+  role: string;
+  password: string;
+}
+
+export function tenantBody(box: Pick<Box, "host" | "port">, manager?: TenantManager): TenantBody {
   return {
     db_host: box.host,
     db_port: box.port,
@@ -36,13 +41,13 @@ export function tenantBody(box: Pick<Box, "host" | "port">, password?: string): 
     ip_version: "auto",
     default_pool_size: POOL_SIZE,
     default_max_clients: MAX_CLIENTS,
-    ...(password === undefined
+    ...(manager === undefined
       ? {}
       : {
           users: [
             {
-              db_user: POOLER_ROLE,
-              db_password: password,
+              db_user: manager.role,
+              db_password: manager.password,
               mode_type: "transaction",
               pool_size: POOL_SIZE,
               is_manager: true,

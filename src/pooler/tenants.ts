@@ -3,7 +3,7 @@ import { type AdminClientRunner, safeErrorMessage } from "../boxes/admin-client.
 import { boxConnection } from "../boxes/service.js";
 import { type Box, getBoxById, listBoxes, updateBox } from "../registry/boxes.js";
 import type { Registry } from "../registry/db.js";
-import { installPoolerRole } from "./role.js";
+import { dropPoolerRole, installPoolerRole, poolerRoleFor } from "./role.js";
 import type { TenantApi, TenantInfo } from "./supavisor.js";
 import { isPoolerEligible, tenantBody, tenantIdFor } from "./tenant-spec.js";
 
@@ -47,14 +47,15 @@ export function createPoolerTenants(deps: PoolerTenantsDeps): PoolerTenants {
   }
 
   async function create(box: Box, id: string): Promise<void> {
+    const role = poolerRoleFor(id);
     const password = randomBytes(32).toString("base64url");
     try {
       await deps.admin(
         boxConnection(box, deps.secretKey),
-        (client) => installPoolerRole(client, password),
+        (client) => installPoolerRole(client, role, password),
         "postgres",
       );
-      await api.put(id, tenantBody(box, password), password);
+      await api.put(id, tenantBody(box, { role, password }), password);
     } catch (error) {
       warn(box, "created", error, password);
       return;
@@ -83,6 +84,22 @@ export function createPoolerTenants(deps: PoolerTenantsDeps): PoolerTenants {
     }
   }
 
+  // A managed box's role goes with its container and volume.
+  async function dropRole(box: Box, id: string): Promise<void> {
+    if (box.kind !== "registered") return;
+    try {
+      await deps.admin(
+        boxConnection(box, deps.secretKey),
+        (client) => dropPoolerRole(client, poolerRoleFor(id)),
+        "postgres",
+      );
+    } catch (error) {
+      console.warn(
+        `hattisar: pooler role for box ${box.name} not dropped: ${safeErrorMessage(error, "")}`,
+      );
+    }
+  }
+
   async function dropNow(box: Box): Promise<void> {
     if (box.poolerTenant === null) return;
     try {
@@ -91,6 +108,7 @@ export function createPoolerTenants(deps: PoolerTenantsDeps): PoolerTenants {
       warn(box, "removed", error);
     }
     updateBox(db, box.id, NO_POOLER);
+    await dropRole(box, box.poolerTenant);
   }
 
   async function ensureNow(box: Box): Promise<void> {
