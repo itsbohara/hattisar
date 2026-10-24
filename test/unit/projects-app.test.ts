@@ -61,6 +61,7 @@ beforeEach(() => {
       PG_META_CRYPTO_KEY: "unit",
       POSTGRES_PASSWORD: ADMIN_PASSWORD,
       POOLER_TENANT_ID: "hattisar",
+      POOLER_JWT_SECRET: "pooler-jwt-secret",
       HATTISAR_PUBLIC_HOST: "db.example.test",
     }),
     secretKey,

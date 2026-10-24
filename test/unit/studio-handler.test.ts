@@ -138,6 +138,7 @@ beforeAll(async () => {
       PG_META_CRYPTO_KEY: cryptoKey,
       POSTGRES_PASSWORD: "unused",
       POOLER_TENANT_ID: "hattisar",
+      POOLER_JWT_SECRET: "pooler-jwt-secret",
       STUDIO_URL: studioUrl,
     }),
     registry,

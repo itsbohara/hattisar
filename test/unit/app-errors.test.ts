@@ -52,6 +52,7 @@ beforeAll(() => {
       PG_META_CRYPTO_KEY: "unit",
       POSTGRES_PASSWORD: "unused",
       POOLER_TENANT_ID: "hattisar",
+      POOLER_JWT_SECRET: "pooler-jwt-secret",
     }),
     registry,
   );
