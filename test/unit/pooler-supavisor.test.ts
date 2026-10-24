@@ -18,7 +18,7 @@ interface Call {
   body: string | undefined;
 }
 
-type Reply = { status: number; body?: unknown } | Error;
+type Reply = { status: number; body?: unknown; raw?: string } | Error;
 
 function fakeFetch(replies: Reply[]) {
   const calls: Call[] = [];
@@ -31,7 +31,7 @@ function fakeFetch(replies: Reply[]) {
     });
     const reply = replies.shift() ?? { status: 200, body: {} };
     if (reply instanceof Error) throw reply;
-    const text = reply.body === undefined ? null : JSON.stringify(reply.body);
+    const text = reply.raw ?? (reply.body === undefined ? null : JSON.stringify(reply.body));
     return new Response(text, { status: reply.status });
   }) as typeof globalThis.fetch;
   return { calls, fetch };
@@ -112,7 +112,7 @@ describe("SupavisorApi.put", () => {
 
   it.each(["hattisar.b1", "hattisar/b1"])("rejects id %s before any fetch", async (id) => {
     const { client, calls } = api([]);
-    await expect(client.put(id, body)).rejects.toThrow();
+    await expect(client.put(id, body)).rejects.toThrow(/Invalid Supavisor tenant id/);
     expect(calls).toHaveLength(0);
   });
 
@@ -141,6 +141,22 @@ describe("SupavisorApi.get", () => {
     expect(calls[0]?.url).toBe("http://supavisor:4000/api/tenants/hattisar-b1");
     expect(calls[0]?.method).toBe("GET");
     expect(calls[0]?.headers.authorization).toBe(`Bearer ${TOKEN}`);
+  });
+
+  it.each<[string, Reply]>([
+    ["a non-JSON body", { status: 200, raw: "<html>secret-ish page</html>" }],
+    ["a body without data", { status: 200, body: { other: "secret-ish" } }],
+    ["a null data", { status: 200, body: { data: null } }],
+    ["data without fields", { status: 200, body: { data: {} } }],
+    ["a non-string host", { status: 200, body: { data: { db_host: 42, db_port: 5432 } } }],
+    ["a string port", { status: 200, body: { data: { db_host: "secret-ish", db_port: "5432" } } }],
+  ])("rejects %s without quoting it", async (_, reply) => {
+    const { client } = api([reply]);
+    const error = await caught(client.get("hattisar-b1"));
+    expect(error.status).toBe(200);
+    expect(error.message).toBe(
+      "Supavisor GET /api/tenants/hattisar-b1 failed: unexpected response",
+    );
   });
 
   it("maps 404 to undefined", async () => {
@@ -174,6 +190,9 @@ describe("SupavisorApi failures", () => {
     const { client } = api([{ status: 403, body: { error: `bad token ${SECRET}` } }]);
     const error = await caught(client.get("hattisar-b1"));
     expect(error.status).toBe(403);
+    expect(error.message).toBe(
+      "Supavisor GET /api/tenants/hattisar-b1 failed: Supavisor rejected the API token",
+    );
     expect(error.message).not.toContain(SECRET);
     expect(error.message).not.toContain(TOKEN);
   });
@@ -184,6 +203,15 @@ describe("SupavisorApi failures", () => {
     expect(error.status).toBe(0);
     expect(error.message).not.toContain(SECRET);
     expect(error.message).not.toContain(TOKEN);
+  });
+
+  it("reports a timeout as status 0", async () => {
+    const { client } = api([
+      new DOMException("The operation was aborted due to timeout", "TimeoutError"),
+    ]);
+    const error = await caught(client.get("hattisar-b1"));
+    expect(error.status).toBe(0);
+    expect(error.message).toContain("timed out");
   });
 
   it("never echoes a raw body without an error field", async () => {
