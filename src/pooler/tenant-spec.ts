@@ -30,7 +30,7 @@ export interface TenantManager {
   password: string;
 }
 
-export function tenantBody(box: Pick<Box, "host" | "port">, manager?: TenantManager): TenantBody {
+export function tenantBody(box: Pick<Box, "host" | "port">, manager: TenantManager): TenantBody {
   return {
     db_host: box.host,
     db_port: box.port,
@@ -41,19 +41,15 @@ export function tenantBody(box: Pick<Box, "host" | "port">, manager?: TenantMana
     ip_version: "auto",
     default_pool_size: POOL_SIZE,
     default_max_clients: MAX_CLIENTS,
-    ...(manager === undefined
-      ? {}
-      : {
-          users: [
-            {
-              db_user: manager.role,
-              db_password: manager.password,
-              mode_type: "transaction",
-              pool_size: POOL_SIZE,
-              is_manager: true,
-            },
-          ],
-        }),
+    users: [
+      {
+        db_user: manager.role,
+        db_password: manager.password,
+        mode_type: "transaction",
+        pool_size: POOL_SIZE,
+        is_manager: true,
+      },
+    ],
   };
 }
 

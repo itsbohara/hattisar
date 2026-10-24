@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHmac } from "node:crypto";
 import pg from "pg";
 import { scramVerifier } from "../projects/owner-password.js";
 
@@ -16,10 +16,11 @@ AS $$
   WHERE rolname = p_usename AND rolcanlogin AND NOT rolsuper
 $$`;
 
-// One role per tenant: boxes (or hattisar installs) sharing a server would otherwise reset each
-// other's manager password.
-export function poolerRoleFor(tenantId: string): string {
-  return `hattisar_pooler_${createHash("sha256").update(tenantId).digest("hex").slice(0, 12)}`;
+// One role per tenant: boxes sharing a server would otherwise reset each other's manager password.
+// Keyed by the install's secret because two installs can derive the same tenant id.
+export function poolerRoleFor(secretKey: Buffer, tenantId: string): string {
+  const digest = createHmac("sha256", secretKey).update(tenantId).digest("hex");
+  return `hattisar_pooler_${digest.slice(0, 12)}`;
 }
 
 async function roleExists(client: pg.Client, role: string): Promise<boolean> {

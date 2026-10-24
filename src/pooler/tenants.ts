@@ -4,7 +4,7 @@ import { boxConnection } from "../boxes/service.js";
 import { type Box, getBoxById, listBoxes, updateBox } from "../registry/boxes.js";
 import type { Registry } from "../registry/db.js";
 import { dropPoolerRole, installPoolerRole, poolerRoleFor } from "./role.js";
-import type { TenantApi, TenantInfo } from "./supavisor.js";
+import { assertTenantId, type TenantApi, type TenantInfo } from "./supavisor.js";
 import { isPoolerEligible, tenantBody, tenantIdFor } from "./tenant-spec.js";
 
 export interface PoolerTenants {
@@ -25,6 +25,13 @@ export interface PoolerTenantsDeps {
 
 const NO_POOLER = { poolerTenant: null, poolerSessionPort: null, poolerTransactionPort: null };
 
+function scrubbed(error: unknown, secrets: string[]): string {
+  return secrets.reduce<string>(
+    (message, secret) => safeErrorMessage(message, secret),
+    safeErrorMessage(error, ""),
+  );
+}
+
 export function createPoolerTenants(deps: PoolerTenantsDeps): PoolerTenants {
   const { db, api } = deps;
   const queues = new Map<number, Promise<void>>();
@@ -40,24 +47,22 @@ export function createPoolerTenants(deps: PoolerTenantsDeps): PoolerTenants {
     return next;
   }
 
-  function warn(box: Box, action: string, error: unknown, password = ""): void {
+  function warn(box: Box, action: string, error: unknown, ...secrets: string[]): void {
     console.warn(
-      `hattisar: pooler tenant for box ${box.name} not ${action}: ${safeErrorMessage(error, password)}`,
+      `hattisar: pooler tenant for box ${box.name} not ${action}: ${scrubbed(error, secrets)}`,
     );
   }
 
   async function create(box: Box, id: string): Promise<void> {
-    const role = poolerRoleFor(id);
+    const conn = boxConnection(box, deps.secretKey);
+    const role = poolerRoleFor(deps.secretKey, id);
     const password = randomBytes(32).toString("base64url");
     try {
-      await deps.admin(
-        boxConnection(box, deps.secretKey),
-        (client) => installPoolerRole(client, role, password),
-        "postgres",
-      );
+      assertTenantId(id);
+      await deps.admin(conn, (client) => installPoolerRole(client, role, password), "postgres");
       await api.put(id, tenantBody(box, { role, password }), password);
     } catch (error) {
-      warn(box, "created", error, password);
+      warn(box, "created", error, password, conn.password);
       return;
     }
     updateBox(db, box.id, {
@@ -75,27 +80,24 @@ export function createPoolerTenants(deps: PoolerTenantsDeps): PoolerTenants {
       warn(box, "checked", error);
       return;
     }
-    if (tenant === undefined) return create(box, id);
-    if (tenant.dbHost === box.host && tenant.dbPort === box.port) return;
-    try {
-      await api.put(id, tenantBody(box));
-    } catch (error) {
-      warn(box, "updated", error);
-    }
+    if (tenant?.dbHost === box.host && tenant.dbPort === box.port) return;
+    // A moved box may be on another server, which has no role for this tenant yet.
+    await create(box, id);
   }
 
   // A managed box's role goes with its container and volume.
   async function dropRole(box: Box, id: string): Promise<void> {
     if (box.kind !== "registered") return;
+    const conn = boxConnection(box, deps.secretKey);
     try {
       await deps.admin(
-        boxConnection(box, deps.secretKey),
-        (client) => dropPoolerRole(client, poolerRoleFor(id)),
+        conn,
+        (client) => dropPoolerRole(client, poolerRoleFor(deps.secretKey, id)),
         "postgres",
       );
     } catch (error) {
       console.warn(
-        `hattisar: pooler role for box ${box.name} not dropped: ${safeErrorMessage(error, "")}`,
+        `hattisar: pooler role for box ${box.name} not dropped: ${scrubbed(error, [conn.password])}`,
       );
     }
   }

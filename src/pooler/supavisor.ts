@@ -61,8 +61,12 @@ export function signApiJwt(secret: string, nowSeconds: number): string {
   return `${unsigned}.${signature}`;
 }
 
-function tenantPath(id: string): string {
+export function assertTenantId(id: string): void {
   if (!TENANT_ID_PATTERN.test(id)) throw new Error(`Invalid Supavisor tenant id: ${id}`);
+}
+
+function tenantPath(id: string): string {
+  assertTenantId(id);
   return `/api/tenants/${id}`;
 }
 
