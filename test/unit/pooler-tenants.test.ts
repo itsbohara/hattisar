@@ -14,6 +14,7 @@ import {
 import { createPoolerTenants } from "../../src/pooler/tenants.js";
 import {
   type Box,
+  deleteBox,
   getBoxById,
   insertBox,
   type NewBox,
@@ -227,10 +228,10 @@ describe("ensure on a box with a stored tenant", () => {
 
   it("keeps the stored id when the box is renamed", async () => {
     const box = withTenant();
-    updateBox(db, box.id, { name: "renamed", host: "db.renamed" });
+    updateBox(db, box.id, { name: "renamed" });
     api.tenants.set("hattisar-b1", { dbHost: "db.b1", dbPort: 5432 });
     await service().ensure(getBoxById(db, box.id) as Box);
-    expect(api.puts.map((put) => put.id)).toEqual(["hattisar-b1"]);
+    expect(api.calls).toEqual(["get hattisar-b1"]);
     expect(poolerFields(box.id).poolerTenant).toBe("hattisar-b1");
   });
 
@@ -267,6 +268,18 @@ it("serializes concurrent ensures for one box", async () => {
   expect(adminCalls).toHaveLength(1);
 });
 
+it("does not recreate the tenant of a box deleted after a drop", async () => {
+  const box = withTenant();
+  api.tenants.set("hattisar-b1", { dbHost: "db.b1", dbPort: 5432 });
+  const tenants = service();
+  await tenants.drop(box);
+  deleteBox(db, box.id);
+  await tenants.ensure(box);
+  expect(install).not.toHaveBeenCalled();
+  expect(api.puts).toHaveLength(0);
+  expect(api.calls).toEqual(["remove hattisar-b1"]);
+});
+
 describe("drop", () => {
   it("removes the tenant and clears the fields", async () => {
     const box = withTenant();
@@ -295,7 +308,11 @@ describe("reconcile", () => {
     const shared = addBox({ name: "shared", kind: "shared", host: "db", poolerTenant: "hattisar" });
     await service().reconcile();
     expect(api.calls).toEqual([]);
-    expect(poolerFields(shared.id).poolerTenant).toBe("hattisar");
+    expect(poolerFields(shared.id)).toEqual({
+      poolerTenant: "hattisar",
+      poolerSessionPort: null,
+      poolerTransactionPort: null,
+    });
   });
 
   it("rewrites the ports from config on boxes with a tenant", async () => {
@@ -330,6 +347,23 @@ describe("reconcile", () => {
     expect(poolerFields(first.id).poolerTenant).toBe("hattisar-a1");
     expect(poolerFields(second.id).poolerTenant).toBe("hattisar-b1");
     expect(poolerFields(tls.id)).toEqual(NO_POOLER);
+  });
+
+  it("does not set ports on a box dropped while reconcile ran", async () => {
+    const first = addBox({ name: "a1", host: "db.a1" });
+    const later = withTenant({
+      name: "b1",
+      host: "db.b1",
+      sslmode: "require",
+      poolerSessionPort: 1,
+    });
+    const tenants = service();
+    install.mockImplementationOnce(async () => {
+      updateBox(db, later.id, NO_POOLER);
+    });
+    await tenants.reconcile();
+    expect(poolerFields(first.id).poolerTenant).toBe("hattisar-a1");
+    expect(poolerFields(later.id)).toEqual(NO_POOLER);
   });
 
   it("goes on with the next box when one fails", async () => {
