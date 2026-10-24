@@ -102,6 +102,7 @@ const scheduledBackupDeps = backupDeps(config, registry);
 scheduler.register("scheduled-backups", MINUTE_MS, (now) =>
   runScheduledBackups(scheduledBackupDeps, now),
 );
+scheduler.register("reconcile-pooler-tenants", 10 * MINUTE_MS, () => pooler.reconcile());
 scheduler.start();
 const server = serve({ fetch: app.fetch, port: LISTEN_PORT }, (info) => {
   console.log(`hattisar listening on :${info.port}`);

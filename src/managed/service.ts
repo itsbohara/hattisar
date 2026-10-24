@@ -91,6 +91,7 @@ export class ManagedBoxes {
   async start(box: Box): Promise<void> {
     await this.deps.docker.start(containerOf(box), box.name);
     await this.deps.waitReady(boxConnection(box, this.deps.secretKey));
+    await this.deps.pooler.ensure(box);
   }
 
   async stop(box: Box): Promise<void> {
