@@ -165,7 +165,7 @@ Set in `.env` next to `compose.yml` (`docker/.env` in a checkout; template:
 | `HATTISAR_COOKIE_SECURE` | `false` | `true` behind HTTPS. |
 | `HATTISAR_PURGE_AFTER_DAYS` | `7` | Deleted projects are purged after this many days. |
 | `HATTISAR_BACKUP_HOUR_UTC` | `2` | Hour scheduled backups run (weekly ones on Mondays). |
-| `HATTISAR_PG_BIN_DIR` | `/usr/bin` | Where `pg_dump`/`pg_restore` live (the image ships PostgreSQL 17 client). |
+| `HATTISAR_PG_BIN_DIR` | `/usr/bin` | Where `pg_dump`/`pg_restore` live (the image ships PostgreSQL 18 client). |
 | `HATTISAR_MANAGED_BOXES` | `false` | Turns managed boxes on; also start the `managed-boxes` profile. |
 | `HATTISAR_MANAGED_PORT_RANGE` | `55000-55999` | Host ports for managed boxes. |
 | `DOCKER_HOST` | `tcp://docker-proxy:2375` | Managed boxes only. Compose sets it to the proxy; the host's value is never used. |
@@ -253,7 +253,7 @@ Before exposing it:
   Back up the `hattisar-data` volume too: it is the registry of boxes and projects.
 - **PITR** — dumps restore to the moment of the dump. For production boxes also run box-level
   point-in-time recovery: [`docs/pitr.md`](docs/pitr.md) is a WAL-G recipe for managed boxes.
-- **Registered boxes** — any self-managed Postgres 15 to 17 whose admin user is a superuser. It
+- **Registered boxes** — any self-managed Postgres 15 to 18 whose admin user is a superuser. It
   needs no Supabase roles.
 - **Shared box** — development only. Put production projects on a registered or managed box.
 - **Managed boxes** — off in a hand install, on by default with the installer; see the security
@@ -347,10 +347,8 @@ acceptable.
   recreating a managed box's container by hand (for example to upgrade its image) loses
   Vault-encrypted data. Upgrading managed boxes is not supported in v1.
 - **Plain-Postgres boxes:** a new table shows a harmless `role "anon" does not exist` toast from
-  Studio's Data API toggle; the table is created. Postgres 18 is refused until #34 (its backups
-  need a newer `pg_dump`). Hosted Postgres without a true superuser, such as RDS, is refused
-  until #33.
-- **Postgres 15 boxes:** restoring a backup reports a failure although the data is restored (#35).
+  Studio's Data API toggle; the table is created. Hosted Postgres without a true superuser, such
+  as RDS, is refused until #33.
 - **Boxes on other Docker hosts** and Auth/REST/Storage per project are out of scope for v1.
 
 ## Upgrading Studio
