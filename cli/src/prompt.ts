@@ -34,3 +34,13 @@ async function promptHidden(input: Input, prompt: Writer, question: string): Pro
 export async function readSecret(input: Input, prompt: Writer, question: string): Promise<string> {
   return (input.isTTY ? await promptHidden(input, prompt, question) : await readAll(input)).trim();
 }
+
+// A password may begin or end with spaces; only the line ending that piping adds is dropped.
+export async function readPassword(
+  input: Input,
+  prompt: Writer,
+  question: string,
+): Promise<string> {
+  const value = input.isTTY ? await promptHidden(input, prompt, question) : await readAll(input);
+  return value.replace(/\r?\n$/, "");
+}

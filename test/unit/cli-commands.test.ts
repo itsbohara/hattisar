@@ -23,7 +23,7 @@ import { getBackup } from "../../src/registry/backups.js";
 import { insertBox } from "../../src/registry/boxes.js";
 import { openRegistry, type Registry } from "../../src/registry/db.js";
 import { getProjectByRef } from "../../src/registry/projects.js";
-import { deriveSecretKey, encryptSecret } from "../../src/registry/secrets.js";
+import { decryptSecret, deriveSecretKey, encryptSecret } from "../../src/registry/secrets.js";
 import { RecordingPooler } from "../helpers/pooler.js";
 import { signInToRegistry } from "../helpers/session.js";
 
@@ -582,6 +582,29 @@ describe("attached projects", () => {
       stdin: "other\n",
     });
     expect(JSON.parse(json.stdout)).toEqual({ ok: true });
+  });
+
+  it("strips only the line ending from a piped password, for attach and set-login", async () => {
+    await login();
+    const stored = () =>
+      decryptSecret(getProjectByRef(db, "shop")?.ownerPasswordEnc ?? "", secretKey);
+    await cli(
+      [
+        "projects",
+        "attach",
+        "Shop",
+        "--box",
+        String(directBoxId),
+        "--database",
+        "shop",
+        "--login",
+        "app",
+      ],
+      { stdin: "  pass word  \r\n" },
+    );
+    expect(stored()).toBe("  pass word  ");
+    await cli(["projects", "set-login", "shop", "--login", "app2"], { stdin: " other \n" });
+    expect(stored()).toBe(" other ");
   });
 
   it("detaches only with --confirm set to the ref", async () => {

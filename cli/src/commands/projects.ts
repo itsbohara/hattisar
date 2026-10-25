@@ -1,6 +1,6 @@
 import { CliError, EXIT, UsageError } from "../errors.js";
 import { printJson, printLines, table, utc } from "../output.js";
-import { readSecret } from "../prompt.js";
+import { readPassword } from "../prompt.js";
 import { type Command, type Context, requireConfirm, usageLine, type Values } from "./command.js";
 
 interface Project {
@@ -107,7 +107,7 @@ const attach: Command = {
     }
     const database = requireString(attach, values, "database");
     const login = requireString(attach, values, "login");
-    const password = await readSecret(context.io.stdin, context.io.stderr, "Password: ");
+    const password = await readPassword(context.io.stdin, context.io.stderr, "Password: ");
     const project = await context.api()<Project>("POST", "/projects/attach", {
       name,
       ref: values.ref,
@@ -128,7 +128,7 @@ const setLogin: Command = {
   summary: "Replace an attached project's login; the password is read from stdin or a prompt",
   async run(context, [ref = ""], values) {
     const login = requireString(setLogin, values, "login");
-    const password = await readSecret(context.io.stdin, context.io.stderr, "Password: ");
+    const password = await readPassword(context.io.stdin, context.io.stderr, "Password: ");
     const result = await context.api()<Ok>("PUT", `${path(ref)}/login`, { login, password });
     done(context, result, `Login updated for ${ref}`);
   },
