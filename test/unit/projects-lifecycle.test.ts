@@ -683,3 +683,46 @@ describe("one lifecycle operation at a time per project", () => {
     expect(sql).toEqual([]);
   });
 });
+
+describe("membership in the owner role before each operation", () => {
+  const GRANT = 'GRANT "hs_my_app_owner" TO "rds""admin"';
+  const operations: [string, RegExp, (on: Box) => Promise<unknown>][] = [
+    ["delete", /^REVOKE CONNECT/, (on) => softDeleteProject(deps, seed(), on)],
+    [
+      "restore from Trash",
+      /^ALTER DATABASE .* RENAME TO "my_app"$/,
+      async (on) => {
+        seed();
+        await softDeleted("my-app", new Date("2026-10-20T08:00:00.000Z"));
+        sql = [];
+        return restoreProject(deps, project() as Project, on);
+      },
+    ],
+    [
+      "purge",
+      /^DROP DATABASE/,
+      async (on) => {
+        seed();
+        await softDeleted("my-app", new Date("2026-10-20T08:00:00.000Z"));
+        sql = [];
+        return purgeProject(deps, project() as Project, on);
+      },
+    ],
+    ["rotate", /^ALTER ROLE/, (on) => rotateOwnerPassword(deps, seed(), on)],
+  ];
+
+  it.each(operations)("grants it to a non-superuser admin before %s", async (_label, op, run) => {
+    expect(await run({ ...box, adminUser: 'rds"admin', adminSuperuser: false })).toEqual({
+      ok: true,
+    });
+    const granted = sql.indexOf(GRANT);
+    expect(granted).toBeGreaterThanOrEqual(0);
+    expect(sql.findIndex((text) => op.test(text))).toBeGreaterThan(granted);
+  });
+
+  it.each(operations)("grants nothing to a superuser admin before %s", async (_label, op, run) => {
+    expect(await run(box)).toEqual({ ok: true });
+    expect(sql.some((text) => op.test(text))).toBe(true);
+    expect(sql.some((text) => text.startsWith('GRANT "hs_my_app_owner" TO'))).toBe(false);
+  });
+});

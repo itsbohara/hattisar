@@ -85,6 +85,21 @@ export interface ProjectNames {
   ownerRole: string;
 }
 
+// A non-superuser admin must be a member of the owner role to create, rename or drop its database,
+// drop the role or change its password. Granted again before each of those, since the owner can
+// revoke it (PG15) and a box edited from a superuser admin never had it.
+export async function joinOwnerRole(
+  client: pg.Client,
+  conn: BoxConnection,
+  box: Pick<Box, "adminSuperuser">,
+  ownerRole: string,
+): Promise<void> {
+  if (box.adminSuperuser) return;
+  await client.query(
+    `GRANT ${pg.escapeIdentifier(ownerRole)} TO ${pg.escapeIdentifier(conn.user)}`,
+  );
+}
+
 // §7 steps 2–4, for an owner role that already exists. Also how a restore recreates a database.
 export async function createProjectDatabase(
   admin: AdminClientRunner,
@@ -96,10 +111,7 @@ export async function createProjectDatabase(
   const db = pg.escapeIdentifier(names.dbName);
   const role = pg.escapeIdentifier(names.ownerRole);
   await admin(conn, async (client) => {
-    // CREATE DATABASE … OWNER needs a non-superuser admin to be a member of the owner role.
-    if (!box.adminSuperuser) {
-      await client.query(`GRANT ${role} TO ${pg.escapeIdentifier(conn.user)}`);
-    }
+    await joinOwnerRole(client, conn, box, names.ownerRole);
     await client.query(`CREATE DATABASE ${db} OWNER ${role}`);
     onCreated();
     await client.query(`REVOKE CONNECT, TEMPORARY ON DATABASE ${db} FROM PUBLIC`);
@@ -248,6 +260,7 @@ async function rotate(
   const password = generateOwnerPassword();
   try {
     await deps.admin(conn, async (client) => {
+      await joinOwnerRole(client, conn, box, project.ownerRole);
       await client.query(
         `ALTER ROLE ${pg.escapeIdentifier(project.ownerRole)} PASSWORD ${pg.escapeLiteral(scramVerifier(password))}`,
       );
