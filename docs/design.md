@@ -388,6 +388,10 @@ management) fail with a permission error; hattisar's own admin operations still 
   `?sslmode=<box sslmode>` unless it is `disable` (cloud providers refuse clients without TLS), on
   every box except the shared one, whose `db` publishes no port.
 - order: session, transaction, direct; a box without pooler fields has only direct.
+- a box registered through Supabase's pooler (host `*.pooler.supabase.com`, admin
+  `postgres.<project ref>`) logs owners in as `<owner>.<project ref>`: the direct string, Studio's
+  pg-meta connections and Studio's `db_user` all use that login. Free Supabase projects have no
+  IPv4 direct host, so the pooler is how most of them register.
 - shared/dev-only boxes show a "development only" badge.
 
 **Rotate owner password:** `ALTER ROLE … PASSWORD …`, store encrypted, show new strings. Never
