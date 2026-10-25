@@ -17,6 +17,7 @@ export interface NewBox {
   poolerSessionPort: number | null;
   poolerTransactionPort: number | null;
   containerName: string | null;
+  adminSuperuser: boolean;
 }
 
 export interface Box extends NewBox {
@@ -26,7 +27,7 @@ export interface Box extends NewBox {
 
 export type BoxUpdate = Partial<Omit<NewBox, "kind">>;
 
-type BoxRow = Omit<Box, "devOnly"> & { devOnly: number };
+type BoxRow = Omit<Box, "devOnly" | "adminSuperuser"> & { devOnly: number; adminSuperuser: number };
 
 const COLUMN_NAMES = {
   name: "name",
@@ -43,6 +44,7 @@ const COLUMN_NAMES = {
   poolerSessionPort: "pooler_session_port",
   poolerTransactionPort: "pooler_transaction_port",
   containerName: "container_name",
+  adminSuperuser: "admin_superuser",
 } as const satisfies Record<keyof NewBox, string>;
 
 const COLUMNS = [
@@ -55,15 +57,17 @@ const UPDATABLE_FIELDS = (Object.keys(COLUMN_NAMES) as (keyof NewBox)[]).filter(
   (field): field is keyof BoxUpdate => field !== "kind",
 );
 
-function toBox({ devOnly, ...row }: BoxRow): Box {
-  return { ...row, devOnly: devOnly === 1 };
+const BOOLEAN_FIELDS: ReadonlySet<string> = new Set(["devOnly", "adminSuperuser"]);
+
+function toBox({ devOnly, adminSuperuser, ...row }: BoxRow): Box {
+  return { ...row, devOnly: devOnly === 1, adminSuperuser: adminSuperuser === 1 };
 }
 
 function toParams(fields: Partial<NewBox>): Record<string, unknown> {
   return Object.fromEntries(
     Object.entries(fields).map(([field, value]) => [
       field,
-      field === "devOnly" ? Number(value) : value,
+      BOOLEAN_FIELDS.has(field) ? Number(value) : value,
     ]),
   );
 }
