@@ -132,7 +132,7 @@ export async function restoreIntoProject(
             `DROP DATABASE IF EXISTS ${pg.escapeIdentifier(current.dbName)} WITH (FORCE)`,
           ),
         );
-        await createProjectDatabase(projectDeps.admin, conn, current);
+        await createProjectDatabase(projectDeps.admin, conn, box, current);
       } catch (error) {
         const message = safeErrorMessage(error, conn.password);
         return {

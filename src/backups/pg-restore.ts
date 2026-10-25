@@ -13,8 +13,11 @@ export class RestoreError extends Error {
 
 // The baseline (§7 step 4) already made the extensions schema in the new database, and the owner
 // role cannot comment on extensions it does not own: either entry would fail the restore.
+// pg_stat_statements is the baseline's too: it is absent where the admin is not a superuser, and
+// the owner role may never create it.
 const BASELINE_ENTRIES = [
   /^\d+; \d+ \d+ SCHEMA - extensions /,
+  /^\d+; \d+ \d+ EXTENSION - pg_stat_statements /,
   /^\d+; \d+ \d+ COMMENT - EXTENSION /,
 ];
 
