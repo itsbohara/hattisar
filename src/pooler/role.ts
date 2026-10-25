@@ -4,7 +4,8 @@ import { scramVerifier } from "../projects/owner-password.js";
 
 export const POOLER_AUTH_QUERY = "SELECT * FROM hattisar_pooler.get_auth($1)";
 
-// Owned by the connecting admin, a superuser (E1), so SECURITY DEFINER can read pg_authid.
+// Owned by the connecting admin, a superuser on every pooled box, so SECURITY DEFINER can read
+// pg_authid.
 // NOT rolsuper keeps superuser secrets out of the pooler's reach.
 const GET_AUTH = `CREATE OR REPLACE FUNCTION hattisar_pooler.get_auth(p_usename text)
 RETURNS TABLE(username text, password text)

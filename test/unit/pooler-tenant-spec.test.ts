@@ -39,14 +39,18 @@ const WITH_TENANT = {
 
 describe("isPoolerEligible", () => {
   it("accepts managed boxes and registered boxes without TLS", () => {
-    expect(isPoolerEligible({ kind: "managed", sslmode: "disable" })).toBe(true);
-    expect(isPoolerEligible({ kind: "registered", sslmode: "disable" })).toBe(true);
+    expect(isPoolerEligible(box({ kind: "managed" }))).toBe(true);
+    expect(isPoolerEligible(box({ kind: "registered" }))).toBe(true);
+  });
+
+  it("rejects a registered box whose admin is not a superuser", () => {
+    expect(isPoolerEligible(box({ adminSuperuser: false }))).toBe(false);
   });
 
   it("rejects registered boxes with TLS and the shared box", () => {
-    expect(isPoolerEligible({ kind: "registered", sslmode: "require" })).toBe(false);
-    expect(isPoolerEligible({ kind: "registered", sslmode: "verify-full" })).toBe(false);
-    expect(isPoolerEligible({ kind: "shared", sslmode: "disable" })).toBe(false);
+    expect(isPoolerEligible(box({ sslmode: "require" }))).toBe(false);
+    expect(isPoolerEligible(box({ sslmode: "verify-full" }))).toBe(false);
+    expect(isPoolerEligible(box({ kind: "shared" }))).toBe(false);
   });
 });
 
@@ -113,5 +117,11 @@ describe("poolerStatus", () => {
       kind: "direct",
     });
     expect(poolerStatus(box({ kind: "shared" }))).toEqual({ kind: "direct" });
+    expect(poolerStatus(box({ sslmode: "disable", adminSuperuser: false }))).toEqual({
+      kind: "direct",
+    });
+    expect(poolerStatus(box({ adminSuperuser: false, ...WITH_TENANT }))).toEqual({
+      kind: "direct",
+    });
   });
 });

@@ -11,8 +11,10 @@ export type PoolerStatus =
   | { kind: "direct" };
 
 // Clients reach Supavisor without TLS and it cannot check an upstream host name, so a box that
-// asks for TLS is never pooled.
-export function isPoolerEligible(box: Pick<Box, "kind" | "sslmode">): boolean {
+// asks for TLS is never pooled. Nor is a box whose admin is not a superuser: the pooler's auth
+// query reads pg_authid.
+export function isPoolerEligible(box: Pick<Box, "kind" | "sslmode" | "adminSuperuser">): boolean {
+  if (!box.adminSuperuser) return false;
   return box.kind === "managed" || (box.kind === "registered" && box.sslmode === "disable");
 }
 

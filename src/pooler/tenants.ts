@@ -197,7 +197,8 @@ export function createPoolerTenants(deps: PoolerTenantsDeps): PoolerTenants {
       return { ok: false, reason: "refused", problem: SHARED_BOX_POOLER };
     }
     if (!isPoolerEligible(box)) {
-      return { ok: false, reason: "refused", problem: "This box has no pooler: it requires TLS." };
+      const reason = box.adminSuperuser ? "it requires TLS" : "its admin is not a superuser";
+      return { ok: false, reason: "refused", problem: `This box has no pooler: ${reason}.` };
     }
     const tenant = box.poolerTenant ?? newTenantId(box);
     const problem = await create(box, tenant);
