@@ -35,28 +35,32 @@ function adminSql(script: string): string {
 
 // What attaching, updating the login and detaching must leave exactly as the app set it up.
 // pg_authid works because the box admin of this container is a superuser. The second row is read
-// inside the attached database, where a baseline or extension would show.
+// inside the attached database, where a baseline or extension would show. jsonb, not json: json_agg
+// emits newlines, which would split one value across the lines parsed below.
 function snapshot(): unknown {
   const [server, inside] = adminSql(`
-    select json_build_object(
-      'database', (select row_to_json(d) from (
+    select jsonb_build_object(
+      'database', (select to_jsonb(d) from (
         select datname, datdba::regrole::text as owner, datacl::text
           from pg_database where datname = :'db') d),
-      'role', (select row_to_json(r) from (
+      'role', (select to_jsonb(r) from (
         select rolname, rolsuper, rolcanlogin, rolpassword, rolvaliduntil
           from pg_authid where rolname = :'login') r),
-      'roles', (select json_agg(rolname order by rolname) from pg_roles)
+      'roles', (select jsonb_agg(rolname order by rolname) from pg_roles)
     );
     \\connect :"db"
-    select json_build_object(
-      'extensions', (select json_agg(extname order by extname) from pg_extension),
-      'schemas', (select json_agg(json_build_object('name', nspname, 'acl', nspacl::text)
+    select jsonb_build_object(
+      'extensions', (select jsonb_agg(extname order by extname) from pg_extension),
+      'schemas', (select jsonb_agg(jsonb_build_object('name', nspname, 'acl', nspacl::text)
           order by nspname)
         from pg_namespace where nspname !~ '^pg_' and nspname <> 'information_schema'),
-      'objects', (select json_agg(json_build_object('name', c.relname, 'schema', n.nspname,
+      'objects', (select jsonb_agg(jsonb_build_object('name', c.relname, 'schema', n.nspname,
             'owner', c.relowner::regrole::text, 'acl', c.relacl::text)
           order by n.nspname, c.relname)
         from pg_class c join pg_namespace n on n.oid = c.relnamespace
+        where n.nspname !~ '^pg_' and n.nspname <> 'information_schema'),
+      'functions', (select jsonb_agg(n.nspname || '.' || p.proname order by n.nspname, p.proname)
+        from pg_proc p join pg_namespace n on n.oid = p.pronamespace
         where n.nspname !~ '^pg_' and n.nspname <> 'information_schema')
     );`)
     .split("\n")
