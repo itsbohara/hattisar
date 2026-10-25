@@ -180,8 +180,9 @@ Numbered migrations in `src/registry/migrations/`, applied at boot, tracked in
 - `boxes(id, name UNIQUE, kind CHECK in ('shared','registered','managed'), dev_only INT,
   host, port, admin_user, admin_password_enc, sslmode, public_host, public_port,
   pooler_tenant NULL, pooler_session_port NULL, pooler_transaction_port NULL,
-  container_name NULL, created_at)` — the three pooler fields are all set or all NULL; set means
-  the box has a Supavisor tenant (§5.1).
+  container_name NULL, admin_superuser INT DEFAULT 1, created_at)` — the three pooler fields are
+  all set or all NULL; set means the box has a Supavisor tenant (§5.1). `admin_superuser` is what
+  E1 found (§5); shared and managed boxes are always 1.
 - `projects(id, ref UNIQUE, name, box_id → boxes, db_name, owner_role,
   owner_password_enc, status CHECK in ('active','deleted'), deleted_at NULL,
   deleted_db_name NULL, created_at)`
@@ -220,17 +221,20 @@ credentials are re-entered, because only the shared box is re-seeded from env at
   host/port, `dev_only` checkbox.
 - **managed** — started by hattisar (§10).
 
-Every kind except a registered box with `sslmode` `require` or `verify-full` gets a pooler tenant
-(§5.1).
+Every kind except a registered box with `sslmode` `require` or `verify-full`, or with an admin
+that is not a superuser, gets a pooler tenant (§5.1).
 
 **E1 compatibility check** (on register and edit, and before creating a managed box's first project),
 connecting as the admin: `server_version_num` from 150000 up to, not including, 190000; extensions
-`pgcrypto`, `uuid-ossp`, `pg_stat_statements` are in `pg_available_extensions`; admin is superuser
-(the H2 baseline needs it for `pg_stat_statements`; `ALTER SCHEMA public OWNER` does not, on 15+).
+`pgcrypto`, `uuid-ossp`, `pg_stat_statements` are in `pg_available_extensions` (all three on every
+box, even where the admin cannot create `pg_stat_statements`); admin is a superuser, or has both
+`CREATEDB` and `CREATEROLE`. Otherwise the problem is `Admin user <name> needs to be a superuser,
+or have CREATEDB and CREATEROLE`. Register and edit store which kind in `admin_superuser`.
 No Supabase roles are required: any self-managed Postgres 15-18 passes, because hattisar never
 uses `supabase_admin`, `anon`, `authenticated` or `service_role`, and never creates them on a
 box. The cap is the bundled client's major: `pg_dump` refuses a newer server.
-Hosted Postgres without a true superuser (RDS, Neon) fails the superuser check (#33).
+A `CREATEDB`/`CREATEROLE` admin is the shape of RDS, Aurora, Neon and Supabase cloud; it is tested
+on stock Postgres only, not yet on those services (#33).
 Failure lists every unmet item. A box with projects (any status) cannot be removed.
 
 ### 5.1 Pooler tenants (J3)
@@ -249,6 +253,8 @@ nothing for it.
   stored once and kept when the box is renamed: it is in every app's connection string.
 - **registered with `require` or `verify-full`** — none. Clients reach Supavisor without TLS, and
   Supavisor cannot check an upstream host name; pooling these is a follow-up.
+- **registered with an admin that is not a superuser** — none. The auth query reads `pg_authid`,
+  which only a superuser can expose.
 
 **Ensure** runs after a managed box is created or started, after a box is registered or edited,
 and for every eligible box at boot (after listening, never holding up boot) and every 10 minutes
@@ -281,7 +287,8 @@ after, so a box left without a tenant while Supavisor was down catches up:
              "pool_size": 20, "is_manager": true}]}}
 ```
 
-**Drop** (box removed, or a registered box edited to `require`/`verify-full`):
+**Drop** (box removed, or a registered box edited to `require`/`verify-full` or to an admin that is
+not a superuser):
 `GET /api/tenants/<id>/terminate`, then `DELETE /api/tenants/<id>` (404 counts as done), then clear
 the pooler fields. Best effort: a failure is logged and the removal goes on; a later tenant with
 the same id overwrites the leftover (step 3). On a registered box hattisar then drops the tenant's
@@ -293,7 +300,9 @@ resync-pooler <id>`) runs steps 2–4 for one box on demand, with the stored ten
 as ensure picks it, if the box has none), queued with ensure and drop for that box. It fixes a
 tenant whose role password no longer matches Supavisor's, as after a box restore
 ([`docs/pitr.md`](pitr.md)), which ensure does not notice. The PUT terminates the tenant's pools,
-so open pooled connections drop. Refused for the shared box and for a box that requires TLS; on failure the stored pooler
+so open pooled connections drop. Refused for the shared box, for a box that requires TLS, and for
+a box whose admin is not a superuser (`This box has no pooler: its admin is not a superuser.`); on
+failure the stored pooler
 fields stay as they were and the scrubbed reason is shown.
 
 **Supavisor down or refusing:** the box is saved without pooler fields, its projects get the
@@ -333,13 +342,17 @@ has it, or `db_name` exists on the target box. Display name is editable.
 
 **Create** (as box admin; every identifier/literal built with `format('%I' / '%L')` or the `pg`
 escape helpers, never string concatenation):
-1. `CREATE ROLE <owner> LOGIN PASSWORD <32-byte random, base64url>`
+1. `CREATE ROLE <owner> LOGIN PASSWORD <32-byte random, base64url>`; on a box whose admin is not a
+   superuser, then `GRANT <owner> TO <admin>`, which `CREATE DATABASE … OWNER` needs
 2. `CREATE DATABASE <db> OWNER <owner>`
 3. `REVOKE CONNECT, TEMPORARY ON DATABASE <db> FROM PUBLIC`; `GRANT CONNECT ON DATABASE <db> TO <owner>`
 4. In `<db>`: run `sql/baseline.sql` with the owner substituted (H2): `extensions` schema;
-   `pgcrypto`, `uuid-ossp`, `pg_stat_statements` in it; `public` owned by owner; `USAGE` on
-   `extensions` to owner; `ALTER DATABASE <db> SET search_path = "$user", public, extensions`.
-   Nothing for the pooler: its auth query runs in the box's `postgres` database (§5.1).
+   `pgcrypto`, `uuid-ossp` in it; `public` owned by owner; `USAGE` on `extensions` to owner;
+   `ALTER DATABASE <db> SET search_path = "$user", public, extensions`. Then, on its own,
+   `CREATE EXTENSION IF NOT EXISTS pg_stat_statements WITH SCHEMA extensions`: only a superuser may,
+   so `insufficient_privilege` (42501) is skipped and Query Performance stays empty; any other
+   error fails create. Nothing for the pooler: its auth query runs in the box's `postgres`
+   database (§5.1).
 5. Insert registry row.
 Any failure → drop what was created (db, role), no registry row, error shown.
 
@@ -420,7 +433,11 @@ go in `PGPASSWORD` env, never argv. Dumps are custom format (`-Fc`), connecting 
 - **Restore:** from a backup into (a) the same project — confirm by typing the ref; terminate
   backends, drop and recreate the database with the §7 steps 2–4 (same owner, same password), then
   `pg_restore --no-owner --no-privileges --role=<owner> -d <db>`; or (b) a new project — the full
-  §7 create flow, then the same restore. A failed restore leaves the error on the page. A
+  §7 create flow, then the same restore. The restore list leaves out what the baseline owns: the
+  `extensions` schema, extension comments and `pg_stat_statements`. Known limitation: a box edited
+  from a superuser admin to one that is not, on Postgres 16+, cannot grant itself owner roles
+  created before the edit (that needs `ADMIN OPTION`), so restoring those projects into
+  themselves may fail. A failed restore leaves the error on the page. A
   restore whose only pg_restore errors are `unrecognized configuration parameter` on a `SET` (a
   newer client's setting an older server lacks, such as `transaction_timeout` on 15) succeeds
   and logs a warning. Leftover `restore-*` work directories are removed at boot.
