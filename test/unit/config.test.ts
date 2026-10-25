@@ -234,6 +234,12 @@ describe("loadConfig", () => {
       );
     });
 
+    it("stores the normalized target", () => {
+      expect(mountsOf("/opt/x:/etc//wal-g/./walg.yaml/")).toEqual([
+        { source: "/opt/x", target: "/etc/wal-g/walg.yaml" },
+      ]);
+    });
+
     it("accepts a target beside the data directory", () => {
       expect(mountsOf("/opt/x:/var/lib/postgresql/data2")).toEqual([
         { source: "/opt/x", target: "/var/lib/postgresql/data2" },

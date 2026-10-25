@@ -129,7 +129,7 @@ class EnvReader {
           ? "must be <source>:<target>"
           : bindMountProblem(source, target, mounts);
       if (problem !== undefined) throw new ConfigError(`${name}: ${entry}: ${problem}`);
-      mounts.push({ source, target });
+      mounts.push({ source, target: normalizedPath(target) });
     }
     return mounts;
   }
@@ -167,7 +167,7 @@ function bindMountProblem(
   if (normalized === "/" || MANAGED_DATA_DIR.startsWith(`${normalized}/`)) {
     return `target must not contain ${MANAGED_DATA_DIR}`;
   }
-  if (earlier.some((mount) => normalizedPath(mount.target) === normalized)) {
+  if (earlier.some((mount) => mount.target === normalized)) {
     return "target is already mounted by an earlier entry";
   }
   return undefined;

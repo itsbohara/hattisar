@@ -195,7 +195,11 @@ describe("creating a managed box", () => {
   it.each(["..", "../etc", "a/b", "abc/..", "a.b"])(
     "refuses the name %s, so {box} cannot leave the operator's directory",
     async (name) => {
-      expect(await managed.create(name)).toMatchObject({ ok: false });
+      const withMounts = new ManagedBoxes({
+        ...deps,
+        mounts: [{ source: "/opt/w/{box}.yaml", target: "/etc/w.yaml" }],
+      });
+      expect(await withMounts.create(name)).toMatchObject({ ok: false });
       expect(docker.calls).toEqual([]);
     },
   );
