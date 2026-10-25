@@ -15,7 +15,7 @@ import { decryptSecret, encryptSecret } from "../registry/secrets.js";
 import { baselineSql } from "./baseline.js";
 import { holdingProject, type ProjectOperation } from "./locks.js";
 import { dbNameFor, ownerRoleFor, refProblem } from "./naming.js";
-import { generateOwnerPassword, scramVerifier } from "./owner-password.js";
+import { generateOwnerPassword, setRolePassword } from "./owner-password.js";
 import type { PoolerRefresher } from "./pooler.js";
 
 const MAX_NAME_LENGTH = 100;
@@ -153,8 +153,10 @@ async function provision(
         `A database named ${names.dbName} already exists on box ${box.name}`,
       );
     }
-    await client.query(
-      `CREATE ROLE ${pg.escapeIdentifier(names.ownerRole)} LOGIN PASSWORD ${pg.escapeLiteral(scramVerifier(password))}`,
+    await setRolePassword(
+      client,
+      (literal) => `CREATE ROLE ${pg.escapeIdentifier(names.ownerRole)} LOGIN PASSWORD ${literal}`,
+      password,
     );
     created.role = true;
   });
@@ -261,8 +263,10 @@ async function rotate(
   try {
     await deps.admin(conn, async (client) => {
       await joinOwnerRole(client, conn, box, project.ownerRole);
-      await client.query(
-        `ALTER ROLE ${pg.escapeIdentifier(project.ownerRole)} PASSWORD ${pg.escapeLiteral(scramVerifier(password))}`,
+      await setRolePassword(
+        client,
+        (literal) => `ALTER ROLE ${pg.escapeIdentifier(project.ownerRole)} PASSWORD ${literal}`,
+        password,
       );
     });
   } catch (error) {
