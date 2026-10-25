@@ -88,6 +88,7 @@ function box(overrides: Partial<NewBox> = {}): NewBox {
     poolerSessionPort: 54322,
     poolerTransactionPort: 6543,
     containerName: null,
+    adminSuperuser: true,
     ...overrides,
   };
 }
@@ -203,6 +204,25 @@ describe("boxes", () => {
     expect(getBoxByName(db, "prod-1")).toEqual(registered);
     expect(getSharedBox(db)).toEqual(shared);
     expect(listBoxes(db).map((b) => b.name)).toEqual(["prod-1", "shared"]);
+  });
+
+  it("round-trips adminSuperuser and updates it", () => {
+    const box = insertBox(db, { ...registeredBox(), adminSuperuser: false });
+    expect(box.adminSuperuser).toBe(false);
+    expect(getBoxById(db, box.id)?.adminSuperuser).toBe(false);
+    updateBox(db, box.id, { adminSuperuser: true });
+    expect(getBoxById(db, box.id)?.adminSuperuser).toBe(true);
+  });
+
+  it("reads a row written without admin_superuser as a superuser box", () => {
+    const { lastInsertRowid } = db
+      .prepare(
+        `INSERT INTO boxes (name, kind, dev_only, host, port, admin_user, admin_password_enc,
+           sslmode, public_host, public_port, created_at)
+         VALUES ('old', 'registered', 0, 'h', 5432, 'u', 'p', 'disable', 'h', 5432, 't')`,
+      )
+      .run();
+    expect(getBoxById(db, Number(lastInsertRowid))?.adminSuperuser).toBe(true);
   });
 
   it("updates only the given fields", () => {

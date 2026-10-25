@@ -120,6 +120,18 @@ describe("restoring into the same project", () => {
       ok: true,
     });
     expect(sql[0]).toBe('DROP DATABASE IF EXISTS "my_app" WITH (FORCE)');
+    expect(sql[1]).toBe('CREATE DATABASE "my_app" OWNER "hs_my_app_owner"');
+  });
+
+  it("grants the owner role to a non-superuser admin before recreating the database", async () => {
+    const plain = { ...box, adminSuperuser: false };
+    expect(await restoreIntoProject(deps, projectDeps, doneBackup(), project, plain)).toEqual({
+      ok: true,
+    });
+    expect(sql.slice(1, 3)).toEqual([
+      `GRANT "hs_my_app_owner" TO "${box.adminUser}"`,
+      'CREATE DATABASE "my_app" OWNER "hs_my_app_owner"',
+    ]);
   });
 
   it("says the previous data was replaced when pg_restore fails after the drop", async () => {

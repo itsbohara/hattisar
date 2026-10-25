@@ -7,7 +7,12 @@ const compatible: E1Facts = {
   availableExtensions: ["pgcrypto", "uuid-ossp", "pg_stat_statements"],
   adminUser: "supabase_admin",
   superuser: true,
+  createdb: true,
+  createrole: true,
 };
+
+const NEEDS_PRIVILEGES =
+  "Admin user supabase_admin needs to be a superuser, or have CREATEDB and CREATEROLE";
 
 describe("e1Problems", () => {
   it("finds nothing wrong with a plain Postgres 17 without Supabase roles", () => {
@@ -21,18 +26,32 @@ describe("e1Problems", () => {
         availableExtensions: ["pgcrypto"],
         adminUser: "app",
         superuser: false,
+        createdb: false,
+        createrole: false,
       }),
     ).toEqual([
       "Postgres 15 or newer is required; this server is version 14",
       "Extension not available: uuid-ossp",
       "Extension not available: pg_stat_statements",
-      "Admin user app is not a superuser",
+      "Admin user app needs to be a superuser, or have CREATEDB and CREATEROLE",
     ]);
   });
 
-  it("rejects a non-superuser admin", () => {
-    expect(e1Problems({ ...compatible, superuser: false })).toEqual([
-      "Admin user supabase_admin is not a superuser",
+  it("accepts a superuser admin whatever its other attributes", () => {
+    expect(e1Problems({ ...compatible, createdb: false, createrole: false })).toEqual([]);
+  });
+
+  it("accepts a non-superuser admin with CREATEDB and CREATEROLE", () => {
+    expect(e1Problems({ ...compatible, superuser: false })).toEqual([]);
+  });
+
+  it.each([
+    { createdb: true, createrole: false },
+    { createdb: false, createrole: true },
+    { createdb: false, createrole: false },
+  ])("rejects a non-superuser admin with %o", (attributes) => {
+    expect(e1Problems({ ...compatible, superuser: false, ...attributes })).toEqual([
+      NEEDS_PRIVILEGES,
     ]);
   });
 

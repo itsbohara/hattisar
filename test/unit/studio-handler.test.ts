@@ -40,6 +40,7 @@ function seedProjects(db: Registry): void {
     poolerSessionPort: 54322,
     poolerTransactionPort: 6543,
     containerName: null,
+    adminSuperuser: true,
   });
   for (const ref of ["spike-b", "gone"]) {
     const dbName = ref.replace("-", "_");
@@ -69,6 +70,7 @@ function seedProjects(db: Registry): void {
     poolerSessionPort: null,
     poolerTransactionPort: null,
     containerName: null,
+    adminSuperuser: true,
   });
   insertProject(db, {
     ref: "spike-c",

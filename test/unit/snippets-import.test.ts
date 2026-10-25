@@ -36,6 +36,7 @@ beforeEach(() => {
     poolerSessionPort: null,
     poolerTransactionPort: null,
     containerName: null,
+    adminSuperuser: true,
   }).id;
 });
 

@@ -99,6 +99,7 @@ function addBox(overrides: Partial<NewBox> = {}): Box {
     poolerSessionPort: null,
     poolerTransactionPort: null,
     containerName: null,
+    adminSuperuser: true,
     ...overrides,
   });
 }
@@ -270,8 +271,11 @@ describe("ensure on a box with a stored tenant", () => {
     expect(warn).toHaveBeenCalledTimes(1);
   });
 
-  it("drops the tenant of a box that is no longer eligible", async () => {
-    const box = withTenant({ sslmode: "require" });
+  it.each([
+    ["requires TLS", { sslmode: "require" }],
+    ["has a non-superuser admin", { adminSuperuser: false }],
+  ])("drops the tenant of a box that now %s", async (_label, overrides) => {
+    const box = withTenant(overrides);
     api.tenants.set("hattisar-b1", { dbHost: "db.b1", dbPort: 5432 });
     await service().ensure(box);
     expect(api.removed).toEqual(["hattisar-b1"]);
@@ -477,6 +481,16 @@ describe("resync", () => {
       ok: false,
       reason: "refused",
       problem: "This box has no pooler: it requires TLS.",
+    });
+    expect(api.calls).toEqual([]);
+  });
+
+  it("refuses a box whose admin is not a superuser", async () => {
+    const box = addBox({ adminSuperuser: false });
+    await expect(service().resync(box)).resolves.toEqual({
+      ok: false,
+      reason: "refused",
+      problem: "This box has no pooler: its admin is not a superuser.",
     });
     expect(api.calls).toEqual([]);
   });

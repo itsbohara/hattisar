@@ -254,8 +254,9 @@ Before exposing it:
   Back up the `hattisar-data` volume too: it is the registry of boxes and projects.
 - **PITR** — dumps restore to the moment of the dump. For production boxes also run box-level
   point-in-time recovery: [`docs/pitr.md`](docs/pitr.md) is a WAL-G recipe for managed boxes.
-- **Registered boxes** — any self-managed Postgres 15 to 18 whose admin user is a superuser. It
-  needs no Supabase roles.
+- **Registered boxes** — any Postgres 15 to 18 whose admin user is a superuser, or has
+  `CREATEDB` and `CREATEROLE`. It needs no Supabase roles. A box with a non-superuser admin is
+  never pooled: it gets the direct connection string only.
 - **Shared box** — development only. Put production projects on a registered or managed box.
 - **Managed boxes** — off in a hand install, on by default with the installer; see the security
   note below.
@@ -348,8 +349,13 @@ acceptable.
   recreating a managed box's container by hand (for example to upgrade its image) loses
   Vault-encrypted data. Upgrading managed boxes is not supported in v1.
 - **Plain-Postgres boxes:** a new table shows a harmless `role "anon" does not exist` toast from
-  Studio's Data API toggle; the table is created. Hosted Postgres without a true superuser, such
-  as RDS, is refused until #33.
+  Studio's Data API toggle; the table is created.
+- **Non-superuser admins** are tested on stock Postgres with a `CREATEDB`/`CREATEROLE` admin.
+  RDS, Aurora, Neon and Supabase cloud have that shape but are not yet verified on real instances
+  (#33). Such boxes have no pooler, and Query Performance stays empty where the admin cannot create
+  `pg_stat_statements`. After a box is edited from a superuser admin to a non-superuser one on
+  Postgres 16+, projects created before the edit cannot be deleted, purged, rotated or restored:
+  the admin lacks `ADMIN OPTION` on their owner roles.
 - **Boxes on other Docker hosts** and Auth/REST/Storage per project are out of scope for v1.
 
 ## Upgrading Studio

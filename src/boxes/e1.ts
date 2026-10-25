@@ -8,6 +8,7 @@ const MAX_SERVER_VERSION_NUM = 190000;
 export interface E1Result {
   ok: boolean;
   problems: string[];
+  superuser: boolean;
 }
 
 export interface E1Facts {
@@ -15,6 +16,8 @@ export interface E1Facts {
   availableExtensions: string[];
   adminUser: string;
   superuser: boolean;
+  createdb: boolean;
+  createrole: boolean;
 }
 
 export function e1Problems(facts: E1Facts): string[] {
@@ -31,14 +34,23 @@ export function e1Problems(facts: E1Facts): string[] {
       problems.push(`Extension not available: ${extension}`);
     }
   }
-  if (!facts.superuser) problems.push(`Admin user ${facts.adminUser} is not a superuser`);
+  if (!facts.superuser && !(facts.createdb && facts.createrole)) {
+    problems.push(
+      `Admin user ${facts.adminUser} needs to be a superuser, or have CREATEDB and CREATEROLE`,
+    );
+  }
   return problems;
 }
 
 async function readFacts(conn: BoxConnection): Promise<E1Facts> {
   return withAdminClient(conn, async (client) => {
-    const admin = await client.query<{ version: string; rolsuper: boolean }>(
-      `select current_setting('server_version_num') as version, rolsuper
+    const admin = await client.query<{
+      version: string;
+      rolsuper: boolean;
+      rolcreatedb: boolean;
+      rolcreaterole: boolean;
+    }>(
+      `select current_setting('server_version_num') as version, rolsuper, rolcreatedb, rolcreaterole
          from pg_roles where rolname = current_user`,
     );
     const extensions = await client.query<{ name: string }>(
@@ -51,6 +63,8 @@ async function readFacts(conn: BoxConnection): Promise<E1Facts> {
       availableExtensions: extensions.rows.map((r) => r.name),
       adminUser: conn.user,
       superuser: row?.rolsuper ?? false,
+      createdb: row?.rolcreatedb ?? false,
+      createrole: row?.rolcreaterole ?? false,
     };
   });
 }
@@ -60,8 +74,12 @@ export async function checkBox(conn: BoxConnection): Promise<E1Result> {
   try {
     facts = await readFacts(conn);
   } catch (error) {
-    return { ok: false, problems: [`cannot connect: ${safeErrorMessage(error, conn.password)}`] };
+    return {
+      ok: false,
+      problems: [`cannot connect: ${safeErrorMessage(error, conn.password)}`],
+      superuser: false,
+    };
   }
   const problems = e1Problems(facts);
-  return { ok: problems.length === 0, problems };
+  return { ok: problems.length === 0, problems, superuser: facts.superuser };
 }

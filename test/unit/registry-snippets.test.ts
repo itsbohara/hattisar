@@ -49,6 +49,7 @@ beforeEach(() => {
     poolerSessionPort: null,
     poolerTransactionPort: null,
     containerName: null,
+    adminSuperuser: true,
   });
   projectA = addProject(box.id, "alpha");
   projectB = addProject(box.id, "beta");

@@ -29,6 +29,7 @@ export function seedSharedBox(db: Registry, config: Config, secretKey: Buffer): 
     adminUser: "supabase_admin",
     sslmode: "disable",
     containerName: null,
+    adminSuperuser: true,
     ...fromEnv,
   });
 }

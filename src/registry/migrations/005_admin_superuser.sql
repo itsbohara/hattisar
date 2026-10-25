@@ -1,0 +1,1 @@
+ALTER TABLE boxes ADD COLUMN admin_superuser INTEGER NOT NULL DEFAULT 1;

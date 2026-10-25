@@ -19,6 +19,7 @@ import { generateOwnerPassword, scramVerifier } from "./owner-password.js";
 import type { PoolerRefresher } from "./pooler.js";
 
 const MAX_NAME_LENGTH = 100;
+const INSUFFICIENT_PRIVILEGE = "42501";
 
 export type LifecycleEvent = "deleted" | "restoring" | "purging" | "purged";
 
@@ -84,16 +85,33 @@ export interface ProjectNames {
   ownerRole: string;
 }
 
+// A non-superuser admin must be a member of the owner role to create, rename or drop its database,
+// drop the role or change its password. Granted again before each of those, since the owner can
+// revoke it (PG15) and a box edited from a superuser admin never had it.
+export async function joinOwnerRole(
+  client: pg.Client,
+  conn: BoxConnection,
+  box: Pick<Box, "adminSuperuser">,
+  ownerRole: string,
+): Promise<void> {
+  if (box.adminSuperuser) return;
+  await client.query(
+    `GRANT ${pg.escapeIdentifier(ownerRole)} TO ${pg.escapeIdentifier(conn.user)}`,
+  );
+}
+
 // §7 steps 2–4, for an owner role that already exists. Also how a restore recreates a database.
 export async function createProjectDatabase(
   admin: AdminClientRunner,
   conn: BoxConnection,
+  box: Pick<Box, "adminSuperuser">,
   names: ProjectNames,
   onCreated: () => void = () => {},
 ): Promise<void> {
   const db = pg.escapeIdentifier(names.dbName);
   const role = pg.escapeIdentifier(names.ownerRole);
   await admin(conn, async (client) => {
+    await joinOwnerRole(client, conn, box, names.ownerRole);
     await client.query(`CREATE DATABASE ${db} OWNER ${role}`);
     onCreated();
     await client.query(`REVOKE CONNECT, TEMPORARY ON DATABASE ${db} FROM PUBLIC`);
@@ -103,9 +121,19 @@ export async function createProjectDatabase(
     conn,
     async (client) => {
       await client.query(baselineSql(names.dbName, names.ownerRole));
+      await createPgStatStatements(client);
     },
     names.dbName,
   );
+}
+
+// Only a superuser may create pg_stat_statements; without it Query Performance stays empty.
+async function createPgStatStatements(client: pg.Client): Promise<void> {
+  try {
+    await client.query("CREATE EXTENSION IF NOT EXISTS pg_stat_statements WITH SCHEMA extensions");
+  } catch (error) {
+    if ((error as { code?: unknown } | null)?.code !== INSUFFICIENT_PRIVILEGE) throw error;
+  }
 }
 
 async function provision(
@@ -130,7 +158,7 @@ async function provision(
     );
     created.role = true;
   });
-  await createProjectDatabase(admin, conn, names, () => {
+  await createProjectDatabase(admin, conn, box, names, () => {
     created.database = true;
   });
 }
@@ -232,6 +260,7 @@ async function rotate(
   const password = generateOwnerPassword();
   try {
     await deps.admin(conn, async (client) => {
+      await joinOwnerRole(client, conn, box, project.ownerRole);
       await client.query(
         `ALTER ROLE ${pg.escapeIdentifier(project.ownerRole)} PASSWORD ${pg.escapeLiteral(scramVerifier(password))}`,
       );

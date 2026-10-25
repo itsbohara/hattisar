@@ -11,7 +11,7 @@ import {
 } from "../registry/projects.js";
 import { busyReason, holdingProject, type ProjectOperation } from "./locks.js";
 import { deletedDbNameFor } from "./naming.js";
-import type { ProjectServiceDeps } from "./service.js";
+import { joinOwnerRole, type ProjectServiceDeps } from "./service.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -68,8 +68,8 @@ function isObjectInUse(error: unknown): boolean {
   return (error as { code?: unknown } | null)?.code === OBJECT_IN_USE;
 }
 
-// Superusers such as the box admin bypass the revoked CONNECT and may reconnect between the
-// terminate and the rename, which then fails as in use: terminate again and retry.
+// Superusers, such as a superuser box admin, bypass the revoked CONNECT and may reconnect between
+// the terminate and the rename, which then fails as in use: terminate again and retry.
 async function renameAway(client: pg.Client, project: Project, now: Date): Promise<string> {
   for (let attempt = 1; ; attempt++) {
     await client.query(
@@ -121,6 +121,7 @@ async function softDelete(
   let deletedDbName = "";
   const result = await onBox(deps, box, "delete", (conn) =>
     deps.admin(conn, async (client) => {
+      await joinOwnerRole(client, conn, box, project.ownerRole);
       await client.query(`REVOKE CONNECT ON DATABASE ${db} FROM ${role}`);
       try {
         deletedDbName = await renameAway(client, project, now);
@@ -162,12 +163,13 @@ async function undelete(
   const role = pg.escapeIdentifier(project.ownerRole);
   const result = await onBox(deps, box, "restore", async (conn) => {
     await deps.onLifecycle?.(box, project, "restoring");
-    await deps.admin(conn, (client) =>
-      inTransaction(client, async () => {
+    await deps.admin(conn, async (client) => {
+      await joinOwnerRole(client, conn, box, project.ownerRole);
+      await inTransaction(client, async () => {
         await client.query(`ALTER DATABASE ${pg.escapeIdentifier(deletedDbName)} RENAME TO ${db}`);
         await client.query(`GRANT CONNECT ON DATABASE ${db} TO ${role}`);
-      }),
-    );
+      });
+    });
   });
   if (result.ok) markProjectRestored(deps.db, project.id);
   return result;
@@ -216,6 +218,7 @@ async function purge(
           `role ${project.ownerRole} still owns objects or holds privileges in ${places}; nothing was dropped`,
         );
       }
+      await joinOwnerRole(client, conn, box, project.ownerRole);
       await client.query(
         `DROP DATABASE IF EXISTS ${pg.escapeIdentifier(deletedDbName)} WITH (FORCE)`,
       );
