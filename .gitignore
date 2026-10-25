@@ -7,3 +7,7 @@ playwright-report/
 e2e/.auth/
 .env
 docker/.env
+docker/walg/
+docker/walg.env
+docker/walg.yaml
+docker/restore.sh

@@ -14,7 +14,7 @@ versions that commit's `docker/docker-compose.yml` uses.
 |---|---|
 | `supabase/studio` | `docker/compose.yml` |
 | `supabase/postgres-meta` | `docker/compose.yml` |
-| `supabase/postgres` | `docker/compose.yml`, `src/managed/service.ts` (`MANAGED_IMAGE`), `test/unit/managed-service.test.ts`, `test/integration/managed-boxes.test.ts` |
+| `supabase/postgres` | `docker/compose.yml`, `src/managed/service.ts` (`MANAGED_IMAGE`), `test/unit/managed-service.test.ts`, `test/integration/managed-boxes.test.ts`, `scripts/pitr-test.sh`, `docs/pitr.md` |
 | `supabase/supavisor` | `docker/compose.yml` |
 
 Also record the new versions and commit in `docs/design.md` §1 (Studio tag) and §12, and the
@@ -74,6 +74,9 @@ For `supabase/postgres`:
   dump/restore; they do not upgrade in place.
 - Managed boxes already running keep their old image; upgrading them is not supported in v1
   (design §10).
+- Run `sh scripts/pitr-test.sh`. It checks that the new image still ships no WAL-G and that the
+  [PITR recipe](pitr.md) still archives and restores on it. A new major also needs a new WAL-G
+  prefix per box.
 
 ### 4. Run everything on a fresh stack
 

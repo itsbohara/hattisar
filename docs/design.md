@@ -411,8 +411,10 @@ go in `PGPASSWORD` env, never argv. Dumps are custom format (`-Fc`), connecting 
   `pg_restore --no-owner --no-privileges --role=<owner> -d <db>`; or (b) a new project — the full
   §7 create flow, then the same restore. A failed restore leaves the error on the page. Leftover `restore-*` work directories are
   removed at boot.
-- Docs state plainly: dumps restore to the last dump, not a point in time; production boxes also
-  need box-level PITR (WAL-G / pgBackRest).
+- Docs state plainly: dumps restore to the last dump, not a point in time. [`docs/pitr.md`](pitr.md)
+  is a tested WAL-G recipe for point-in-time recovery of managed boxes and the shared box. It is
+  box-level, restoring every project on the box at once, and lives outside hattisar: the operator
+  runs it on the Docker host and hattisar has no part in it.
 
 ## 9. UI
 
@@ -543,8 +545,8 @@ rule: it never reaches a project database.
 
 The post-v1 roadmap is the GitHub milestone "Roadmap": a release pipeline (§16), a one-line
 installer (§17), per-project SQL snippets (§3.3), pooler for non-shared boxes (J3, §5.1), a WAL-G
-point-in-time recovery recipe in the docs, and a plain-Postgres boxes spike (E3). Parked, each until
-its condition holds:
+point-in-time recovery recipe in the docs (shipped: [`docs/pitr.md`](pitr.md)), and a plain-Postgres
+boxes spike (E3). Parked, each until its condition holds:
 
 | Parked | Revisit when |
 |---|---|
@@ -716,8 +718,9 @@ A server release is a `v<version>` tag (first `v0.1.0`), separate from the CLI's
    notes, marked prerelease for a prerelease version.
 
 The bundle unpacks to `hattisar/`: `compose.yml`, `env.example`, `generate-env.sh`, `volumes/` (the
-db init SQL, `pooler.exs` and the `Caddyfile`) and `NOTICE`, the same layout as `docker/` plus the
-env generator.
+db init SQL, `pooler.exs` and the `Caddyfile`), `NOTICE`, and `compose.walg.yml` and
+`wal-g/Dockerfile` (the PITR recipe, [`docs/pitr.md`](pitr.md)): the same layout as `docker/` plus
+the env generator.
 Its `compose.yml` is `docker/compose.yml` with the hattisar image's default tag replaced by the
 exact version, so an install never drifts: `sh generate-env.sh env.example .env` (fresh secrets,
 never overwriting an existing `.env`), review `.env`, `docker compose up -d`. Nothing is built.

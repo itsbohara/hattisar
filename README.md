@@ -252,7 +252,7 @@ Before exposing it:
 - **Backups** — configure S3 in Settings, set a schedule per project, and use "Test connection".
   Back up the `hattisar-data` volume too: it is the registry of boxes and projects.
 - **PITR** — dumps restore to the moment of the dump. For production boxes also run box-level
-  point-in-time recovery (WAL-G, pgBackRest) on the Postgres servers themselves.
+  point-in-time recovery: [`docs/pitr.md`](docs/pitr.md) is a WAL-G recipe for managed boxes.
 - **Shared box** — development only. Put production projects on a registered or managed box.
 - **Managed boxes** — off in a hand install, on by default with the installer; see the security
   note below.
@@ -302,8 +302,8 @@ Upgrading the pinned Studio and Postgres images is covered in
   the `hattisar-data` volume, not in the project's dump.
 
 **Backups are not point-in-time recovery.** A restore returns the database to the moment the dump
-was taken; everything written since is lost. Production boxes also need box-level PITR (WAL-G,
-pgBackRest).
+was taken; everything written since is lost. Production boxes also need box-level PITR: see
+[`docs/pitr.md`](docs/pitr.md), which restores a whole box, not one project.
 
 ## Managed boxes
 
@@ -336,10 +336,10 @@ acceptable.
 - **Superuser-only Studio actions** fail, because Studio connects as the project's owner.
 - **Studio features hattisar does not serve** are hidden or answered with 404: Authentication,
   Storage, Edge Functions, Realtime, AI assistance, migrations, MCP. Advisors always show no lints.
-- **Backups are not PITR.** A restore needs free disk in `HATTISAR_DATA_DIR` about the size of the
-  dump. Objects you added yourself to a project's `extensions` schema are not restored. A backup
-  to S3 is uploaded in 5 MiB parts, at most 10,000 of them, so a dump larger than about 48 GB
-  fails; use the download instead.
+- **Backups are not PITR** (for that, see [`docs/pitr.md`](docs/pitr.md)). A restore needs free
+  disk in `HATTISAR_DATA_DIR` about the size of the dump. Objects you added yourself to a
+  project's `extensions` schema are not restored. A backup to S3 is uploaded in 5 MiB parts, at
+  most 10,000 of them, so a dump larger than about 48 GB fails; use the download instead.
 - **Managed boxes:** the box admin password is in the container's environment (visible to anyone
   with Docker access). Postgres's encryption root key lives in the container, not the volume, so
   recreating a managed box's container by hand (for example to upgrade its image) loses

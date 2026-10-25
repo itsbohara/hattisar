@@ -9,6 +9,7 @@ const script = join(root, "scripts/release-bundle.sh");
 
 const bundleFiles = [
   "compose.yml",
+  "compose.walg.yml",
   "env.example",
   "generate-env.sh",
   "NOTICE",
@@ -17,6 +18,7 @@ const bundleFiles = [
   "volumes/db/pooler.sql",
   "volumes/pooler/pooler.exs",
   "volumes/caddy/Caddyfile",
+  "wal-g/Dockerfile",
 ];
 
 let outDir: string;
