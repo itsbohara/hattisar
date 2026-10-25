@@ -83,6 +83,14 @@ describe("onlyVersionSkewErrors", () => {
     expect(onlyVersionSkewErrors(cutOff)).toBe(false);
   });
 
+  it("reads pg_restore's own count, not one echoed from a failed command", () => {
+    const echoed = `rror: could not execute query: ERROR:  syntax error
+Command was: SELECT '
+${IGNORED(1)}';
+${SKEW}${IGNORED(2)}`;
+    expect(onlyVersionSkewErrors(echoed)).toBe(false);
+  });
+
   it("is false without a count of ignored errors", () => {
     expect(onlyVersionSkewErrors(SKEW)).toBe(false);
   });
@@ -127,12 +135,12 @@ describe("pg_restore exit codes", () => {
 
   it("treats a restore whose only errors are version skew as done, warning once", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    fakePgRestore(`${SKEW}pg_restore: detail: as $PGPASSWORD\n${IGNORED(1)}`, 1);
+    fakePgRestore(`${SKEW.replaceAll("transaction_timeout", "$PGPASSWORD")}${IGNORED(1)}`, 1);
     await expect(restore()).resolves.toBeUndefined();
     expect(warn).toHaveBeenCalledTimes(1);
     const message = String(warn.mock.calls[0]?.[0]);
     expect(message).toContain("my_app");
-    expect(message).toContain('unrecognized configuration parameter "transaction_timeout"');
+    expect(message).toContain('unrecognized configuration parameter "********"');
     expect(message).not.toContain(conn.password);
   });
 

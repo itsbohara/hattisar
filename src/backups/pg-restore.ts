@@ -29,7 +29,7 @@ const ERROR_PREFIX = "pg_restore: error: ";
 // pg_restore 17+ sets parameters, such as transaction_timeout, that an older server does not know.
 const VERSION_SKEW_ERROR =
   /^pg_restore: error: could not execute query: ERROR: {2}unrecognized configuration parameter "[^"]+"$/;
-const IGNORED_ERRORS = /^pg_restore: warning: errors ignored on restore: (\d+)$/m;
+const IGNORED_ERRORS = /^pg_restore: warning: errors ignored on restore: (\d+)$/gm;
 
 function errorLines(stderr: string): string[] {
   return stderr
@@ -43,7 +43,8 @@ function errorLines(stderr: string): string[] {
 export function onlyVersionSkewErrors(stderr: string): boolean {
   const lines = stderr.split("\n");
   const errors = lines.flatMap((line, index) => (line.startsWith(ERROR_PREFIX) ? [index] : []));
-  const ignored = Number(IGNORED_ERRORS.exec(stderr)?.[1]);
+  // The last count is pg_restore's own: a failed command echoed above it can contain any text.
+  const ignored = Number([...stderr.matchAll(IGNORED_ERRORS)].at(-1)?.[1]);
   return (
     errors.length > 0 &&
     ignored === errors.length &&
