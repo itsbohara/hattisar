@@ -37,6 +37,7 @@ import {
   markProjectRestored,
   type NewProject,
   renameProject,
+  setProjectLogin,
   setProjectOwnerPassword,
 } from "../../src/registry/projects.js";
 import {
@@ -282,6 +283,8 @@ describe("projects", () => {
     expect(alpha).toEqual({
       ...project(boxId),
       id: expect.any(Number),
+      kind: "created",
+      loginSuperuser: false,
       status: "active",
       deletedAt: null,
       deletedDbName: null,
@@ -334,6 +337,31 @@ describe("projects", () => {
     expect(getProjectById(db, alpha.id)).toMatchObject({
       name: "Alpha",
       ownerPasswordEnc: "v1:iv:tag:new",
+    });
+  });
+
+  it("defaults to a created project without login superuser", () => {
+    const alpha = insertProject(db, project(boxId));
+    expect(alpha).toMatchObject({ kind: "created", loginSuperuser: false });
+  });
+
+  it("round-trips an attached project with login superuser", () => {
+    const alpha = insertProject(db, { ...project(boxId), kind: "attached", loginSuperuser: true });
+    expect(getProjectByRef(db, "alpha-app")).toMatchObject({
+      kind: "attached",
+      loginSuperuser: true,
+    });
+    expect(alpha).toMatchObject({ kind: "attached", loginSuperuser: true });
+  });
+
+  it("replaces the login role, password and superuser flag only", () => {
+    const alpha = insertProject(db, project(boxId));
+    setProjectLogin(db, alpha.id, "hs_alpha_app_login", "v1:iv:tag:login", true);
+    expect(getProjectById(db, alpha.id)).toEqual({
+      ...alpha,
+      ownerRole: "hs_alpha_app_login",
+      ownerPasswordEnc: "v1:iv:tag:login",
+      loginSuperuser: true,
     });
   });
 
