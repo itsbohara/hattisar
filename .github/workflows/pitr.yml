@@ -1,0 +1,36 @@
+name: PITR recipe
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 4 * * 1"
+  push:
+    paths:
+      - docker/wal-g/**
+      - docker/compose.walg.yml
+      - scripts/pitr-test.sh
+      - docker/compose.yml
+      - docker/compose.dev.yml
+      - src/managed/service.ts
+      - .github/workflows/pitr.yml
+  pull_request:
+    paths:
+      - docker/wal-g/**
+      - docker/compose.walg.yml
+      - scripts/pitr-test.sh
+      - docker/compose.yml
+      - docker/compose.dev.yml
+      - src/managed/service.ts
+      - .github/workflows/pitr.yml
+
+permissions:
+  contents: read
+
+jobs:
+  pitr:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prove the PITR recipe
+        run: sh scripts/pitr-test.sh
