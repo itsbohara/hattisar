@@ -223,7 +223,7 @@ credentials are re-entered, because only the shared box is re-seeded from env at
 Every kind except a registered box with `sslmode` `require` or `verify-full` gets a pooler tenant
 (§5.1).
 
-**E1 compatibility check** (on register, and before creating a managed box's first project),
+**E1 compatibility check** (on register and edit, and before creating a managed box's first project),
 connecting as the admin: `server_version_num` from 150000 up to, not including, 180000; extensions
 `pgcrypto`, `uuid-ossp`, `pg_stat_statements` are in `pg_available_extensions`; admin is superuser
 (the H2 baseline needs it for `pg_stat_statements`; `ALTER SCHEMA public OWNER` does not, on 15+).

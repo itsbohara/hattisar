@@ -349,8 +349,8 @@ acceptable.
 - **Plain-Postgres boxes:** a new table shows a harmless `role "anon" does not exist` toast from
   Studio's Data API toggle; the table is created. Postgres 18 is refused until #34 (its backups
   need a newer `pg_dump`). Hosted Postgres without a true superuser, such as RDS, is refused
-  until #33. Restoring a backup into Postgres 15 reports a failure although the data is restored
-  (#35).
+  until #33.
+- **Postgres 15 boxes:** restoring a backup reports a failure although the data is restored (#35).
 - **Boxes on other Docker hosts** and Auth/REST/Storage per project are out of scope for v1.
 
 ## Upgrading Studio
