@@ -1,5 +1,5 @@
 FROM node:24-alpine AS os
-RUN apk add --no-cache postgresql17-client \
+RUN apk add --no-cache postgresql18-client \
   && mkdir /data \
   && chown node:node /data
 ENV HATTISAR_DATA_DIR=/data \

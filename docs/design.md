@@ -224,12 +224,12 @@ Every kind except a registered box with `sslmode` `require` or `verify-full` get
 (§5.1).
 
 **E1 compatibility check** (on register and edit, and before creating a managed box's first project),
-connecting as the admin: `server_version_num` from 150000 up to, not including, 180000; extensions
+connecting as the admin: `server_version_num` from 150000 up to, not including, 190000; extensions
 `pgcrypto`, `uuid-ossp`, `pg_stat_statements` are in `pg_available_extensions`; admin is superuser
 (the H2 baseline needs it for `pg_stat_statements`; `ALTER SCHEMA public OWNER` does not, on 15+).
-No Supabase roles are required: any self-managed Postgres 15-17 passes, because hattisar never
+No Supabase roles are required: any self-managed Postgres 15-18 passes, because hattisar never
 uses `supabase_admin`, `anon`, `authenticated` or `service_role`, and never creates them on a
-box. The cap is 17 because the bundled `pg_dump` 17 refuses a newer server (#34 lifts it).
+box. The cap is the bundled client's major: `pg_dump` refuses a newer server.
 Hosted Postgres without a true superuser (RDS, Neon) fails the superuser check (#33).
 Failure lists every unmet item. A box with projects (any status) cannot be removed.
 
@@ -391,7 +391,7 @@ refused this way answers 409 on the Backups tab.
 
 ## 8. Backups
 
-`pg_dump`/`pg_restore` from `HATTISAR_PG_BIN_DIR` (image ships PostgreSQL 17 client). Passwords
+`pg_dump`/`pg_restore` from `HATTISAR_PG_BIN_DIR` (image ships PostgreSQL 18 client). Passwords
 go in `PGPASSWORD` env, never argv. Dumps are custom format (`-Fc`), connecting as box admin.
 
 - **Download (N2):** `GET /_hs/projects/:ref/dump` streams `pg_dump -Fc` as
@@ -412,8 +412,10 @@ go in `PGPASSWORD` env, never argv. Dumps are custom format (`-Fc`), connecting 
 - **Restore:** from a backup into (a) the same project — confirm by typing the ref; terminate
   backends, drop and recreate the database with the §7 steps 2–4 (same owner, same password), then
   `pg_restore --no-owner --no-privileges --role=<owner> -d <db>`; or (b) a new project — the full
-  §7 create flow, then the same restore. A failed restore leaves the error on the page. Leftover `restore-*` work directories are
-  removed at boot.
+  §7 create flow, then the same restore. A failed restore leaves the error on the page. A
+  restore whose only pg_restore errors are `unrecognized configuration parameter` on a `SET` (a
+  newer client's setting an older server lacks, such as `transaction_timeout` on 15) succeeds
+  and logs a warning. Leftover `restore-*` work directories are removed at boot.
 - Docs state plainly: dumps restore to the last dump, not a point in time. [`docs/pitr.md`](pitr.md)
   is a tested WAL-G recipe for point-in-time recovery of managed boxes and the shared box. It is
   box-level, restoring every project on the box at once, and lives outside hattisar: the operator

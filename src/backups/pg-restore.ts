@@ -25,6 +25,37 @@ export function restoreList(toc: string): string {
     .join("\n");
 }
 
+const ERROR_PREFIX = "pg_restore: error: ";
+// pg_restore 17+ sets parameters, such as transaction_timeout, that an older server does not know.
+const VERSION_SKEW_ERROR =
+  /^pg_restore: error: could not execute query: ERROR: {2}unrecognized configuration parameter "[^"]+"$/;
+const IGNORED_ERRORS = /^pg_restore: warning: errors ignored on restore: (\d+)$/gm;
+
+function errorLines(stderr: string): string[] {
+  return stderr
+    .split("\n")
+    .filter((line) => line.startsWith(ERROR_PREFIX))
+    .map((line) => line.slice(ERROR_PREFIX.length));
+}
+
+// stderr is only a tail, so pg_restore's own error count has to match the errors kept: a real error
+// cut off the front would otherwise let the restore pass.
+export function onlyVersionSkewErrors(stderr: string): boolean {
+  const lines = stderr.split("\n");
+  const errors = lines.flatMap((line, index) => (line.startsWith(ERROR_PREFIX) ? [index] : []));
+  // The last count is pg_restore's own: a failed command echoed above it can contain any text.
+  const ignored = Number([...stderr.matchAll(IGNORED_ERRORS)].at(-1)?.[1]);
+  return (
+    errors.length > 0 &&
+    ignored === errors.length &&
+    errors.every(
+      (index) =>
+        VERSION_SKEW_ERROR.test(lines[index] ?? "") &&
+        (lines[index + 1] ?? "").startsWith("Command was: SET "),
+    )
+  );
+}
+
 // Without a connection pg_restore only reads the archive, so it gets no credentials at all.
 function runPgRestore(
   pgBinDir: string,
@@ -48,7 +79,15 @@ function runPgRestore(
     child.on("error", (error) => reject(fail(`could not run pg_restore: ${error.message}`)));
     child.on("close", (code, signal) => {
       if (code === 0) resolve(Buffer.concat(stdout).toString("utf8"));
-      else
+      else if (code === 1 && conn !== undefined && onlyVersionSkewErrors(stderr)) {
+        console.warn(
+          redact(
+            `hattisar: restore into ${database} ignored settings the server does not know: ${errorLines(stderr).join("; ")}`,
+            [conn.password],
+          ),
+        );
+        resolve(Buffer.concat(stdout).toString("utf8"));
+      } else
         reject(
           fail(
             `pg_restore exited with ${code === null ? signal : `code ${code}`}: ${stderr.trim()}`,
