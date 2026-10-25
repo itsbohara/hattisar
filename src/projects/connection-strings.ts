@@ -1,3 +1,4 @@
+import { ownerLogin } from "../boxes/owner-login.js";
 import type { Box } from "../registry/boxes.js";
 import type { Project } from "../registry/projects.js";
 
@@ -13,6 +14,8 @@ const LABELS: Record<ConnectionKind, string> = {
 
 export type ProjectEndpoint = Pick<
   Box,
+  | "host"
+  | "adminUser"
   | "publicHost"
   | "publicPort"
   | "sslmode"
@@ -47,7 +50,13 @@ export function ownerConnectionStrings(
   };
   // A box hattisar reaches over TLS (a cloud provider) usually refuses clients without it.
   const tls = box.sslmode === "disable" ? "" : `?sslmode=${box.sslmode}`;
-  const direct = build("direct", project.ownerRole, box.publicHost, box.publicPort, tls);
+  const direct = build(
+    "direct",
+    ownerLogin(box, project.ownerRole),
+    box.publicHost,
+    box.publicPort,
+    tls,
+  );
   const { poolerTenant, poolerSessionPort, poolerTransactionPort } = box;
   if (poolerTenant === null || poolerSessionPort === null || poolerTransactionPort === null) {
     return [direct];
