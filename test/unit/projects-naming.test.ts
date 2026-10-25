@@ -30,6 +30,10 @@ describe("refProblem", () => {
   it("reserves the new-project page's path segment", () => {
     expect(refProblem("new")).toBe('Ref "new" is reserved');
   });
+
+  it("reserves the attach page's path segment", () => {
+    expect(refProblem("attach")).toBe('Ref "attach" is reserved');
+  });
 });
 
 describe("naming", () => {

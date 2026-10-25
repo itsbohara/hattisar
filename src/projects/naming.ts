@@ -1,6 +1,7 @@
 const REF_PATTERN = /^[a-z][a-z0-9-]{2,39}$/;
-// /_hs/projects/new is the new-project form, so a project with this ref would be unreachable.
-const RESERVED_REFS = new Set(["new"]);
+// /_hs/projects/new and /_hs/projects/attach are forms, so a project with these refs would be
+// unreachable.
+const RESERVED_REFS = new Set(["new", "attach"]);
 
 export function refProblem(ref: string): string | undefined {
   if (!REF_PATTERN.test(ref)) {
