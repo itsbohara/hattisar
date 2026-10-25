@@ -11,6 +11,7 @@ const baseUrl = process.env.HATTISAR_URL ?? "http://localhost:8000";
 const PLAIN_PG = `hattisar-it-plain-pg-${randomUUID().slice(0, 8)}`;
 const PLAIN_PG_18 = `hattisar-it-plain-pg18-${randomUUID().slice(0, 8)}`;
 const PLAIN_PG_15 = `hattisar-it-plain-pg15-${randomUUID().slice(0, 8)}`;
+const PLAIN_PG_NSU = `hattisar-it-plain-nsu-${randomUUID().slice(0, 8)}`;
 const PLAIN_PG_PASSWORD = randomUUID();
 const plainBox = `it-plain-${randomUUID().slice(0, 8)}`;
 const plainRef = `it-plain-${randomUUID().slice(0, 8)}`;
@@ -18,9 +19,12 @@ const pg18Box = `it-plain-pg18-${randomUUID().slice(0, 8)}`;
 const pg18Ref = `it-pg18-${randomUUID().slice(0, 8)}`;
 const pg15Box = `it-plain-pg15-${randomUUID().slice(0, 8)}`;
 const pg15Ref = `it-pg15-${randomUUID().slice(0, 8)}`;
+const nsuBox = `it-plain-nsu-${randomUUID().slice(0, 8)}`;
+const nsuRef = `it-nsu-${randomUUID().slice(0, 8)}`;
 let plainPgPort: string;
 let pg18Port: string;
 let pg15Port: string;
+let nsuPort: string;
 let cookie: string;
 
 function docker(args: string[]): string {
@@ -104,6 +108,38 @@ function startPlainPg(name: string, image: string): void {
   ]);
 }
 
+// As the container's superuser; psql variables keep identifiers and literals out of the script text.
+function plainPgSql(container: string, script: string, vars: Record<string, string> = {}): string {
+  const varArgs = Object.entries(vars).flatMap(([name, value]) => ["-v", `${name}=${value}`]);
+  return execFileSync(
+    "docker",
+    [
+      "exec",
+      "-i",
+      container,
+      "psql",
+      "-U",
+      "postgres",
+      "-qAt",
+      "-v",
+      "ON_ERROR_STOP=1",
+      ...varArgs,
+    ],
+    { encoding: "utf8", input: script },
+  ).trim();
+}
+
+function createAdmin(container: string, name: string, password: string, attributes: string): void {
+  plainPgSql(container, `CREATE ROLE :"name" LOGIN ${attributes} PASSWORD :'password';`, {
+    name,
+    password,
+  });
+}
+
+function boxRow(html: string, name: string): string {
+  return html.split("<tr").find((part) => part.includes(`data-box="${name}"`)) ?? "";
+}
+
 async function ownerQuery(url: string, sql: string): Promise<unknown[]> {
   const client = new pg.Client({ connectionString: url, connectionTimeoutMillis: 10_000 });
   client.on("error", () => undefined);
@@ -148,13 +184,16 @@ beforeAll(async () => {
   startPlainPg(PLAIN_PG, "postgres:17-alpine");
   startPlainPg(PLAIN_PG_18, "postgres:18-alpine");
   startPlainPg(PLAIN_PG_15, "postgres:15-alpine");
+  startPlainPg(PLAIN_PG_NSU, "postgres:17-alpine");
   plainPgPort = docker(["port", PLAIN_PG, "5432/tcp"]).split(":").at(-1) ?? "";
   pg18Port = docker(["port", PLAIN_PG_18, "5432/tcp"]).split(":").at(-1) ?? "";
   pg15Port = docker(["port", PLAIN_PG_15, "5432/tcp"]).split(":").at(-1) ?? "";
+  nsuPort = docker(["port", PLAIN_PG_NSU, "5432/tcp"]).split(":").at(-1) ?? "";
   cookie = await signIn(baseUrl);
   await waitForTcpReady(PLAIN_PG);
   await waitForTcpReady(PLAIN_PG_18);
   await waitForTcpReady(PLAIN_PG_15);
+  await waitForTcpReady(PLAIN_PG_NSU);
 }, 180_000);
 
 // Only hattisar's rows and the box's pooler tenant can outlive a failed test. Removing the box
@@ -164,16 +203,18 @@ afterAll(async () => {
     registrySql("DELETE FROM projects WHERE ref = ?", plainRef);
     registrySql("DELETE FROM projects WHERE ref = ?", pg18Ref);
     registrySql("DELETE FROM projects WHERE ref = ?", pg15Ref);
+    registrySql("DELETE FROM projects WHERE ref = ?", nsuRef);
     registrySql("DELETE FROM settings WHERE key LIKE 's3.%'");
     const html = await boxesPage();
-    for (const name of [plainBox, pg18Box, pg15Box]) {
+    for (const name of [plainBox, pg18Box, pg15Box, nsuBox]) {
       if (html.includes(`data-box="${name}"`)) await remove(boxIdFrom(html, name));
     }
   } finally {
     registrySql("DELETE FROM boxes WHERE name = ?", plainBox);
     registrySql("DELETE FROM boxes WHERE name = ?", pg18Box);
     registrySql("DELETE FROM boxes WHERE name = ?", pg15Box);
-    docker(["rm", "-f", PLAIN_PG, PLAIN_PG_18, PLAIN_PG_15]);
+    registrySql("DELETE FROM boxes WHERE name = ?", nsuBox);
+    docker(["rm", "-f", PLAIN_PG, PLAIN_PG_18, PLAIN_PG_15, PLAIN_PG_NSU]);
   }
 });
 
@@ -284,6 +325,97 @@ describe("boxes", () => {
     expect((await remove(boxId)).status).toBe(302);
     expect(await boxesPage()).not.toContain(`data-box="${pg15Box}"`);
   }, 120_000);
+
+  it("runs a project end to end on a box whose admin has only CREATEDB and CREATEROLE", async () => {
+    const adminUser = `it_admin_${randomUUID().slice(0, 8)}`;
+    const adminPassword = randomUUID();
+    createAdmin(PLAIN_PG_NSU, adminUser, adminPassword, "CREATEDB CREATEROLE");
+    const registered = await register({
+      name: nsuBox,
+      host: PLAIN_PG_NSU,
+      adminUser,
+      adminPassword,
+      publicHost: "127.0.0.1",
+      publicPort: nsuPort,
+    });
+    expect(registered.status, await registered.clone().text()).toBe(302);
+    const html = await boxesPage();
+    expect(boxRow(html, nsuBox)).toContain("Direct only");
+    const boxId = boxIdFrom(html, nsuBox);
+
+    const created = await createProject(baseUrl, cookie, { ref: nsuRef, name: "NSU", boxId });
+    expect(created.status, await created.clone().text()).toBe(302);
+    const [project] = registryRows<{ db_name: string; owner_role: string }>(
+      "SELECT db_name, owner_role FROM projects WHERE ref = ?",
+      nsuRef,
+    );
+    if (!project) throw new Error(`${nsuRef} not in the registry`);
+    const direct = await directString(nsuRef, nsuPort);
+    const owner = [{ current_user: project.owner_role, ok: 1 }];
+    expect(await ownerSelectOne(direct)).toEqual(owner);
+    await ownerQuery(
+      direct,
+      "create table public.widgets (id int primary key); insert into public.widgets values (1)",
+    );
+
+    const saved = await postForm(baseUrl, "/_hs/settings/s3", s3Fields(s3TestService()), cookie);
+    expect(saved.status).toBe(200);
+    const backedUp = await postForm(baseUrl, `/_hs/projects/${nsuRef}/backups`, {}, cookie);
+    expect(backedUp.status).toBe(302);
+    const [backup] = registryRows<{ id: number; status: string }>(
+      `SELECT b.id, b.status FROM backups b JOIN projects p ON p.id = b.project_id
+        WHERE p.ref = ? ORDER BY b.id DESC LIMIT 1`,
+      nsuRef,
+    );
+    expect(backup?.status).toBe("done");
+    await ownerQuery(direct, "insert into public.widgets values (2)");
+
+    const restored = await postForm(
+      baseUrl,
+      `/_hs/projects/${nsuRef}/backups/${backup?.id}/restore`,
+      { confirm: nsuRef },
+      cookie,
+    );
+    expect(restored.status, await restored.clone().text()).toBe(302);
+    expect(await ownerQuery(direct, "select id from public.widgets order by id")).toEqual([
+      { id: 1 },
+    ]);
+
+    expect((await deleteProject(nsuRef)).status).toBe(302);
+    const undeleted = await postForm(baseUrl, `/_hs/trash/${nsuRef}/restore`, {}, cookie);
+    expect(undeleted.status).toBe(302);
+    expect(await ownerSelectOne(direct)).toEqual(owner);
+
+    expect((await deleteProject(nsuRef)).status).toBe(302);
+    expect((await purgeProject(nsuRef)).status).toBe(302);
+    const left = plainPgSql(
+      PLAIN_PG_NSU,
+      `select (select count(*) from pg_roles where rolname = :'owner')
+            + (select count(*) from pg_database
+                where datname = :'db' or starts_with(datname, :'db' || '__deleted_'));`,
+      { owner: project.owner_role, db: project.db_name },
+    );
+    expect(left).toBe("0");
+
+    expect((await remove(boxId)).status).toBe(302);
+    expect(await boxesPage()).not.toContain(`data-box="${nsuBox}"`);
+  }, 120_000);
+
+  it("refuses an admin with CREATEDB but not CREATEROLE", async () => {
+    const adminUser = `it_createdb_${randomUUID().slice(0, 8)}`;
+    const adminPassword = randomUUID();
+    createAdmin(PLAIN_PG_NSU, adminUser, adminPassword, "CREATEDB");
+    const response = await register({
+      name: `it-createdb-${randomUUID().slice(0, 8)}`,
+      host: PLAIN_PG_NSU,
+      adminUser,
+      adminPassword,
+    });
+    expect(response.status).toBe(400);
+    expect(await response.text()).toContain(
+      `Admin user ${adminUser} needs to be a superuser, or have CREATEDB and CREATEROLE`,
+    );
+  });
 
   it("explains a connection failure as one problem", async () => {
     const response = await register({
