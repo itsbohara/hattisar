@@ -12,6 +12,7 @@ import {
   setProjectOwnerPassword,
 } from "../registry/projects.js";
 import { decryptSecret, encryptSecret } from "../registry/secrets.js";
+import { attachedProblem, isAttached } from "./attach.js";
 import { baselineSql } from "./baseline.js";
 import { holdingProject, type ProjectOperation } from "./locks.js";
 import { dbNameFor, ownerRoleFor, refProblem } from "./naming.js";
@@ -248,6 +249,7 @@ export async function rotateOwnerPassword(
   project: Project,
   box: Box,
 ): Promise<{ ok: true } | { ok: false; problem: string }> {
+  if (isAttached(project)) return { ok: false, problem: attachedProblem(project.ref) };
   return holdingProject(deps.db, project, ROTATE, (current) => rotate(deps, current, box));
 }
 

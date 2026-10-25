@@ -3,6 +3,7 @@ import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import pg from "pg";
 import { type BoxConnection, safeErrorMessage } from "../boxes/admin-client.js";
+import { attachedProblem, isAttached } from "../projects/attach.js";
 import { holdingProject, type ProjectOperation } from "../projects/locks.js";
 import {
   createProject,
@@ -118,6 +119,7 @@ export async function restoreIntoProject(
   project: Project,
   box: Box,
 ): Promise<BackupOutcome> {
+  if (isAttached(project)) return { ok: false, problem: attachedProblem(project.ref) };
   const settings = restorable(deps, backup);
   if (typeof settings === "string") return { ok: false, problem: settings };
   const conn = boxCredentials(box, deps.secretKey);

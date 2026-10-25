@@ -726,3 +726,56 @@ describe("membership in the owner role before each operation", () => {
     expect(sql.some((text) => text.startsWith('GRANT "hs_my_app_owner" TO'))).toBe(false);
   });
 });
+
+describe("an attached project", () => {
+  async function attachedOnRegistered() {
+    const registered = insertBox(db, {
+      name: "rds",
+      kind: "registered",
+      devOnly: false,
+      host: "pg.internal",
+      port: 5432,
+      adminUser: "postgres",
+      adminPasswordEnc: encryptSecret(ADMIN_PASSWORD, secretKey),
+      sslmode: "disable",
+      publicHost: "pg.example.test",
+      publicPort: 5432,
+      poolerTenant: null,
+      poolerSessionPort: null,
+      poolerTransactionPort: null,
+      containerName: null,
+      adminSuperuser: false,
+    });
+    const target = insertProject(db, {
+      ref: "legacy",
+      name: "legacy",
+      boxId: registered.id,
+      dbName: "legacy",
+      ownerRole: "legacy_app",
+      ownerPasswordEnc: encryptSecret("login-pw", secretKey),
+      kind: "attached",
+    });
+    return { registered, target };
+  }
+
+  it("refuses rotate, delete, restore and purge, without touching the box", async () => {
+    const { registered, target } = await attachedOnRegistered();
+    const refused = { ok: false, problem: "legacy is attached; detach it instead." };
+    expect(await rotateOwnerPassword(deps, target, registered)).toEqual(refused);
+    expect(await softDeleteProject(deps, target, registered)).toEqual(refused);
+    expect(await restoreProject(deps, target, registered)).toEqual(refused);
+    expect(await purgeProject(deps, target, registered)).toEqual(refused);
+    expect(sql).toEqual([]);
+    expect(events).toEqual([]);
+    expect(project("legacy")?.status).toBe("active");
+  });
+
+  it("answers with the attached problem even while busy", async () => {
+    const { registered, target } = await attachedOnRegistered();
+    insertBackup(db, { projectId: target.id, kind: "manual", bucket: "b", s3Key: "k" });
+    expect(await softDeleteProject(deps, target, registered)).toEqual({
+      ok: false,
+      problem: "legacy is attached; detach it instead.",
+    });
+  });
+});

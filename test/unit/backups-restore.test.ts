@@ -115,6 +115,14 @@ function doneBackup() {
 }
 
 describe("restoring into the same project", () => {
+  it("refuses an attached project before reading anything", async () => {
+    const attachedProject = { ...project, kind: "attached" as const };
+    expect(await restoreIntoProject(deps, projectDeps, doneBackup(), attachedProject, box)).toEqual(
+      { ok: false, problem: "my-app is attached; detach it instead." },
+    );
+    expect(sql).toEqual([]);
+  });
+
   it("drops and recreates the database before restoring", async () => {
     expect(await restoreIntoProject(deps, projectDeps, doneBackup(), project, box)).toEqual({
       ok: true,

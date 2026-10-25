@@ -9,6 +9,7 @@ import {
   markProjectRestored,
   type Project,
 } from "../registry/projects.js";
+import { attachedProblem, isAttached } from "./attach.js";
 import { busyReason, holdingProject, type ProjectOperation } from "./locks.js";
 import { deletedDbNameFor } from "./naming.js";
 import { joinOwnerRole, type ProjectServiceDeps } from "./service.js";
@@ -107,6 +108,7 @@ export async function softDeleteProject(
   box: Box,
   now: Date = new Date(),
 ): Promise<LifecycleResult> {
+  if (isAttached(project)) return { ok: false, problem: attachedProblem(project.ref) };
   return holdingProject(deps.db, project, DELETE, (current) => softDelete(deps, current, box, now));
 }
 
@@ -149,6 +151,7 @@ export async function restoreProject(
   project: Project,
   box: Box,
 ): Promise<LifecycleResult> {
+  if (isAttached(project)) return { ok: false, problem: attachedProblem(project.ref) };
   return holdingProject(deps.db, project, UNDELETE, (current) => undelete(deps, current, box));
 }
 
@@ -195,6 +198,7 @@ export async function purgeProject(
   project: Project,
   box: Box,
 ): Promise<LifecycleResult> {
+  if (isAttached(project)) return { ok: false, problem: attachedProblem(project.ref) };
   return holdingProject(deps.db, project, PURGE, (current) => purge(deps, current, box));
 }
 
