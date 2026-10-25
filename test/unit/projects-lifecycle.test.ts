@@ -685,7 +685,7 @@ describe("one lifecycle operation at a time per project", () => {
 });
 
 describe("membership in the owner role before each operation", () => {
-  const GRANT = 'GRANT "hs_my_app_owner" TO "rds""admin"';
+  const GRANT = 'GRANT "hs_my_app_owner" TO CURRENT_USER';
   const operations: [string, RegExp, (on: Box) => Promise<unknown>][] = [
     ["delete", /^REVOKE CONNECT/, (on) => softDeleteProject(deps, seed(), on)],
     [

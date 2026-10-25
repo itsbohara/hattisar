@@ -237,7 +237,7 @@ describe("creating a project on a box whose admin is not a superuser", () => {
     const sql = statements.map((s) => s.sql);
     expect(sql[1]).toMatch(/^CREATE ROLE "hs_my_app_owner"/);
     expect(sql.slice(2, 4)).toEqual([
-      'GRANT "hs_my_app_owner" TO "rds""admin"',
+      'GRANT "hs_my_app_owner" TO CURRENT_USER',
       'CREATE DATABASE "my_app" OWNER "hs_my_app_owner"',
     ]);
   });
