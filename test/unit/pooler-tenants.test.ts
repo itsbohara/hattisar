@@ -428,3 +428,98 @@ describe("reconcile", () => {
     expect(warn).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("resync", () => {
+  it("installs a new role password and puts the stored tenant again", async () => {
+    const box = withTenant({ kind: "managed", name: "renamed" });
+    api.tenants.set("hattisar-b1", { dbHost: "db.b1", dbPort: 5432 });
+
+    await expect(service().resync(box)).resolves.toEqual({ ok: true, tenant: "hattisar-b1" });
+
+    expect(install).toHaveBeenCalledTimes(1);
+    expect(install.mock.calls[0]?.[1]).toBe(poolerRoleFor(secretKey, "hattisar-b1"));
+    expect(api.calls).toEqual(["admin db.b1", "put hattisar-b1"]);
+    expect(api.puts[0]?.tenant.users?.[0]?.db_password).toBe(install.mock.calls[0]?.[2]);
+    expect(poolerFields(box.id).poolerTenant).toBe("hattisar-b1");
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("creates a tenant for a box without one and stores the fields", async () => {
+    addBox({ name: "other", host: "db.other", poolerTenant: "hattisar-b1" });
+    const box = addBox();
+
+    await expect(service().resync(box)).resolves.toEqual({
+      ok: true,
+      tenant: `hattisar-b1-${box.id}`,
+    });
+
+    expect(api.puts.map((put) => put.id)).toEqual([`hattisar-b1-${box.id}`]);
+    expect(poolerFields(box.id)).toEqual({
+      poolerTenant: `hattisar-b1-${box.id}`,
+      poolerSessionPort: 54322,
+      poolerTransactionPort: 6543,
+    });
+  });
+
+  it("refuses the shared box", async () => {
+    const shared = addBox({ name: "shared", kind: "shared", host: "db", poolerTenant: "hattisar" });
+    await expect(service().resync(shared)).resolves.toEqual({
+      ok: false,
+      problem: "The shared box's pooler is configured by pooler.exs.",
+    });
+    expect(api.calls).toEqual([]);
+  });
+
+  it("refuses a registered box that requires TLS", async () => {
+    const box = addBox({ sslmode: "verify-full" });
+    await expect(service().resync(box)).resolves.toEqual({
+      ok: false,
+      problem: "This box has no pooler: it requires TLS.",
+    });
+    expect(api.calls).toEqual([]);
+  });
+
+  it("reports a scrubbed problem and keeps the fields when the PUT fails", async () => {
+    const box = withTenant({ poolerSessionPort: 1, poolerTransactionPort: 2 });
+    install.mockImplementationOnce(async () => {
+      const password = install.mock.calls[0]?.[2];
+      api.putError = new SupavisorError(`Supavisor PUT failed: ${password} admin-pw`, 400);
+    });
+
+    const result = await service().resync(box);
+
+    const password = install.mock.calls[0]?.[2] as string;
+    expect(result.ok).toBe(false);
+    const problem = result.ok ? "" : result.problem;
+    expect(problem).toMatch(/^Pooler tenant not re-synced: Supavisor PUT failed: /);
+    expect(problem).not.toContain(password);
+    expect(problem).not.toContain("admin-pw");
+    expect(poolerFields(box.id)).toEqual({
+      poolerTenant: "hattisar-b1",
+      poolerSessionPort: 1,
+      poolerTransactionPort: 2,
+    });
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("reports Box not found when the row is deleted while queued", async () => {
+    const box = withTenant();
+    const tenants = service();
+    const drop = tenants.drop(box);
+    const resync = tenants.resync(box);
+    deleteBox(db, box.id);
+    await drop;
+    await expect(resync).resolves.toEqual({ ok: false, problem: "Box not found." });
+    expect(install).not.toHaveBeenCalled();
+    expect(api.puts).toHaveLength(0);
+  });
+
+  it("runs after an ensure queued before it", async () => {
+    const box = addBox();
+    const tenants = service();
+    const [, result] = await Promise.all([tenants.ensure(box), tenants.resync(box)]);
+    expect(result).toEqual({ ok: true, tenant: "hattisar-b1" });
+    expect(api.calls).toEqual(["admin db.b1", "put hattisar-b1", "admin db.b1", "put hattisar-b1"]);
+    expect(install.mock.calls[1]?.[2]).not.toBe(install.mock.calls[0]?.[2]);
+  });
+});
