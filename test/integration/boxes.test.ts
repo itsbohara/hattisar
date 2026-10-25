@@ -130,8 +130,8 @@ beforeAll(async () => {
   await waitForTcpReady(PLAIN_PG_18);
 }, 180_000);
 
-// The plain box's databases go with its container; only hattisar's rows and the box's pooler
-// tenant can outlive a failed test; removing the box drops the tenant.
+// Only hattisar's rows and the box's pooler tenant can outlive a failed test. Removing the box
+// drops the tenant.
 afterAll(async () => {
   try {
     registrySql("DELETE FROM projects WHERE ref = ?", plainRef);
