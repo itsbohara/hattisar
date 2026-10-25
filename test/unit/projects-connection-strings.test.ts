@@ -12,6 +12,8 @@ const POOLER_HOST = "pool.example.com";
 
 const registered: Endpoint = {
   kind: "registered",
+  host: "db",
+  adminUser: "admin",
   publicHost: "db.example.com",
   publicPort: 5433,
   sslmode: "disable",
@@ -22,6 +24,8 @@ const registered: Endpoint = {
 
 const shared: Endpoint = {
   kind: "shared",
+  host: "db",
+  adminUser: "admin",
   publicHost: "localhost",
   publicPort: 54322,
   sslmode: "disable",
@@ -32,6 +36,8 @@ const shared: Endpoint = {
 
 const unpooled: Endpoint = {
   kind: "registered",
+  host: "db",
+  adminUser: "admin",
   publicHost: "pg.example.test",
   publicPort: 5433,
   sslmode: "disable",
@@ -100,6 +106,20 @@ describe("ownerConnectionStrings", () => {
       "postgresql://hs_x_owner.hattisar-b1:pw@pool.example.com:6543/x",
       "postgresql://hs_x_owner:pw@db.example.com:5433/x?sslmode=require",
     ]);
+  });
+
+  it("logs the owner in as <owner>.<project ref> through Supabase's pooler", () => {
+    const pooler = "aws-0-us-east-1.pooler.supabase.com";
+    const supabase = {
+      ...unpooled,
+      host: pooler,
+      adminUser: "postgres.abcref",
+      publicHost: pooler,
+      publicPort: 5432,
+      sslmode: "require",
+    };
+    const [string] = ownerConnectionStrings(supabase, project, "pw", POOLER_HOST);
+    expect(string?.url).toBe(`postgresql://hs_x_owner.abcref:pw@${pooler}:5432/x?sslmode=require`);
   });
 
   it("URL-encodes the password", () => {

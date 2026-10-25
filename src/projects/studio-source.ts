@@ -1,3 +1,4 @@
+import { ownerLogin } from "../boxes/owner-login.js";
 import { type Box, getBoxById, listBoxes } from "../registry/boxes.js";
 import type { Registry } from "../registry/db.js";
 import { getProjectByRef, listProjects, type Project } from "../registry/projects.js";
@@ -49,7 +50,8 @@ function toSummary(project: Project, box: Box): ProjectSummary {
     ref: project.ref,
     name: project.name,
     dbName: project.dbName,
-    ownerRole: project.ownerRole,
+    // Studio uses this only to log in and to show as db_user, so it is the login name.
+    ownerRole: ownerLogin(box, project.ownerRole),
     boxName: box.name,
     box: {
       host: box.host,
