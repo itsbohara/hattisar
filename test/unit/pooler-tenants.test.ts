@@ -514,12 +514,32 @@ describe("resync", () => {
     expect(api.puts).toHaveLength(0);
   });
 
-  it("runs after an ensure queued before it", async () => {
+  it("runs after an ensure queued before it and uses the tenant that ensure stored", async () => {
+    const other = addBox({ name: "other", host: "db.other", poolerTenant: "hattisar-b1" });
     const box = addBox();
+    const stored = `hattisar-b1-${box.id}`;
+    // Frees the plain id once ensure has chosen its id: a resync working from the caller's
+    // snapshot would then pick "hattisar-b1" instead of the stored tenant.
+    install.mockImplementationOnce(async () => {
+      updateBox(db, other.id, NO_POOLER);
+    });
     const tenants = service();
     const [, result] = await Promise.all([tenants.ensure(box), tenants.resync(box)]);
-    expect(result).toEqual({ ok: true, tenant: "hattisar-b1" });
-    expect(api.calls).toEqual(["admin db.b1", "put hattisar-b1", "admin db.b1", "put hattisar-b1"]);
+    expect(result).toEqual({ ok: true, tenant: stored });
+    expect(api.calls).toEqual(["admin db.b1", `put ${stored}`, "admin db.b1", `put ${stored}`]);
     expect(install.mock.calls[1]?.[2]).not.toBe(install.mock.calls[0]?.[2]);
+  });
+
+  it("still runs when the step queued before it rejected", async () => {
+    const box = addBox();
+    const tenants = service();
+    install.mockRejectedValueOnce(new Error("connection refused"));
+    warn.mockImplementation(() => {
+      throw new Error("log failed");
+    });
+    const ensure = tenants.ensure(box);
+    const resync = tenants.resync(box);
+    await expect(ensure).rejects.toThrow("log failed");
+    await expect(resync).resolves.toEqual({ ok: true, tenant: "hattisar-b1" });
   });
 });

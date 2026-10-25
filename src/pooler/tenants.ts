@@ -42,11 +42,13 @@ export function createPoolerTenants(deps: PoolerTenantsDeps): PoolerTenants {
   // Every step re-reads the box inside its turn: a queued ensure must see the tenant the one
   // before it stored, or it would PUT again and drop the pools that PUT just created.
   function serialized<T>(id: number, step: () => Promise<T>): Promise<T> {
-    const next = (queues.get(id) ?? Promise.resolve()).then(step);
+    const next = (queues.get(id) ?? Promise.resolve()).then(step, step);
     queues.set(id, next);
-    void next.finally(() => {
+    const forget = () => {
       if (queues.get(id) === next) queues.delete(id);
-    });
+    };
+    // Not finally(): its copy of a rejection would go unhandled and end the process.
+    void next.then(forget, forget);
     return next;
   }
 
