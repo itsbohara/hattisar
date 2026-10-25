@@ -465,6 +465,7 @@ describe("resync", () => {
     const shared = addBox({ name: "shared", kind: "shared", host: "db", poolerTenant: "hattisar" });
     await expect(service().resync(shared)).resolves.toEqual({
       ok: false,
+      reason: "refused",
       problem: "The shared box's pooler is configured by pooler.exs.",
     });
     expect(api.calls).toEqual([]);
@@ -474,6 +475,7 @@ describe("resync", () => {
     const box = addBox({ sslmode: "verify-full" });
     await expect(service().resync(box)).resolves.toEqual({
       ok: false,
+      reason: "refused",
       problem: "This box has no pooler: it requires TLS.",
     });
     expect(api.calls).toEqual([]);
@@ -489,7 +491,7 @@ describe("resync", () => {
     const result = await service().resync(box);
 
     const password = install.mock.calls[0]?.[2] as string;
-    expect(result.ok).toBe(false);
+    expect(result).toMatchObject({ ok: false, reason: "failed" });
     const problem = result.ok ? "" : result.problem;
     expect(problem).toMatch(/^Pooler tenant not re-synced: Supavisor PUT failed: /);
     expect(problem).not.toContain(password);
@@ -509,7 +511,11 @@ describe("resync", () => {
     const resync = tenants.resync(box);
     deleteBox(db, box.id);
     await drop;
-    await expect(resync).resolves.toEqual({ ok: false, problem: "Box not found." });
+    await expect(resync).resolves.toEqual({
+      ok: false,
+      reason: "not-found",
+      problem: "Box not found.",
+    });
     expect(install).not.toHaveBeenCalled();
     expect(api.puts).toHaveLength(0);
   });

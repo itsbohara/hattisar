@@ -14,7 +14,11 @@ export interface PoolerTenants {
   resync(box: Box): Promise<ResyncResult>;
 }
 
-export type ResyncResult = { ok: true; tenant: string } | { ok: false; problem: string };
+export type ResyncResult =
+  | { ok: true; tenant: string }
+  | { ok: false; reason: "refused" | "failed" | "not-found"; problem: string };
+
+export const SHARED_BOX_POOLER = "The shared box's pooler is configured by pooler.exs.";
 
 export interface PoolerTenantsDeps {
   db: Registry;
@@ -190,15 +194,15 @@ export function createPoolerTenants(deps: PoolerTenantsDeps): PoolerTenants {
 
   async function resyncNow(box: Box): Promise<ResyncResult> {
     if (box.kind === "shared") {
-      return { ok: false, problem: "The shared box's pooler is configured by pooler.exs." };
+      return { ok: false, reason: "refused", problem: SHARED_BOX_POOLER };
     }
     if (!isPoolerEligible(box)) {
-      return { ok: false, problem: "This box has no pooler: it requires TLS." };
+      return { ok: false, reason: "refused", problem: "This box has no pooler: it requires TLS." };
     }
     const tenant = box.poolerTenant ?? newTenantId(box);
     const problem = await create(box, tenant);
     if (problem !== undefined) {
-      return { ok: false, problem: `Pooler tenant not re-synced: ${problem}` };
+      return { ok: false, reason: "failed", problem: `Pooler tenant not re-synced: ${problem}` };
     }
     return { ok: true, tenant };
   }
@@ -207,11 +211,16 @@ export function createPoolerTenants(deps: PoolerTenantsDeps): PoolerTenants {
   function resync(box: Box): Promise<ResyncResult> {
     return serialized(box.id, async () => {
       const current = getBoxById(db, box.id);
-      if (current === undefined) return { ok: false, problem: "Box not found." };
+      if (current === undefined)
+        return { ok: false, reason: "not-found", problem: "Box not found." };
       try {
         return await resyncNow(current);
       } catch (error) {
-        return { ok: false, problem: `Pooler tenant not re-synced: ${scrubbed(error, [])}` };
+        return {
+          ok: false,
+          reason: "failed",
+          problem: `Pooler tenant not re-synced: ${scrubbed(error, [])}`,
+        };
       }
     });
   }
