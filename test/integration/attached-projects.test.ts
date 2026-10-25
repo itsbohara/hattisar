@@ -38,7 +38,7 @@ function adminSql(script: string): string {
 // inside the attached database, where a baseline or extension would show. jsonb, not json: json_agg
 // emits newlines, which would split one value across the lines parsed below.
 function snapshot(): unknown {
-  const [server, inside] = adminSql(`
+  const output = adminSql(`
     select jsonb_build_object(
       'database', (select to_jsonb(d) from (
         select datname, datdba::regrole::text as owner, datacl::text
@@ -62,9 +62,10 @@ function snapshot(): unknown {
       'functions', (select jsonb_agg(n.nspname || '.' || p.proname order by n.nspname, p.proname)
         from pg_proc p join pg_namespace n on n.oid = p.pronamespace
         where n.nspname !~ '^pg_' and n.nspname <> 'information_schema')
-    );`)
-    .split("\n")
-    .map((line) => JSON.parse(line));
+    );`);
+  const lines = output.split("\n");
+  expect(lines, output).toHaveLength(2);
+  const [server, inside] = lines.map((line) => JSON.parse(line));
   return { server, inside };
 }
 
