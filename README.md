@@ -17,6 +17,8 @@ nothing else.
 - **Projects** — a project is a Postgres database plus its own owner role, created in seconds.
 - **Boxes** — the Postgres servers projects live on: the bundled *shared* box (development only),
   any *registered* Postgres you already run, or a *managed* box hattisar starts in Docker.
+- **Attached databases** — open a database you already run on a registered box in Studio, with a
+  login you give; hattisar never changes it.
 - **Studio** — the real Supabase Studio, per project: Table Editor, SQL editor, database screens.
 - **Connection strings** — pooler (session and transaction) strings through one Supavisor for the
   shared box, managed boxes and registered boxes without TLS, plus direct strings for every box but
