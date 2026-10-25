@@ -38,6 +38,7 @@ describe("loadConfig", () => {
       pgBinDir: "/usr/bin",
       managedBoxes: false,
       managedPortRange: { start: 55000, end: 55999 },
+      managedBoxMounts: [],
       dockerHost: "tcp://docker-proxy:2375",
       studioUrl: "http://studio:3000",
       pgMetaUrl: "http://meta:8080",
@@ -171,6 +172,73 @@ describe("loadConfig", () => {
         );
       },
     );
+  });
+
+  describe("HATTISAR_MANAGED_BOX_MOUNTS", () => {
+    const mountsOf = (value: string) =>
+      load({ HATTISAR_MANAGED_BOX_MOUNTS: value }).managedBoxMounts;
+
+    it("parses comma-separated source:target entries, trimming whitespace", () => {
+      expect(
+        mountsOf(" /opt/wal-g:/usr/local/bin/wal-g , /opt/w/{box}.yaml:/etc/wal-g/walg.yaml "),
+      ).toEqual([
+        { source: "/opt/wal-g", target: "/usr/local/bin/wal-g" },
+        { source: "/opt/w/{box}.yaml", target: "/etc/wal-g/walg.yaml" },
+      ]);
+    });
+
+    it("keeps every {box} in a source verbatim", () => {
+      expect(mountsOf("/opt/{box}/{box}.yaml:/etc/walg.yaml")).toEqual([
+        { source: "/opt/{box}/{box}.yaml", target: "/etc/walg.yaml" },
+      ]);
+    });
+
+    it.each([
+      ["/opt/wal-g", "must be <source>:<target>"],
+      ["/a:/b:/c", "must be <source>:<target>"],
+      ["", "must be <source>:<target>"],
+      ["opt/wal-g:/usr/local/bin/wal-g", "source must be an absolute path"],
+      ["/opt/wal-g:usr/local/bin/wal-g", "target must be an absolute path"],
+      ["/opt/../etc/passwd:/etc/x", "source must not contain .. segments"],
+      ["/opt/x:/etc/../x", "target must not contain .. segments"],
+      ["/opt/x:/etc/{box}.yaml", "target must not contain {box}"],
+      [
+        "/opt/x:/var/lib/postgresql/data",
+        "target must not be /var/lib/postgresql/data or inside it",
+      ],
+      [
+        "/opt/x:/var/lib/postgresql/data/",
+        "target must not be /var/lib/postgresql/data or inside it",
+      ],
+      [
+        "/opt/x:/var/lib/postgresql/data/conf",
+        "target must not be /var/lib/postgresql/data or inside it",
+      ],
+      [
+        "/opt/x:/var/lib/postgresql//data",
+        "target must not be /var/lib/postgresql/data or inside it",
+      ],
+      ["/opt/x:/", "target must not contain /var/lib/postgresql/data"],
+      ["/opt/x:/var", "target must not contain /var/lib/postgresql/data"],
+      ["/opt/x:/var/lib/", "target must not contain /var/lib/postgresql/data"],
+      ["/opt/x:/var/lib/postgresql", "target must not contain /var/lib/postgresql/data"],
+    ])("rejects %s", (entry, reason) => {
+      expect(errorOf({ HATTISAR_MANAGED_BOX_MOUNTS: `/opt/ok:/etc/ok,${entry}` }).message).toBe(
+        `HATTISAR_MANAGED_BOX_MOUNTS: ${entry}: ${reason}`,
+      );
+    });
+
+    it("rejects a target used twice", () => {
+      expect(errorOf({ HATTISAR_MANAGED_BOX_MOUNTS: "/a:/etc/x,/b:/etc/x/" }).message).toBe(
+        "HATTISAR_MANAGED_BOX_MOUNTS: /b:/etc/x/: target is already mounted by an earlier entry",
+      );
+    });
+
+    it("accepts a target beside the data directory", () => {
+      expect(mountsOf("/opt/x:/var/lib/postgresql/data2")).toEqual([
+        { source: "/opt/x", target: "/var/lib/postgresql/data2" },
+      ]);
+    });
   });
 
   it("reads HATTISAR_DEBUG", () => {
