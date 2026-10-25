@@ -14,8 +14,9 @@ is your own Postgres; set up PITR there with its own tools.
 
 - **RPO about 60 s.** `archive_timeout = '60s'` closes and ships the current WAL segment at least
   once a minute while there are writes. Lose the box's disk and you lose about the last minute.
-- **Tested** by [`scripts/pitr-test.sh`](../scripts/pitr-test.sh), against the S3-compatible
-  RustFS that the dev stack runs. Real AWS S3 and R2 are not tested; see
+- **Tested** by [`scripts/pitr-test.sh`](../scripts/pitr-test.sh), which the `PITR recipe`
+  [workflow](../.github/workflows/pitr.yml) runs weekly and on changes to the recipe files and the
+  pinned images, against the S3-compatible RustFS that the dev stack runs. Real AWS S3 and R2 are not tested; see
   [What is not tested](#what-is-not-tested).
 
 Run the commands in the release directory (`/opt/hattisar` with the installer), or in `docker/` in a
