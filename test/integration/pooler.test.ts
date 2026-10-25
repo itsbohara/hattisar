@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import pg from "pg";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { poolerRoleFor } from "../../src/pooler/role.js";
 import { deriveSecretKey } from "../../src/registry/secrets.js";
 import { createProject, dropProject, fetchWith } from "../helpers/projects.js";
@@ -206,10 +206,12 @@ describe("a project on a registered box with a pooler tenant", () => {
     expect(response.status, await response.clone().text()).toBe(200);
     expect(await response.json()).toEqual({ tenant });
 
+    // Supavisor reconnects its auth query to the box after the re-sync; until then a login fails
+    // with "connection to database not available".
     for (const url of [probe.href, await connection("session")]) {
-      const rows = await withClient(
-        url,
-        async (client) => (await client.query("select current_user")).rows,
+      const rows = await vi.waitFor(
+        () => withClient(url, async (client) => (await client.query("select current_user")).rows),
+        { timeout: 20_000, interval: 1_000 },
       );
       expect(rows).toHaveLength(1);
     }
