@@ -353,8 +353,9 @@ acceptable.
 - **Non-superuser admins** are tested on stock Postgres with a `CREATEDB`/`CREATEROLE` admin.
   RDS, Aurora, Neon and Supabase cloud have that shape but are not yet verified on real instances
   (#33). Such boxes have no pooler, and Query Performance stays empty where the admin cannot create
-  `pg_stat_statements`. A box switched from a superuser
-  admin to a non-superuser one on Postgres 16+ may fail to restore older projects into themselves.
+  `pg_stat_statements`. After a box is edited from a superuser admin to a non-superuser one on
+  Postgres 16+, projects created before the edit cannot be deleted, purged, rotated or restored:
+  the admin lacks `ADMIN OPTION` on their owner roles.
 - **Boxes on other Docker hosts** and Auth/REST/Storage per project are out of scope for v1.
 
 ## Upgrading Studio

@@ -293,7 +293,8 @@ not a superuser):
 the pooler fields. Best effort: a failure is logged and the removal goes on; a later tenant with
 the same id overwrites the leftover (step 3). On a registered box hattisar then drops the tenant's
 role as the box admin, also best effort; the `hattisar_pooler` schema and function stay, since
-other tenants on that server may use them.
+other tenants on that server may use them. After an edit from a superuser admin to a non-superuser
+one, that admin may not be allowed to drop the old pooler role, which then stays with a warning.
 
 **Re-sync** (Re-sync pooler on the Boxes page, `POST /boxes/:id/pooler/resync`, `hattisar boxes
 resync-pooler <id>`) runs steps 2–4 for one box on demand, with the stored tenant id (a new one,
@@ -355,6 +356,11 @@ escape helpers, never string concatenation):
    database (§5.1).
 5. Insert registry row.
 Any failure → drop what was created (db, role), no registry row, error shown.
+
+On a box whose admin is not a superuser, delete, restore from Trash, purge, rotate and backup
+restore first run the same `GRANT <owner> TO <admin>` on their connection: an owner on 15 can
+revoke the admin's membership, and owner roles created before the box was edited from a superuser
+admin never had it.
 
 **Isolation (I1):** the owner role cannot connect to any other project's database.
 
@@ -434,10 +440,10 @@ go in `PGPASSWORD` env, never argv. Dumps are custom format (`-Fc`), connecting 
   backends, drop and recreate the database with the §7 steps 2–4 (same owner, same password), then
   `pg_restore --no-owner --no-privileges --role=<owner> -d <db>`; or (b) a new project — the full
   §7 create flow, then the same restore. The restore list leaves out what the baseline owns: the
-  `extensions` schema, extension comments and `pg_stat_statements`. Known limitation: a box edited
-  from a superuser admin to one that is not, on Postgres 16+, cannot grant itself owner roles
-  created before the edit (that needs `ADMIN OPTION`), so restoring those projects into
-  themselves may fail. A failed restore leaves the error on the page. A
+  `extensions` schema, extension comments and `pg_stat_statements`. Known limitation: after a
+  box is edited from a superuser admin to a non-superuser one on Postgres 16+, projects created
+  before the edit cannot be deleted, purged, rotated or restored, because the admin lacks
+  `ADMIN OPTION` on their owner roles (§7). A failed restore leaves the error on the page. A
   restore whose only pg_restore errors are `unrecognized configuration parameter` on a `SET` (a
   newer client's setting an older server lacks, such as `transaction_timeout` on 15) succeeds
   and logs a warning. Leftover `restore-*` work directories are removed at boot.
