@@ -38,20 +38,42 @@ function BoxActions({ box, managedEnabled }: { box: Box; managedEnabled: boolean
   );
 }
 
+function ResyncButton({ box }: { box: Box }) {
+  return (
+    <form method="post" action={`/_hs/boxes/${box.id}/pooler/resync`} class="form-inline">
+      <button type="submit" class="button-quiet button-danger">
+        Re-sync
+      </button>
+      <small class="hint">Drops open pooled connections.</small>
+    </form>
+  );
+}
+
 function PoolerCell({ box }: { box: Box }) {
   const status = poolerStatus(box);
-  if (status.kind === "tenant") return <code>{status.id}</code>;
-  return <span class="hint">{status.kind === "pending" ? "Pooler pending" : "Direct only"}</span>;
+  if (status.kind === "direct") return <span class="hint">Direct only</span>;
+  return (
+    <>
+      {status.kind === "tenant" ? (
+        <code>{status.id}</code>
+      ) : (
+        <span class="hint">Pooler pending</span>
+      )}
+      {box.kind !== "shared" && <ResyncButton box={box} />}
+    </>
+  );
 }
 
 export function BoxesPage({
   rows,
   managedEnabled = false,
   error,
+  notice,
 }: {
   rows: BoxRow[];
   managedEnabled?: boolean;
   error?: string;
+  notice?: string;
 }) {
   return (
     <Layout title="Boxes" section="boxes">
@@ -71,6 +93,11 @@ export function BoxesPage({
       {error && (
         <p class="alert alert-error" role="alert">
           {error}
+        </p>
+      )}
+      {notice && (
+        <p class="alert alert-ok" role="status">
+          {notice}
         </p>
       )}
       {rows.length === 0 ? (
