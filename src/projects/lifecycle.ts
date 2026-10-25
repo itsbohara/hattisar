@@ -68,8 +68,8 @@ function isObjectInUse(error: unknown): boolean {
   return (error as { code?: unknown } | null)?.code === OBJECT_IN_USE;
 }
 
-// Superusers such as the box admin bypass the revoked CONNECT and may reconnect between the
-// terminate and the rename, which then fails as in use: terminate again and retry.
+// Superusers, such as a superuser box admin, bypass the revoked CONNECT and may reconnect between
+// the terminate and the rename, which then fails as in use: terminate again and retry.
 async function renameAway(client: pg.Client, project: Project, now: Date): Promise<string> {
   for (let attempt = 1; ; attempt++) {
     await client.query(

@@ -19,6 +19,7 @@ import { generateOwnerPassword, scramVerifier } from "./owner-password.js";
 import type { PoolerRefresher } from "./pooler.js";
 
 const MAX_NAME_LENGTH = 100;
+const INSUFFICIENT_PRIVILEGE = "42501";
 
 export type LifecycleEvent = "deleted" | "restoring" | "purging" | "purged";
 
@@ -88,12 +89,17 @@ export interface ProjectNames {
 export async function createProjectDatabase(
   admin: AdminClientRunner,
   conn: BoxConnection,
+  box: Pick<Box, "adminSuperuser">,
   names: ProjectNames,
   onCreated: () => void = () => {},
 ): Promise<void> {
   const db = pg.escapeIdentifier(names.dbName);
   const role = pg.escapeIdentifier(names.ownerRole);
   await admin(conn, async (client) => {
+    // CREATE DATABASE … OWNER needs a non-superuser admin to be a member of the owner role.
+    if (!box.adminSuperuser) {
+      await client.query(`GRANT ${role} TO ${pg.escapeIdentifier(conn.user)}`);
+    }
     await client.query(`CREATE DATABASE ${db} OWNER ${role}`);
     onCreated();
     await client.query(`REVOKE CONNECT, TEMPORARY ON DATABASE ${db} FROM PUBLIC`);
@@ -103,9 +109,19 @@ export async function createProjectDatabase(
     conn,
     async (client) => {
       await client.query(baselineSql(names.dbName, names.ownerRole));
+      await createPgStatStatements(client);
     },
     names.dbName,
   );
+}
+
+// Only a superuser may create pg_stat_statements; without it Query Performance stays empty.
+async function createPgStatStatements(client: pg.Client): Promise<void> {
+  try {
+    await client.query("CREATE EXTENSION IF NOT EXISTS pg_stat_statements WITH SCHEMA extensions");
+  } catch (error) {
+    if ((error as { code?: unknown } | null)?.code !== INSUFFICIENT_PRIVILEGE) throw error;
+  }
 }
 
 async function provision(
@@ -130,7 +146,7 @@ async function provision(
     );
     created.role = true;
   });
-  await createProjectDatabase(admin, conn, names, () => {
+  await createProjectDatabase(admin, conn, box, names, () => {
     created.database = true;
   });
 }

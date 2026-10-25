@@ -31,6 +31,7 @@ let dataDir: string;
 let db: Registry;
 let statements: Statement[];
 let failOn: RegExp | undefined;
+let failCode: string | undefined;
 let databaseExists: boolean;
 let databaseSizes: [string, string][];
 let refreshed: { ref: string; password: string }[];
@@ -40,7 +41,9 @@ const fakeAdmin: AdminClientRunner = async (_conn, run, database = "postgres") =
   const client = {
     query: async (sql: string) => {
       statements.push({ database, sql });
-      if (failOn?.test(sql)) throw new Error(`boom (${ADMIN_PASSWORD})`);
+      if (failOn?.test(sql)) {
+        throw Object.assign(new Error(`boom (${ADMIN_PASSWORD})`), { code: failCode });
+      }
       if (sql.includes("pg_database_size")) {
         return { rows: databaseSizes.map(([datname, bytes]) => ({ datname, bytes })) };
       }
@@ -68,6 +71,7 @@ beforeEach(() => {
   );
   statements = [];
   failOn = undefined;
+  failCode = undefined;
   databaseExists = false;
   databaseSizes = [];
   refreshed = [];
@@ -135,6 +139,12 @@ describe("creating a project", () => {
     expect(baseline?.sql).toContain(
       'ALTER DATABASE "my_app" SET search_path = "$user", public, extensions;',
     );
+    expect(baseline?.sql).not.toContain("CREATE EXTENSION IF NOT EXISTS pg_stat_statements");
+    expect(statements[6]).toEqual({
+      database: "my_app",
+      sql: "CREATE EXTENSION IF NOT EXISTS pg_stat_statements WITH SCHEMA extensions",
+    });
+    expect(sql.some((line) => line.startsWith('GRANT "hs_my_app_owner"'))).toBe(false);
 
     const project = getProjectByRef(db, "my-app");
     expect(project).toMatchObject({
@@ -196,6 +206,62 @@ describe("creating a project", () => {
     expect(statements.map((s) => s.sql).filter((sql) => sql.startsWith("DROP"))).toEqual(drops);
     expect(getProjectByRef(db, "my-app")).toBeUndefined();
     expect(refreshed).toEqual([]);
+  });
+});
+
+describe("creating a project on a box whose admin is not a superuser", () => {
+  function createOnPlainBox(): Promise<Response> {
+    const box = insertBox(db, {
+      name: "rds",
+      kind: "registered",
+      devOnly: false,
+      host: "pg.internal",
+      port: 5432,
+      adminUser: 'rds"admin',
+      adminPasswordEnc: encryptSecret(ADMIN_PASSWORD, secretKey),
+      sslmode: "disable",
+      publicHost: "pg.example.test",
+      publicPort: 5432,
+      poolerTenant: null,
+      poolerSessionPort: null,
+      poolerTransactionPort: null,
+      containerName: null,
+      adminSuperuser: false,
+    });
+    return post("/_hs/projects", { name: "My App", ref: "my-app", boxId: String(box.id) });
+  }
+
+  it("grants the owner role to the escaped admin before creating the database", async () => {
+    const response = await createOnPlainBox();
+    expect(response.status).toBe(302);
+    const sql = statements.map((s) => s.sql);
+    expect(sql[1]).toMatch(/^CREATE ROLE "hs_my_app_owner"/);
+    expect(sql.slice(2, 4)).toEqual([
+      'GRANT "hs_my_app_owner" TO "rds""admin"',
+      'CREATE DATABASE "my_app" OWNER "hs_my_app_owner"',
+    ]);
+  });
+
+  it("still creates the project when pg_stat_statements is refused with 42501", async () => {
+    failOn = /^CREATE EXTENSION IF NOT EXISTS pg_stat_statements/;
+    failCode = "42501";
+    const response = await createOnPlainBox();
+    expect(response.status).toBe(302);
+    expect(getProjectByRef(db, "my-app")).toMatchObject({ status: "active" });
+    expect(statements.map((s) => s.sql).filter((sql) => sql.startsWith("DROP"))).toEqual([]);
+  });
+
+  it("fails and cleans up when pg_stat_statements fails for another reason", async () => {
+    failOn = /^CREATE EXTENSION IF NOT EXISTS pg_stat_statements/;
+    failCode = "58P01";
+    const response = await createOnPlainBox();
+    expect(response.status).toBe(400);
+    expect(await response.text()).toContain("Could not create the project: boom");
+    expect(statements.map((s) => s.sql).filter((sql) => sql.startsWith("DROP"))).toEqual([
+      'DROP DATABASE IF EXISTS "my_app" WITH (FORCE)',
+      'DROP ROLE IF EXISTS "hs_my_app_owner"',
+    ]);
+    expect(getProjectByRef(db, "my-app")).toBeUndefined();
   });
 });
 
