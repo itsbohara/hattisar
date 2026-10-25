@@ -12,6 +12,7 @@ const PLAIN_PG_18 = `hattisar-it-plain-pg18-${randomUUID().slice(0, 8)}`;
 const PLAIN_PG_PASSWORD = randomUUID();
 const plainBox = `it-plain-${randomUUID().slice(0, 8)}`;
 const plainRef = `it-plain-${randomUUID().slice(0, 8)}`;
+const pg18Box = `it-plain-pg18-${randomUUID().slice(0, 8)}`;
 let plainPgPort: string;
 let cookie: string;
 
@@ -96,6 +97,21 @@ function startPlainPg(name: string, image: string): void {
   ]);
 }
 
+async function ownerSelectOne(url: string): Promise<unknown[]> {
+  const client = new pg.Client({ connectionString: url, connectionTimeoutMillis: 10_000 });
+  client.on("error", () => undefined);
+  await client.connect();
+  try {
+    return (await client.query("select current_user, 1 as ok")).rows;
+  } finally {
+    await client.end();
+  }
+}
+
+function deletePlainProject(): Promise<Response> {
+  return postForm(baseUrl, `/_hs/projects/${plainRef}/delete`, { confirm: plainRef }, cookie);
+}
+
 function registerSharedDbAgain(name: string): Promise<Response> {
   return register({
     name,
@@ -114,14 +130,18 @@ beforeAll(async () => {
   await waitForTcpReady(PLAIN_PG_18);
 }, 180_000);
 
-// The plain box's databases go with its container; only hattisar's rows can outlive a failed test.
+// The plain box's databases go with its container; only hattisar's rows and the box's pooler
+// tenant can outlive a failed test; removing the box drops the tenant.
 afterAll(async () => {
   try {
     registrySql("DELETE FROM projects WHERE ref = ?", plainRef);
     const html = await boxesPage();
-    if (html.includes(`data-box="${plainBox}"`)) await remove(boxIdFrom(html, plainBox));
+    for (const name of [plainBox, pg18Box]) {
+      if (html.includes(`data-box="${name}"`)) await remove(boxIdFrom(html, name));
+    }
   } finally {
     registrySql("DELETE FROM boxes WHERE name = ?", plainBox);
+    registrySql("DELETE FROM boxes WHERE name = ?", pg18Box);
     docker(["rm", "-f", PLAIN_PG, PLAIN_PG_18]);
   }
 });
@@ -158,25 +178,18 @@ describe("boxes", () => {
     expect(created.status, await created.clone().text()).toBe(302);
 
     const strings = await connectionStrings(baseUrl, cookie, plainRef);
+    expect(strings).toHaveLength(3);
     const direct = strings.find((url) => new URL(url).port === plainPgPort);
     if (!direct) throw new Error(`${plainRef} has no direct connection string`);
-    const client = new pg.Client({ connectionString: direct, connectionTimeoutMillis: 10_000 });
-    client.on("error", () => undefined);
-    await client.connect();
-    try {
-      const rows = (await client.query("select current_user, 1 as ok")).rows;
-      expect(rows).toEqual([{ current_user: `hs_${plainRef.replaceAll("-", "_")}_owner`, ok: 1 }]);
-    } finally {
-      await client.end();
-    }
+    const owner = [{ current_user: `hs_${plainRef.replaceAll("-", "_")}_owner`, ok: 1 }];
+    expect(await ownerSelectOne(direct)).toEqual(owner);
 
-    const deleted = await postForm(
-      baseUrl,
-      `/_hs/projects/${plainRef}/delete`,
-      { confirm: plainRef },
-      cookie,
-    );
-    expect(deleted.status).toBe(302);
+    expect((await deletePlainProject()).status).toBe(302);
+    const restored = await postForm(baseUrl, `/_hs/trash/${plainRef}/restore`, {}, cookie);
+    expect(restored.status).toBe(302);
+    expect(await ownerSelectOne(direct)).toEqual(owner);
+
+    expect((await deletePlainProject()).status).toBe(302);
     const purged = await postForm(
       baseUrl,
       `/_hs/trash/${plainRef}/purge`,
@@ -189,12 +202,12 @@ describe("boxes", () => {
   }, 60_000);
 
   it("refuses a Postgres 18 server", async () => {
-    const response = await registerPlainPg("it-plain-pg18", PLAIN_PG_18);
+    const response = await registerPlainPg(pg18Box, PLAIN_PG_18);
     expect(response.status).toBe(400);
     const html = await response.text();
     expect(html).toContain("<li>Postgres 17 or older is required; this server is version 18</li>");
     expect(html).not.toContain(PLAIN_PG_PASSWORD);
-    expect(await boxesPage()).not.toContain('data-box="it-plain-pg18"');
+    expect(await boxesPage()).not.toContain(`data-box="${pg18Box}"`);
   });
 
   it("explains a connection failure as one problem", async () => {
