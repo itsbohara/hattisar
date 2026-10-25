@@ -23,9 +23,18 @@ function sslOption(mode: SslMode): pg.ClientConfig["ssl"] {
   return { rejectUnauthorized: mode === "verify-full" };
 }
 
+// A host with several addresses fails with an AggregateError whose own message is empty; the
+// per-address errors carry the reason.
+function errorMessage(error: unknown): string {
+  if (error instanceof AggregateError && error.message === "") {
+    return error.errors.map(errorMessage).join("; ");
+  }
+  return error instanceof Error ? error.message : String(error);
+}
+
 // Error messages from here reach the UI, so the password is scrubbed even though pg rarely echoes it.
 export function safeErrorMessage(error: unknown, password: string): string {
-  const message = error instanceof Error ? error.message : String(error);
+  const message = errorMessage(error);
   return password === "" ? message : message.replaceAll(password, "********");
 }
 
