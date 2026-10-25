@@ -1,3 +1,4 @@
+import { isAttached } from "../../projects/attach.js";
 import type { ConnectionString } from "../../projects/connection-strings.js";
 import { slugify } from "../../projects/naming.js";
 import type { Backup, BackupSchedule } from "../../registry/backups.js";
@@ -5,6 +6,9 @@ import type { Box } from "../../registry/boxes.js";
 import type { Project } from "../../registry/projects.js";
 import { Layout } from "../layout.js";
 import { ConfirmRefInput, utc } from "./trash.js";
+
+export const SUPERUSER_WARNING =
+  "Studio runs as a superuser here and can reach every database on this server.";
 
 export const DEV_ONLY_WARNING =
   "Best for development only — shares one Postgres with other projects";
@@ -69,6 +73,10 @@ function StatusBadge({ busy }: { busy: boolean }) {
   return busy ? <span class="pill pill-busy">Busy</span> : <span class="pill pill-ok">Active</span>;
 }
 
+function AttachedBadge({ project }: { project: Project }) {
+  return isAttached(project) ? <span class="pill">attached</span> : null;
+}
+
 function KindBadge({ box }: { box: Box }) {
   return <span class="pill">{box.devOnly ? `${box.kind} · dev` : box.kind}</span>;
 }
@@ -99,7 +107,7 @@ function ProjectMenu({ project }: { project: Project }) {
           class="menu-item menu-item-danger"
           href={`${projectTabHref(project.ref, "general")}#delete`}
         >
-          Delete…
+          {isAttached(project) ? "Detach…" : "Delete…"}
         </a>
       </div>
     </details>
@@ -136,6 +144,7 @@ function ProjectCards({ rows, q }: { rows: ProjectRow[]; q: string }) {
           </div>
           <div class="pills">
             <StatusBadge busy={busy} />
+            <AttachedBadge project={project} />
             <KindBadge box={box} />
           </div>
           <dl class="project-meta">
@@ -217,6 +226,7 @@ function ProjectTable({ rows, query }: { rows: ProjectRow[]; query: ProjectsQuer
               </td>
               <td>
                 <StatusBadge busy={busy} />
+                <AttachedBadge project={project} />
               </td>
               <td class="col-optional">
                 <KindBadge box={box} />
@@ -511,6 +521,10 @@ export function NewProjectPage({
   return (
     <Layout title="New project" section="projects">
       <h1>New project</h1>
+      <p class="hint">
+        Already have a database? <a href="/_hs/projects/attach">Attach an existing database</a>{" "}
+        instead.
+      </p>
       <section class="card card-roomy">
         <form method="post" action="/_hs/projects" class="form" id="new-project">
           <Problems problems={problems} />
@@ -773,17 +787,51 @@ function ConnectTab({
         <ConnectionStrings strings={strings} />
       ) : (
         <p class="alert alert-error" role="alert">
-          The stored owner password cannot be decrypted, so the connection strings cannot be shown.
-          If the stored secret is corrupt, rotating the password sets a new one.
+          {isAttached(project)
+            ? "The stored password cannot be decrypted, so the connection strings cannot be shown. Use Update login on the General tab to store it again."
+            : "The stored owner password cannot be decrypted, so the connection strings cannot be shown. If the stored secret is corrupt, rotating the password sets a new one."}
         </p>
       )}
-      <form method="post" action={`/_hs/projects/${project.ref}/rotate`} class="form-inline">
-        <button type="submit" class="button-quiet button-danger">
-          Rotate password
-        </button>
-        <small class="hint">Apps using the current password lose access.</small>
-      </form>
+      {!isAttached(project) && (
+        <form method="post" action={`/_hs/projects/${project.ref}/rotate`} class="form-inline">
+          <button type="submit" class="button-quiet button-danger">
+            Rotate password
+          </button>
+          <small class="hint">Apps using the current password lose access.</small>
+        </form>
+      )}
       <script dangerouslySetInnerHTML={{ __html: CREDENTIALS_SCRIPT }} />
+    </section>
+  );
+}
+
+function UpdateLoginCard({ base, project }: { base: string; project: Project }) {
+  return (
+    <section class="card">
+      <h2>Update login</h2>
+      <p class="hint">
+        Replaces the login and password Studio uses. Nothing is changed on the box: the new login
+        must already exist and be able to connect.
+      </p>
+      <form method="post" action={`${base}/login`} class="form-inline">
+        <input
+          name="login"
+          required
+          autocomplete="off"
+          value={project.ownerRole}
+          aria-label="Login"
+        />
+        <input
+          name="password"
+          type="password"
+          required
+          autocomplete="new-password"
+          aria-label="Password"
+        />
+        <button type="submit" class="button">
+          Update login
+        </button>
+      </form>
     </section>
   );
 }
@@ -808,7 +856,7 @@ function GeneralTab({ project, box }: { project: Project; box: Box }) {
           <dd>
             <code>{project.dbName}</code>
           </dd>
-          <dt>Owner role</dt>
+          <dt>{isAttached(project) ? "Login" : "Owner role"}</dt>
           <dd>
             <code>{project.ownerRole}</code>
           </dd>
@@ -825,19 +873,38 @@ function GeneralTab({ project, box }: { project: Project; box: Box }) {
           </button>
         </form>
       </section>
-      <section class="card card-danger" id="delete">
-        <h2>Delete project</h2>
-        <p class="hint">
-          Moves the project to Trash: the owner can no longer connect and Studio stops showing it.
-          It can be restored until it is purged. Type <code>{project.ref}</code> to confirm.
-        </p>
-        <form method="post" action={`${base}/delete`} class="form-inline">
-          <ConfirmRefInput ref={project.ref} />
-          <button type="submit" class="button-quiet button-danger">
-            Delete project
-          </button>
-        </form>
-      </section>
+      {isAttached(project) ? (
+        <>
+          <UpdateLoginCard base={base} project={project} />
+          <section class="card card-danger" id="delete">
+            <h2>Detach project</h2>
+            <p class="hint">
+              Removes {project.ref} from hattisar. The database and its data stay on the box. Type{" "}
+              <code>{project.ref}</code> to confirm.
+            </p>
+            <form method="post" action={`${base}/detach`} class="form-inline">
+              <ConfirmRefInput ref={project.ref} />
+              <button type="submit" class="button-quiet button-danger">
+                Detach project
+              </button>
+            </form>
+          </section>
+        </>
+      ) : (
+        <section class="card card-danger" id="delete">
+          <h2>Delete project</h2>
+          <p class="hint">
+            Moves the project to Trash: the owner can no longer connect and Studio stops showing it.
+            It can be restored until it is purged. Type <code>{project.ref}</code> to confirm.
+          </p>
+          <form method="post" action={`${base}/delete`} class="form-inline">
+            <ConfirmRefInput ref={project.ref} />
+            <button type="submit" class="button-quiet button-danger">
+              Delete project
+            </button>
+          </form>
+        </section>
+      )}
     </>
   );
 }
@@ -871,6 +938,7 @@ export function ProjectPage({
       </nav>
       <div class="page-head">
         <h1>{project.name}</h1>
+        <AttachedBadge project={project} />
         <a class="button" href={studioHref(project.ref)}>
           Open in Studio
         </a>
@@ -888,6 +956,11 @@ export function ProjectPage({
           ))}
         </nav>
         <div class="settings-content project-content">
+          {project.loginSuperuser && isAttached(project) && (
+            <p class="alert alert-error" role="alert">
+              {SUPERUSER_WARNING}
+            </p>
+          )}
           {notice && (
             <p
               class={`alert ${notice.kind === "ok" ? "alert-ok" : "alert-error"}`}

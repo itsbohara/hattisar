@@ -35,6 +35,8 @@ let failCode: string | undefined;
 let databaseExists: boolean;
 let databaseSizes: [string, string][];
 let refreshed: { ref: string; password: string }[];
+let listedDatabases: string[];
+let loginSuperuser: boolean;
 let app: Hono<AuthEnv>;
 
 const fakeAdmin: AdminClientRunner = async (_conn, run, database = "postgres") => {
@@ -47,6 +49,10 @@ const fakeAdmin: AdminClientRunner = async (_conn, run, database = "postgres") =
       if (sql.includes("pg_database_size")) {
         return { rows: databaseSizes.map(([datname, bytes]) => ({ datname, bytes })) };
       }
+      if (sql.includes("from pg_database\n  where not datistemplate")) {
+        return { rows: listedDatabases.map((datname) => ({ datname })) };
+      }
+      if (sql.includes("rolsuper")) return { rows: [{ rolsuper: loginSuperuser }] };
       const exists = sql.startsWith("select 1 from pg_database") && databaseExists;
       return { rowCount: exists ? 1 : 0, rows: [] };
     },
@@ -75,6 +81,8 @@ beforeEach(() => {
   databaseExists = false;
   databaseSizes = [];
   refreshed = [];
+  listedDatabases = ["shop", "blog"];
+  loginSuperuser = false;
   const user = insertUser(db, { username: "admin", passwordHash: "unused" });
   app = new Hono<AuthEnv>();
   app.use(async (c, next) => {
@@ -479,5 +487,230 @@ describe("a project whose owner password will not decrypt", () => {
     const after = ownerPassword("my-app");
     expect(refreshed.at(-1)).toEqual({ ref: "my-app", password: after });
     expect(await (await app.request("/_hs/projects/my-app")).text()).toContain(after);
+  });
+});
+
+const PROBE_PASSWORD = "login-secret";
+
+function registeredBox(name = "rds"): string {
+  return String(
+    insertBox(db, {
+      name,
+      kind: "registered",
+      devOnly: false,
+      host: "pg.internal",
+      port: 5432,
+      adminUser: "postgres",
+      adminPasswordEnc: encryptSecret(ADMIN_PASSWORD, secretKey),
+      sslmode: "disable",
+      publicHost: "pg.example.test",
+      publicPort: 5432,
+      poolerTenant: null,
+      poolerSessionPort: null,
+      poolerTransactionPort: null,
+      containerName: null,
+      adminSuperuser: true,
+    }).id,
+  );
+}
+
+function attach(boxId: string, overrides: Record<string, string> = {}): Promise<Response> {
+  return post("/_hs/projects/attach", {
+    name: "Shop",
+    ref: "shop",
+    boxId,
+    database: "shop",
+    login: "shop_app",
+    password: PROBE_PASSWORD,
+    ...overrides,
+  });
+}
+
+describe("the attach page", () => {
+  it("offers only registered boxes when no box is chosen", async () => {
+    registeredBox();
+    const html = await (await app.request("/_hs/projects/attach")).text();
+    expect(html).toContain("Attach existing database");
+    expect(html).toMatch(/<option value="\d+"[^>]*>rds<\/option>/);
+    expect(html).not.toContain(">shared<");
+    expect(statements).toEqual([]);
+  });
+
+  it("lists the attachable databases of the chosen box", async () => {
+    const boxId = registeredBox();
+    const html = await (await app.request(`/_hs/projects/attach?box=${boxId}`)).text();
+    expect(html).toContain('<option value="shop">shop</option>');
+    expect(html).toContain('<option value="blog">blog</option>');
+    expect(html).toContain('type="password"');
+  });
+
+  it("shows the problem and no databases when the listing fails", async () => {
+    const boxId = registeredBox();
+    failOn = /pg_database/;
+    const html = await (await app.request(`/_hs/projects/attach?box=${boxId}`)).text();
+    expect(html).toContain("Could not list the databases of box rds");
+    expect(html).not.toContain(ADMIN_PASSWORD);
+    expect(html).not.toContain('<option value="shop">');
+  });
+
+  it("is not read as a project ref", async () => {
+    const response = await post("/_hs/projects", {
+      name: "Attach",
+      ref: "attach",
+      boxId: sharedBoxId(),
+    });
+    expect(response.status).toBe(400);
+    expect(await response.text()).toContain("Ref &quot;attach&quot; is reserved");
+  });
+
+  it("is linked from the new-project page", async () => {
+    const html = await (await app.request("/_hs/projects/new")).text();
+    expect(html).toContain('href="/_hs/projects/attach"');
+  });
+});
+
+describe("attaching a database", () => {
+  it("stores the project and redirects to its page", async () => {
+    loginSuperuser = true;
+    const response = await attach(registeredBox());
+    expect(response.status).toBe(302);
+    expect(response.headers.get("location")).toBe("/_hs/projects/shop");
+    expect(getProjectByRef(db, "shop")).toMatchObject({
+      kind: "attached",
+      dbName: "shop",
+      ownerRole: "shop_app",
+      loginSuperuser: true,
+    });
+    expect(ownerPassword("shop")).toBe(PROBE_PASSWORD);
+  });
+
+  it("re-renders with the problem and typed values but not the password", async () => {
+    const boxId = registeredBox();
+    failOn = /rolsuper/;
+    const response = await attach(boxId);
+    expect(response.status).toBe(400);
+    const html = await response.text();
+    expect(html).toContain("Could not log in to shop as shop_app");
+    expect(html).toContain('value="Shop"');
+    expect(html).toContain('value="shop_app"');
+    expect(html).toContain('<option value="shop" selected="">shop</option>');
+    expect(html).not.toContain(PROBE_PASSWORD);
+    expect(getProjectByRef(db, "shop")).toBeUndefined();
+  });
+
+  it("refuses the shared box", async () => {
+    const response = await attach(sharedBoxId());
+    expect(response.status).toBe(400);
+    expect(await response.text()).toContain("Only registered boxes can attach databases");
+  });
+});
+
+describe("an attached project", () => {
+  async function attached(): Promise<void> {
+    loginSuperuser = true;
+    await attach(registeredBox());
+  }
+
+  it("shows its badge, login, superuser warning and its own cards", async () => {
+    await attached();
+    const connect = await (await app.request("/_hs/projects/shop")).text();
+    expect(connect).toContain("attached");
+    expect(connect).toContain(
+      "Studio runs as a superuser here and can reach every database on this server.",
+    );
+    expect(connect).not.toContain("Rotate password");
+    const general = await (await app.request("/_hs/projects/shop/settings")).text();
+    expect(general).toContain("<dt>Login</dt>");
+    expect(general).not.toContain("Owner role");
+    expect(general).toContain("Update login");
+    expect(general).toContain("Detach project");
+    expect(general).toContain(
+      "Removes shop from hattisar. The database and its data stay on the box.",
+    );
+    expect(general).not.toContain("Delete project");
+  });
+
+  it("omits the superuser warning for an ordinary login", async () => {
+    loginSuperuser = false;
+    await attach(registeredBox());
+    expect(await (await app.request("/_hs/projects/shop")).text()).not.toContain(
+      "runs as a superuser",
+    );
+  });
+
+  it("points to Update login when the password will not decrypt", async () => {
+    await attached();
+    setProjectOwnerPassword(db, getProjectByRef(db, "shop")?.id ?? 0, "garbage");
+    const html = await (await app.request("/_hs/projects/shop")).text();
+    expect(html).toContain("Update login");
+    expect(html).not.toContain("rotating the password");
+  });
+
+  it("offers no restore in place on the Backups tab", async () => {
+    await attached();
+    const html = await (await app.request("/_hs/projects/shop/backups")).text();
+    expect(html).toContain("Backups");
+    expect(html).not.toContain("Restore into shop");
+  });
+
+  it("shows the badge beside the status in the grid and the list", async () => {
+    await attached();
+    for (const view of ["grid", "list"]) {
+      const html = await (await app.request(`/_hs/projects?view=${view}`)).text();
+      expect(html).toContain('<span class="pill">attached</span>');
+    }
+  });
+
+  it("offers Detach instead of Delete in the list menu", async () => {
+    await attached();
+    const html = await (await app.request("/_hs/projects")).text();
+    expect(html).toContain("Detach…");
+    expect(html).not.toContain("Delete…");
+  });
+
+  it("updates the login and redirects with a notice", async () => {
+    await attached();
+    const response = await post("/_hs/projects/shop/login", {
+      login: "other_app",
+      password: "new-secret",
+    });
+    expect(response.status).toBe(302);
+    expect(response.headers.get("location")).toBe("/_hs/projects/shop?login-updated");
+    expect(getProjectByRef(db, "shop")?.ownerRole).toBe("other_app");
+    expect(ownerPassword("shop")).toBe("new-secret");
+    expect(await (await app.request("/_hs/projects/shop?login-updated")).text()).toContain(
+      "Login updated.",
+    );
+  });
+
+  it("keeps the login and answers 400 when the new one cannot connect", async () => {
+    await attached();
+    failOn = /rolsuper/;
+    const response = await post("/_hs/projects/shop/login", { login: "x", password: "y" });
+    expect(response.status).toBe(400);
+    const html = await response.text();
+    expect(html).toContain("Could not log in to shop as x");
+    expect(html).not.toContain('value="y"');
+    expect(getProjectByRef(db, "shop")?.ownerRole).toBe("shop_app");
+  });
+
+  it("refuses to detach without the ref, then detaches", async () => {
+    await attached();
+    const wrong = await post("/_hs/projects/shop/detach", { confirm: "nope" });
+    expect(wrong.status).toBe(400);
+    expect(await wrong.text()).toContain("Type the ref shop to confirm detaching the project.");
+    expect(getProjectByRef(db, "shop")).toBeDefined();
+    const right = await post("/_hs/projects/shop/detach", { confirm: "shop" });
+    expect(right.status).toBe(302);
+    expect(right.headers.get("location")).toBe("/_hs/projects");
+    expect(getProjectByRef(db, "shop")).toBeUndefined();
+  });
+
+  it("refuses login and detach for a created project", async () => {
+    await create();
+    expect((await post("/_hs/projects/my-app/detach", { confirm: "my-app" })).status).toBe(400);
+    expect((await post("/_hs/projects/my-app/login", { login: "x", password: "y" })).status).toBe(
+      400,
+    );
   });
 });

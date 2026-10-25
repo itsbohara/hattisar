@@ -6,10 +6,11 @@ import { isS3Configured } from "../backups/s3-settings.js";
 import { createProjectOnNewBox } from "../managed/new-project.js";
 import type { ManagedBoxes } from "../managed/service.js";
 import { getBackupSchedule, listBackups } from "../registry/backups.js";
-import { type Box, getSharedBox, listBoxes } from "../registry/boxes.js";
+import { type Box, getBoxById, getSharedBox, listBoxes } from "../registry/boxes.js";
 import type { Registry } from "../registry/db.js";
 import { listProjects } from "../registry/projects.js";
 import { renderPage } from "../ui/layout.js";
+import { AttachPage, type AttachValues } from "../ui/pages/attach.js";
 import {
   NEW_BOX_OPTION,
   NewProjectPage,
@@ -25,6 +26,7 @@ import {
   USAGE_PATH,
 } from "../ui/pages/projects.js";
 import { accessibleProject, connectionStrings, type ProjectAndBox } from "./access.js";
+import { attachableDatabases, attachProject, detachProject, updateProjectLogin } from "./attach.js";
 import { softDeleteProject } from "./lifecycle.js";
 import { busyReason } from "./locks.js";
 import {
@@ -105,6 +107,7 @@ export function renderProjectDetail(
 }
 
 const QUERY_NOTICES: Record<string, string> = {
+  "login-updated": "Login updated.",
   rotated: "Password rotated. The connection strings below use the new one.",
   renamed: "Display name saved.",
   "backed-up": "Backup finished.",
@@ -145,6 +148,28 @@ export function projectRoutes(
     );
   }
 
+  async function renderAttach(
+    c: Context<AuthEnv>,
+    box: Box | undefined,
+    values: AttachValues,
+    problems: string[] = [],
+  ) {
+    const registered = listBoxes(db).filter((candidate) => candidate.kind === "registered");
+    const listing = box ? await attachableDatabases(deps, box) : undefined;
+    const listProblems = listing && !listing.ok ? [listing.problem] : [];
+    return renderPage(
+      c,
+      <AttachPage
+        boxes={registered}
+        box={box}
+        databases={listing?.ok ? listing.databases : []}
+        values={values}
+        problems={problems.length > 0 ? problems : listProblems}
+      />,
+      problems.length > 0 ? 400 : 200,
+    );
+  }
+
   function accessibleRows(c: Context<AuthEnv>, boxes: Box[]): ProjectAndBox[] {
     const byId = new Map(boxes.map((box) => [box.id, box]));
     return listProjects(db, "active").flatMap((project) => {
@@ -182,6 +207,36 @@ export function projectRoutes(
   app.get(`${PROJECTS_PAGE}/new`, (c) =>
     renderNew(c, { name: "", ref: "", boxId: getSharedBox(db)?.id }),
   );
+
+  app.get(`${PROJECTS_PAGE}/attach`, (c) => {
+    const id = boxIdFrom(c.req.query("box") ?? "");
+    const box = id === undefined ? undefined : getBoxById(db, id);
+    return renderAttach(c, box?.kind === "registered" ? box : undefined, {
+      name: "",
+      ref: "",
+      database: "",
+      login: "",
+    });
+  });
+
+  app.post(`${PROJECTS_PAGE}/attach`, async (c) => {
+    const form = await c.req.parseBody();
+    const values = {
+      name: text(form, "name"),
+      ref: text(form, "ref"),
+      database: text(form, "database"),
+      login: text(form, "login"),
+    };
+    const boxId = boxIdFrom(text(form, "boxId"));
+    const result = await attachProject(deps, {
+      ...values,
+      boxId: boxId ?? Number.NaN,
+      password: text(form, "password"),
+    });
+    if (result.ok) return c.redirect(`${PROJECTS_PAGE}/${result.project.ref}`, 302);
+    const box = boxId === undefined ? undefined : getBoxById(db, boxId);
+    return renderAttach(c, box?.kind === "registered" ? box : undefined, values, result.problems);
+  });
 
   app.post(PROJECTS_PAGE, async (c) => {
     const form = await c.req.parseBody();
@@ -235,6 +290,33 @@ export function projectRoutes(
     const result = await softDeleteProject(deps, found.project, found.box);
     if (result.ok) return c.redirect("/_hs/trash", 302);
     return renderDetail(c, found, "general", { kind: "error", message: result.problem }, 502);
+  });
+
+  app.post(`${PROJECTS_PAGE}/:ref/login`, async (c) => {
+    const found = accessible(c);
+    if (!found) return c.notFound();
+    const form = await c.req.parseBody();
+    const result = await updateProjectLogin(
+      deps,
+      found.project,
+      found.box,
+      text(form, "login"),
+      text(form, "password"),
+    );
+    if (result.ok) return c.redirect(`${PROJECTS_PAGE}/${found.project.ref}?login-updated`, 302);
+    return renderDetail(c, found, "general", { kind: "error", message: result.problem }, 400);
+  });
+
+  app.post(`${PROJECTS_PAGE}/:ref/detach`, async (c) => {
+    const found = accessible(c);
+    if (!found) return c.notFound();
+    if (text(await c.req.parseBody(), "confirm") !== found.project.ref) {
+      const message = `Type the ref ${found.project.ref} to confirm detaching the project.`;
+      return renderDetail(c, found, "general", { kind: "error", message }, 400);
+    }
+    const result = await detachProject(deps, found.project);
+    if (result.ok) return c.redirect(PROJECTS_PAGE, 302);
+    return renderDetail(c, found, "general", { kind: "error", message: result.problem }, 400);
   });
 
   return app;
