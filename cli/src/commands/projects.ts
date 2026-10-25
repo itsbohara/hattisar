@@ -1,10 +1,12 @@
 import { CliError, EXIT, UsageError } from "../errors.js";
 import { printJson, printLines, table, utc } from "../output.js";
-import { type Command, type Context, requireConfirm, usageLine } from "./command.js";
+import { readSecret } from "../prompt.js";
+import { type Command, type Context, requireConfirm, usageLine, type Values } from "./command.js";
 
 interface Project {
   ref: string;
   name: string;
+  kind: "created" | "attached";
   status: string;
   box: { id: number; name: string; kind: string };
   createdAt: string;
@@ -46,10 +48,11 @@ const list: Command = {
     printLines(
       io.stdout,
       table([
-        ["REF", "NAME", "BOX", when],
+        ["REF", "NAME", "KIND", "BOX", when],
         ...projects.map((p) => [
           p.ref,
           p.name,
+          p.kind,
           p.box.name,
           utc(values.deleted ? p.deletedAt : p.createdAt),
         ]),
@@ -83,6 +86,67 @@ const create: Command = {
   },
 };
 
+function requireString(command: Command, values: Values, name: string): string {
+  const value = values[name];
+  if (typeof value !== "string") {
+    throw new UsageError(`${command.name} needs --${name} <${name}>`, usageLine(command));
+  }
+  return value;
+}
+
+const attach: Command = {
+  name: "projects attach",
+  args: ["name"],
+  options: ["box", "database", "login", "ref"],
+  usage: "projects attach <name> --box <id> --database <db> --login <role> [--ref <ref>]",
+  summary: "Attach an existing database; the password is read from stdin or a prompt",
+  async run(context, [name], values) {
+    const box = requireString(attach, values, "box");
+    if (!/^\d+$/.test(box)) {
+      throw new UsageError(`--box must be a box id, not ${box}`, usageLine(attach));
+    }
+    const database = requireString(attach, values, "database");
+    const login = requireString(attach, values, "login");
+    const password = await readSecret(context.io.stdin, context.io.stderr, "Password: ");
+    const project = await context.api()<Project>("POST", "/projects/attach", {
+      name,
+      ref: values.ref,
+      boxId: Number(box),
+      database,
+      login,
+      password,
+    });
+    done(context, project, `Attached ${project.ref} on ${project.box.name}`);
+  },
+};
+
+const setLogin: Command = {
+  name: "projects set-login",
+  args: ["ref"],
+  options: ["login"],
+  usage: "projects set-login <ref> --login <role>",
+  summary: "Replace an attached project's login; the password is read from stdin or a prompt",
+  async run(context, [ref = ""], values) {
+    const login = requireString(setLogin, values, "login");
+    const password = await readSecret(context.io.stdin, context.io.stderr, "Password: ");
+    const result = await context.api()<Ok>("PUT", `${path(ref)}/login`, { login, password });
+    done(context, result, `Login updated for ${ref}`);
+  },
+};
+
+const detach: Command = {
+  name: "projects detach",
+  args: ["ref"],
+  options: ["confirm"],
+  usage: "projects detach <ref> --confirm <ref>",
+  summary: "Remove an attached project from hattisar; the database is untouched",
+  async run(context, [ref = ""], values) {
+    requireConfirm(detach, ref, values);
+    const result = await context.api()<Ok>("POST", `${path(ref)}/detach`, { confirm: ref });
+    done(context, result, `Detached ${ref}`);
+  },
+};
+
 const show: Command = {
   name: "projects show",
   args: ["ref"],
@@ -97,6 +161,7 @@ const show: Command = {
       table([
         ["Ref", project.ref],
         ["Name", project.name],
+        ["Kind", project.kind],
         ["Status", project.status],
         ["Box", `${project.box.name} (${project.box.kind})`],
         ["Created", utc(project.createdAt)],
@@ -173,4 +238,15 @@ const restore: Command = {
   },
 };
 
-export const projectCommands = [list, create, show, url, rotate, remove, restore];
+export const projectCommands = [
+  list,
+  create,
+  attach,
+  setLogin,
+  detach,
+  show,
+  url,
+  rotate,
+  remove,
+  restore,
+];

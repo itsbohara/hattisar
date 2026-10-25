@@ -28,6 +28,8 @@ const OPTIONS = {
   transaction: { type: "boolean" },
   ref: { type: "string" },
   box: { type: "string" },
+  database: { type: "string" },
+  login: { type: "string" },
   confirm: { type: "string" },
 } as const;
 

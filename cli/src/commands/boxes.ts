@@ -50,4 +50,18 @@ const resyncPooler: Command = {
   },
 };
 
-export const boxCommands = [list, resyncPooler];
+const databases: Command = {
+  name: "boxes databases",
+  args: ["id"],
+  options: [],
+  usage: "boxes databases <id>",
+  summary: "List the databases attachable on a registered box",
+  async run({ io, json, api }, [id = ""]) {
+    if (!/^\d+$/.test(id)) throw new UsageError(`${id} is not a box id`, usageLine(databases));
+    const names = await api()<string[]>("GET", `/boxes/${id}/databases`);
+    if (json) printJson(io.stdout, names);
+    else if (names.length > 0) printLines(io.stdout, names.join("\n"));
+  },
+};
+
+export const boxCommands = [list, resyncPooler, databases];
