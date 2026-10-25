@@ -230,6 +230,10 @@ connecting as the admin: `server_version_num` from 150000 up to, not including, 
 box, even where the admin cannot create `pg_stat_statements`); admin is a superuser, or has both
 `CREATEDB` and `CREATEROLE`. Otherwise the problem is `Admin user <name> needs to be a superuser,
 or have CREATEDB and CREATEROLE`. Register and edit store which kind in `admin_superuser`.
+
+hattisar and pg-meta give each address of a box host 2 s to connect (Node's default is 250 ms,
+less than a cross-region round trip, so a cloud box with IPv6 and IPv4 addresses looked
+unreachable). A failed connect names every address tried and why.
 No Supabase roles are required: any self-managed Postgres 15-18 passes, because hattisar never
 uses `supabase_admin`, `anon`, `authenticated` or `service_role`, and never creates them on a
 box. The cap is the bundled client's major: `pg_dump` refuses a newer server.
@@ -343,8 +347,12 @@ has it, or `db_name` exists on the target box. Display name is editable.
 
 **Create** (as box admin; every identifier/literal built with `format('%I' / '%L')` or the `pg`
 escape helpers, never string concatenation):
-1. `CREATE ROLE <owner> LOGIN PASSWORD <32-byte random, base64url>`; on a box whose admin is not a
-   superuser, then `GRANT <owner> TO <admin>`, which `CREATE DATABASE … OWNER` needs
+1. `CREATE ROLE <owner> LOGIN PASSWORD <32-byte random, base64url>`, sent as its SCRAM-SHA-256
+   verifier so a failed statement in the box's log never holds the password. Neon refuses a
+   verifier (`only supports being given plaintext passwords`, SQLSTATE XX000); only then is the
+   statement repeated with the plaintext. Rotate does the same. On a box whose admin is not a
+   superuser, then `GRANT <owner> TO CURRENT_USER`, which `CREATE DATABASE … OWNER` needs.
+   `CURRENT_USER`, not the admin user name: a provider's pooler logs in as `postgres.<project>`
 2. `CREATE DATABASE <db> OWNER <owner>`
 3. `REVOKE CONNECT, TEMPORARY ON DATABASE <db> FROM PUBLIC`; `GRANT CONNECT ON DATABASE <db> TO <owner>`
 4. In `<db>`: run `sql/baseline.sql` with the owner substituted (H2): `extensions` schema;
@@ -358,7 +366,7 @@ escape helpers, never string concatenation):
 Any failure → drop what was created (db, role), no registry row, error shown.
 
 On a box whose admin is not a superuser, delete, restore from Trash, purge, rotate and backup
-restore first run the same `GRANT <owner> TO <admin>` on their connection: an owner on 15 can
+restore first run the same `GRANT <owner> TO CURRENT_USER` on their connection: an owner on 15 can
 revoke the admin's membership, and owner roles created before the box was edited from a superuser
 admin never had it.
 
@@ -376,8 +384,9 @@ management) fail with a permission error; hattisar's own admin operations still 
   `postgresql://<owner>.<tenant>:<pw>@<HATTISAR_PUBLIC_HOST>:<session_port>/<db>` and transaction
   (same, `<transaction_port>`). The host is always `HATTISAR_PUBLIC_HOST`, where Supavisor is
   published, never the box's `public_host`.
-- direct: `postgresql://<owner>:<pw>@<public_host>:<public_port>/<db>`, on every box except the
-  shared one, whose `db` publishes no port.
+- direct: `postgresql://<owner>:<pw>@<public_host>:<public_port>/<db>`, plus
+  `?sslmode=<box sslmode>` unless it is `disable` (cloud providers refuse clients without TLS), on
+  every box except the shared one, whose `db` publishes no port.
 - order: session, transaction, direct; a box without pooler fields has only direct.
 - shared/dev-only boxes show a "development only" badge.
 

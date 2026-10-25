@@ -129,7 +129,7 @@ describe("restoring into the same project", () => {
       ok: true,
     });
     expect(sql.slice(1, 3)).toEqual([
-      `GRANT "hs_my_app_owner" TO "${box.adminUser}"`,
+      `GRANT "hs_my_app_owner" TO CURRENT_USER`,
       'CREATE DATABASE "my_app" OWNER "hs_my_app_owner"',
     ]);
   });

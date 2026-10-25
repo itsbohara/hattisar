@@ -75,4 +75,14 @@ describe("safeErrorMessage", () => {
     const error = new Error('password "hunter2-secret" rejected');
     expect(safeErrorMessage(error, "hunter2-secret")).toBe('password "********" rejected');
   });
+
+  it("explains a multi-address connect failure by its per-address errors", () => {
+    const error = new AggregateError([
+      new Error("connect ENETUNREACH 2600::1:5432"),
+      new Error("connect ETIMEDOUT 52.14.39.200:5432"),
+    ]);
+    expect(safeErrorMessage(error, "pw")).toBe(
+      "connect ENETUNREACH 2600::1:5432; connect ETIMEDOUT 52.14.39.200:5432",
+    );
+  });
 });

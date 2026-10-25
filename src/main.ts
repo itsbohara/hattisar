@@ -1,3 +1,4 @@
+import { setDefaultAutoSelectFamilyAttemptTimeout } from "node:net";
 import { serve } from "@hono/node-server";
 import { backupDeps, createApp, poolerTenants, projectServiceDeps } from "./app.js";
 import { seedAdmin } from "./auth/seed.js";
@@ -21,6 +22,9 @@ const LISTEN_PORT = 8000;
 const STUDIO_SNIPPETS_DIR = "/studio-snippets";
 const MINUTE_MS = 60 * 1000;
 const HOUR_MS = 60 * MINUTE_MS;
+// Node gives each address of a dual-stack host 250 ms by default, shorter than the round trip to a
+// box in another region, so every attempt times out (a cloud box looks unreachable while psql works).
+const ADDRESS_ATTEMPT_TIMEOUT_MS = 2_000;
 
 function exitOnConfigError(error: unknown): never {
   if (!(error instanceof ConfigError)) throw error;
@@ -81,6 +85,7 @@ function managedBoxesOrExit(
   }
 }
 
+setDefaultAutoSelectFamilyAttemptTimeout(ADDRESS_ATTEMPT_TIMEOUT_MS);
 const config = configOrExit();
 const registry = await seededRegistry(config);
 importSharedSnippets(registry);
