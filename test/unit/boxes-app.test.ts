@@ -128,12 +128,18 @@ describe("registering a box", () => {
   });
 
   it("renders every E1 problem with the entered values but never the password", async () => {
-    nextResult = { ok: false, problems: ["Missing role: anon", "Missing role: service_role"] };
+    nextResult = {
+      ok: false,
+      problems: [
+        "Extension not available: uuid-ossp",
+        "Admin user supabase_admin is not a superuser",
+      ],
+    };
     const response = await post("/_hs/boxes", form);
     expect(response.status).toBe(400);
     const html = await response.text();
-    expect(html).toContain("<li>Missing role: anon</li>");
-    expect(html).toContain("<li>Missing role: service_role</li>");
+    expect(html).toContain("<li>Extension not available: uuid-ossp</li>");
+    expect(html).toContain("<li>Admin user supabase_admin is not a superuser</li>");
     expect(html).toContain('value="pg.internal"');
     expect(html).not.toContain(PASSWORD);
     expect(listBoxes(db)).toEqual([]);

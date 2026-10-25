@@ -253,6 +253,8 @@ Before exposing it:
   Back up the `hattisar-data` volume too: it is the registry of boxes and projects.
 - **PITR** — dumps restore to the moment of the dump. For production boxes also run box-level
   point-in-time recovery: [`docs/pitr.md`](docs/pitr.md) is a WAL-G recipe for managed boxes.
+- **Registered boxes** — any self-managed Postgres 15 to 17 whose admin user is a superuser. It
+  needs no Supabase roles.
 - **Shared box** — development only. Put production projects on a registered or managed box.
 - **Managed boxes** — off in a hand install, on by default with the installer; see the security
   note below.
@@ -344,8 +346,12 @@ acceptable.
   with Docker access). Postgres's encryption root key lives in the container, not the volume, so
   recreating a managed box's container by hand (for example to upgrade its image) loses
   Vault-encrypted data. Upgrading managed boxes is not supported in v1.
-- **Boxes on other Docker hosts**, plain-Postgres boxes, and Auth/REST/Storage per project are out
-  of scope for v1.
+- **Plain-Postgres boxes:** a new table shows a harmless `role "anon" does not exist` toast from
+  Studio's Data API toggle; the table is created. Postgres 18 is refused until #34 (its backups
+  need a newer `pg_dump`). Hosted Postgres without a true superuser, such as RDS, is refused
+  until #33.
+- **Postgres 15 boxes:** restoring a backup reports a failure although the data is restored (#35).
+- **Boxes on other Docker hosts** and Auth/REST/Storage per project are out of scope for v1.
 
 ## Upgrading Studio
 

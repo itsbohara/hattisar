@@ -223,11 +223,14 @@ credentials are re-entered, because only the shared box is re-seeded from env at
 Every kind except a registered box with `sslmode` `require` or `verify-full` gets a pooler tenant
 (§5.1).
 
-**E1 compatibility check** (on register, and before creating a managed box's first project),
-connecting as the admin: `server_version_num ≥ 150000`; roles `supabase_admin`, `anon`,
-`authenticated`, `service_role` exist; extensions `pgcrypto`, `uuid-ossp`, `pg_stat_statements`
-are in `pg_available_extensions`; admin is superuser (the H2 baseline needs it for
-`pg_stat_statements` and `ALTER SCHEMA public OWNER`).
+**E1 compatibility check** (on register and edit, and before creating a managed box's first project),
+connecting as the admin: `server_version_num` from 150000 up to, not including, 180000; extensions
+`pgcrypto`, `uuid-ossp`, `pg_stat_statements` are in `pg_available_extensions`; admin is superuser
+(the H2 baseline needs it for `pg_stat_statements`; `ALTER SCHEMA public OWNER` does not, on 15+).
+No Supabase roles are required: any self-managed Postgres 15-17 passes, because hattisar never
+uses `supabase_admin`, `anon`, `authenticated` or `service_role`, and never creates them on a
+box. The cap is 17 because the bundled `pg_dump` 17 refuses a newer server (#34 lifts it).
+Hosted Postgres without a true superuser (RDS, Neon) fails the superuser check (#33).
 Failure lists every unmet item. A box with projects (any status) cannot be removed.
 
 ### 5.1 Pooler tenants (J3)
@@ -545,8 +548,8 @@ rule: it never reaches a project database.
 
 The post-v1 roadmap is the GitHub milestone "Roadmap": a release pipeline (§16), a one-line
 installer (§17), per-project SQL snippets (§3.3), pooler for non-shared boxes (J3, §5.1), a WAL-G
-point-in-time recovery recipe in the docs (shipped: [`docs/pitr.md`](pitr.md)), and a plain-Postgres
-boxes spike (E3). Parked, each until its condition holds:
+point-in-time recovery recipe in the docs (shipped: [`docs/pitr.md`](pitr.md)), and plain-Postgres
+boxes (E3, shipped: §5). Parked, each until its condition holds:
 
 | Parked | Revisit when |
 |---|---|

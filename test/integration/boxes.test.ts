@@ -1,12 +1,19 @@
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { connectionStrings, createProject } from "../helpers/projects.js";
 import { postForm, signIn } from "../helpers/session.js";
 import { compose, registrySql, stackEnv } from "../stack.js";
 
 const baseUrl = process.env.HATTISAR_URL ?? "http://localhost:8000";
 const PLAIN_PG = `hattisar-it-plain-pg-${randomUUID().slice(0, 8)}`;
+const PLAIN_PG_18 = `hattisar-it-plain-pg18-${randomUUID().slice(0, 8)}`;
 const PLAIN_PG_PASSWORD = randomUUID();
+const plainBox = `it-plain-${randomUUID().slice(0, 8)}`;
+const plainRef = `it-plain-${randomUUID().slice(0, 8)}`;
+const pg18Box = `it-plain-pg18-${randomUUID().slice(0, 8)}`;
+let plainPgPort: string;
 let cookie: string;
 
 function docker(args: string[]): string {
@@ -62,6 +69,49 @@ function remove(id: string): Promise<Response> {
   return postForm(baseUrl, `/_hs/boxes/${id}/remove`, {}, cookie);
 }
 
+function registerPlainPg(name: string, host: string, publicPort = "5432"): Promise<Response> {
+  return register({
+    name,
+    host,
+    adminUser: "postgres",
+    adminPassword: PLAIN_PG_PASSWORD,
+    publicHost: "127.0.0.1",
+    publicPort,
+  });
+}
+
+function startPlainPg(name: string, image: string): void {
+  docker([
+    "run",
+    "-d",
+    "--rm",
+    "--name",
+    name,
+    "--network",
+    composeNetwork(),
+    "-p",
+    "127.0.0.1::5432",
+    "-e",
+    `POSTGRES_PASSWORD=${PLAIN_PG_PASSWORD}`,
+    image,
+  ]);
+}
+
+async function ownerSelectOne(url: string): Promise<unknown[]> {
+  const client = new pg.Client({ connectionString: url, connectionTimeoutMillis: 10_000 });
+  client.on("error", () => undefined);
+  await client.connect();
+  try {
+    return (await client.query("select current_user, 1 as ok")).rows;
+  } finally {
+    await client.end();
+  }
+}
+
+function deletePlainProject(): Promise<Response> {
+  return postForm(baseUrl, `/_hs/projects/${plainRef}/delete`, { confirm: plainRef }, cookie);
+}
+
 function registerSharedDbAgain(name: string): Promise<Response> {
   return register({
     name,
@@ -72,24 +122,28 @@ function registerSharedDbAgain(name: string): Promise<Response> {
 }
 
 beforeAll(async () => {
-  docker([
-    "run",
-    "-d",
-    "--rm",
-    "--name",
-    PLAIN_PG,
-    "--network",
-    composeNetwork(),
-    "-e",
-    `POSTGRES_PASSWORD=${PLAIN_PG_PASSWORD}`,
-    "postgres:17-alpine",
-  ]);
+  startPlainPg(PLAIN_PG, "postgres:17-alpine");
+  startPlainPg(PLAIN_PG_18, "postgres:18-alpine");
+  plainPgPort = docker(["port", PLAIN_PG, "5432/tcp"]).split(":").at(-1) ?? "";
   cookie = await signIn(baseUrl);
   await waitForTcpReady(PLAIN_PG);
+  await waitForTcpReady(PLAIN_PG_18);
 }, 180_000);
 
-afterAll(() => {
-  docker(["rm", "-f", PLAIN_PG]);
+// Only hattisar's rows and the box's pooler tenant can outlive a failed test. Removing the box
+// drops the tenant.
+afterAll(async () => {
+  try {
+    registrySql("DELETE FROM projects WHERE ref = ?", plainRef);
+    const html = await boxesPage();
+    for (const name of [plainBox, pg18Box]) {
+      if (html.includes(`data-box="${name}"`)) await remove(boxIdFrom(html, name));
+    }
+  } finally {
+    registrySql("DELETE FROM boxes WHERE name = ?", plainBox);
+    registrySql("DELETE FROM boxes WHERE name = ?", pg18Box);
+    docker(["rm", "-f", PLAIN_PG, PLAIN_PG_18]);
+  }
 });
 
 describe("boxes", () => {
@@ -113,20 +167,47 @@ describe("boxes", () => {
     expect(await boxesPage()).not.toContain(`data-box="${name}"`);
   });
 
-  it("lists the missing roles of a role-less plain Postgres", async () => {
-    const response = await register({
-      name: "it-plain-pg",
-      host: PLAIN_PG,
-      adminUser: "postgres",
-      adminPassword: PLAIN_PG_PASSWORD,
+  it("registers a plain Postgres 17 and runs a project on it end to end", async () => {
+    expect((await registerPlainPg(plainBox, PLAIN_PG, plainPgPort)).status).toBe(302);
+    const boxId = boxIdFrom(await boxesPage(), plainBox);
+    const created = await createProject(baseUrl, cookie, {
+      ref: plainRef,
+      name: "Plain",
+      boxId,
     });
+    expect(created.status, await created.clone().text()).toBe(302);
+
+    const strings = await connectionStrings(baseUrl, cookie, plainRef);
+    expect(strings).toHaveLength(3);
+    const direct = strings.find((url) => new URL(url).port === plainPgPort);
+    if (!direct) throw new Error(`${plainRef} has no direct connection string`);
+    const owner = [{ current_user: `hs_${plainRef.replaceAll("-", "_")}_owner`, ok: 1 }];
+    expect(await ownerSelectOne(direct)).toEqual(owner);
+
+    expect((await deletePlainProject()).status).toBe(302);
+    const restored = await postForm(baseUrl, `/_hs/trash/${plainRef}/restore`, {}, cookie);
+    expect(restored.status).toBe(302);
+    expect(await ownerSelectOne(direct)).toEqual(owner);
+
+    expect((await deletePlainProject()).status).toBe(302);
+    const purged = await postForm(
+      baseUrl,
+      `/_hs/trash/${plainRef}/purge`,
+      { confirm: plainRef },
+      cookie,
+    );
+    expect(purged.status).toBe(302);
+    expect((await remove(boxId)).status).toBe(302);
+    expect(await boxesPage()).not.toContain(`data-box="${plainBox}"`);
+  }, 60_000);
+
+  it("refuses a Postgres 18 server", async () => {
+    const response = await registerPlainPg(pg18Box, PLAIN_PG_18);
     expect(response.status).toBe(400);
     const html = await response.text();
-    for (const role of ["supabase_admin", "anon", "authenticated", "service_role"]) {
-      expect(html).toContain(`<li>Missing role: ${role}</li>`);
-    }
+    expect(html).toContain("<li>Postgres 17 or older is required; this server is version 18</li>");
     expect(html).not.toContain(PLAIN_PG_PASSWORD);
-    expect(await boxesPage()).not.toContain('data-box="it-plain-pg"');
+    expect(await boxesPage()).not.toContain(`data-box="${pg18Box}"`);
   });
 
   it("explains a connection failure as one problem", async () => {
