@@ -1,9 +1,11 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { poolerRoleFor } from "../../src/pooler/role.js";
+import { deriveSecretKey } from "../../src/registry/secrets.js";
 import { createProject, dropProject, fetchWith } from "../helpers/projects.js";
 import { postForm, signIn } from "../helpers/session.js";
-import { registrySql, stackEnv } from "../stack.js";
+import { registrySql, sharedBoxSql, stackEnv } from "../stack.js";
 
 const baseUrl = process.env.HATTISAR_URL ?? "http://localhost:8000";
 const suffix = randomUUID().slice(0, 8);
@@ -12,6 +14,7 @@ const ref = `it-pl-${suffix}`;
 const dbName = ref.replaceAll("-", "_");
 const ownerRole = `hs_${dbName}_owner`;
 const tokenName = `it-pool-${suffix}`;
+const probeRole = `it_pool_probe_${suffix}`;
 let cookie: string;
 let token: string;
 let tokenId: string | undefined;
@@ -102,6 +105,7 @@ afterAll(async () => {
     }
     dropProject(ref);
     await removeBox();
+    sharedBoxSql('DROP ROLE IF EXISTS :"role"', { role: probeRole });
   } finally {
     registrySql("DELETE FROM boxes WHERE name = ?", boxName);
   }
@@ -172,6 +176,44 @@ describe("a project on a registered box with a pooler tenant", () => {
       expect(rows).toEqual([{ current_database: dbName }]);
     }
   });
+
+  // A role Supavisor has never seen, so its login needs the auth query as the tenant's role rather
+  // than secrets Supavisor cached for the owner.
+  it("re-syncs a tenant whose role password drifted, as after a box restore", async () => {
+    const tenantRole = poolerRoleFor(deriveSecretKey(stackEnv().HATTISAR_SECRET_KEY ?? ""), tenant);
+    const probePassword = randomBytes(16).toString("hex");
+    sharedBoxSql(
+      `CREATE ROLE :"probe" LOGIN PASSWORD :'probePassword';
+       ALTER ROLE :"role" PASSWORD :'rolePassword';
+       SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE usename = :'role';`,
+      {
+        probe: probeRole,
+        probePassword,
+        role: tenantRole,
+        rolePassword: randomBytes(16).toString("hex"),
+      },
+    );
+    const probe = new URL(await connection("session"));
+    probe.username = `${probeRole}.${tenant}`;
+    probe.password = probePassword;
+    probe.pathname = "/postgres";
+    expect(await connectError(probe.href)).not.toBe("");
+
+    const response = await fetch(`${baseUrl}/_hs/api/v1/boxes/${boxId}/pooler/resync`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(response.status, await response.clone().text()).toBe(200);
+    expect(await response.json()).toEqual({ tenant });
+
+    for (const url of [probe.href, await connection("session")]) {
+      const rows = await withClient(
+        url,
+        async (client) => (await client.query("select current_user")).rows,
+      );
+      expect(rows).toHaveLength(1);
+    }
+  }, 60_000);
 
   it("drops the tenant with the box, so the pooler no longer knows the owner", async () => {
     const session = await connection("session");
