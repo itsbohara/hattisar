@@ -37,6 +37,7 @@ const DETACH: ProjectOperation = {
 
 const ATTACHABLE_DATABASES_SQL = `select datname from pg_database
   where not datistemplate and datname <> '_supabase' and datname !~ '__deleted_\\d{8}(_\\d+)?$'
+    and datname !~ '[/?#%]'
   order by datname`;
 
 const LOGIN_CHECK_SQL = "select rolsuper from pg_roles where rolname = current_user";
@@ -127,7 +128,7 @@ async function readLoginSuperuser(
   }
 }
 
-function credentialProblems(login: string, password: string): string[] {
+export function credentialProblems(login: string, password: string): string[] {
   const problems: string[] = [];
   if (login === "") problems.push("Login is required");
   if (password === "") problems.push("Password is required");

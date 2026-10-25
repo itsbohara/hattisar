@@ -9,6 +9,7 @@ import type { AdminClientRunner } from "../../src/boxes/admin-client.js";
 import { seedSharedBox } from "../../src/boxes/shared.js";
 import { loadConfig } from "../../src/config.js";
 import { projectRoutes } from "../../src/projects/routes.js";
+import { insertBackup } from "../../src/registry/backups.js";
 import { getSharedBox, insertBox } from "../../src/registry/boxes.js";
 import { openRegistry, type Registry } from "../../src/registry/db.js";
 import {
@@ -706,9 +707,44 @@ describe("an attached project", () => {
     expect(getProjectByRef(db, "shop")).toBeUndefined();
   });
 
+  it("keeps the spaces around a password when attaching and when updating the login", async () => {
+    const spaced = "  pass word  ";
+    await attach(registeredBox(), { password: spaced });
+    const stored = () =>
+      decryptSecret(getProjectByRef(db, "shop")?.ownerPasswordEnc ?? "", secretKey);
+    expect(stored()).toBe(spaced);
+    const other = " other ";
+    await post("/_hs/projects/shop/login", { login: "shop_app", password: other });
+    expect(stored()).toBe(other);
+  });
+
+  it("answers 409 when rotating or deleting an attached project, confirmed or not", async () => {
+    await attached();
+    for (const [path, fields] of [
+      ["rotate", {}],
+      ["delete", {}],
+      ["delete", { confirm: "shop" }],
+    ] as const) {
+      const response = await post(`/_hs/projects/shop/${path}`, fields);
+      expect(response.status).toBe(409);
+      expect(await response.text()).toContain("shop is attached; detach it instead.");
+    }
+    expect(getProjectByRef(db, "shop")?.status).toBe("active");
+  });
+
+  it("answers 409 when detaching while a backup is running", async () => {
+    await attached();
+    const project = getProjectByRef(db, "shop");
+    insertBackup(db, { projectId: project?.id ?? 0, kind: "manual", bucket: "b", s3Key: "k" });
+    const response = await post("/_hs/projects/shop/detach", { confirm: "shop" });
+    expect(response.status).toBe(409);
+    expect(await response.text()).toContain("while a backup of it is running");
+    expect(getProjectByRef(db, "shop")).toBeDefined();
+  });
+
   it("refuses login and detach for a created project", async () => {
     await create();
-    expect((await post("/_hs/projects/my-app/detach", { confirm: "my-app" })).status).toBe(400);
+    expect((await post("/_hs/projects/my-app/detach", { confirm: "my-app" })).status).toBe(409);
     expect((await post("/_hs/projects/my-app/login", { login: "x", password: "y" })).status).toBe(
       400,
     );

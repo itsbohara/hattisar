@@ -2,6 +2,7 @@ import { Readable } from "node:stream";
 import { type Context, Hono } from "hono";
 import type { AuthEnv } from "../auth/middleware.js";
 import { accessibleProject, type ProjectAndBox } from "../projects/access.js";
+import { attachedProblem, isAttached } from "../projects/attach.js";
 import { holdProject } from "../projects/locks.js";
 import { slugify } from "../projects/naming.js";
 import { renderProjectDetail, text } from "../projects/routes.js";
@@ -248,6 +249,10 @@ export function backupRoutes(deps: BackupDeps, projectDeps: ProjectServiceDeps):
     const target = projectBackup(db, c);
     if (target?.backup.status !== "done") return c.notFound();
     const { found, backup } = target;
+    if (isAttached(found.project)) {
+      const message = attachedProblem(found.project.ref);
+      return renderProjectDetail(c, pageDeps, found, "backups", { kind: "error", message }, 409);
+    }
     if (text(await c.req.parseBody(), "confirm") !== found.project.ref) {
       const sameProblem = `Type the ref ${found.project.ref} to confirm restoring into it.`;
       return renderRestore(c, target, { sameProblem }, 400);

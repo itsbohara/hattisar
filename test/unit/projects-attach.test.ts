@@ -160,6 +160,11 @@ describe("attachableDatabases", () => {
     expect(calls[0]?.sql[0]).toContain("'_supabase'");
   });
 
+  it("asks for no name that cannot go raw into a connection URL path", async () => {
+    await attachableDatabases(deps, registered);
+    expect(calls[0]?.sql[0]).toContain("and datname !~ '[/?#%]'");
+  });
+
   it("refuses the shared box with the exact problem", async () => {
     const shared = getSharedBox(db) as Box;
     expect(await attachableDatabases(deps, shared)).toEqual({
@@ -190,6 +195,18 @@ describe("attachableDatabases", () => {
 });
 
 describe("attachProject", () => {
+  it.each(["a/b", "a?b", "a#b", "a%b"])(
+    "refuses the database %s the box did not offer",
+    async (name) => {
+      const result = await attachProject(deps, form({ database: name }));
+      expect(result).toEqual({
+        ok: false,
+        problems: [`Database ${name} cannot be attached on box rds`],
+      });
+      expect(getProjectByRef(db, "shop")).toBeUndefined();
+    },
+  );
+
   it("stores an attached project and reads only the database list and rolsuper", async () => {
     superuser = true;
     const result = await attachProject(deps, form());

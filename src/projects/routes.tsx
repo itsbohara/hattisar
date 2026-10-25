@@ -26,7 +26,14 @@ import {
   USAGE_PATH,
 } from "../ui/pages/projects.js";
 import { accessibleProject, connectionStrings, type ProjectAndBox } from "./access.js";
-import { attachableDatabases, attachProject, detachProject, updateProjectLogin } from "./attach.js";
+import {
+  attachableDatabases,
+  attachedProblem,
+  attachProject,
+  detachProject,
+  isAttached,
+  updateProjectLogin,
+} from "./attach.js";
 import { softDeleteProject } from "./lifecycle.js";
 import { busyReason } from "./locks.js";
 import {
@@ -67,6 +74,11 @@ function sorted(rows: ProjectAndBox[], sort: ProjectSort): ProjectAndBox[] {
 export function text(form: Record<string, unknown>, name: string): string {
   const value = form[name];
   return typeof value === "string" ? value.trim() : "";
+}
+
+function secret(form: Record<string, unknown>, name: string): string {
+  const value = form[name];
+  return typeof value === "string" ? value : "";
 }
 
 function boxIdFrom(value: string): number | undefined {
@@ -132,7 +144,7 @@ export function projectRoutes(
     found: ProjectAndBox,
     tab: ProjectTab,
     notice?: ProjectPageNotice,
-    status?: 200 | 400 | 502,
+    status?: 200 | 400 | 409 | 502,
   ) => renderProjectDetail(c, deps, found, tab, notice, status);
 
   function renderNew(c: Context<AuthEnv>, values: NewProjectValues, problems?: string[]) {
@@ -231,7 +243,7 @@ export function projectRoutes(
     const result = await attachProject(deps, {
       ...values,
       boxId: boxId ?? Number.NaN,
-      password: text(form, "password"),
+      password: secret(form, "password"),
     });
     if (result.ok) return c.redirect(`${PROJECTS_PAGE}/${result.project.ref}`, 302);
     const box = boxId === undefined ? undefined : getBoxById(db, boxId);
@@ -275,6 +287,10 @@ export function projectRoutes(
   app.post(`${PROJECTS_PAGE}/:ref/rotate`, async (c) => {
     const found = accessible(c);
     if (!found) return c.notFound();
+    if (isAttached(found.project)) {
+      const message = attachedProblem(found.project.ref);
+      return renderDetail(c, found, "connect", { kind: "error", message }, 409);
+    }
     const result = await rotateOwnerPassword(deps, found.project, found.box);
     if (result.ok) return c.redirect(`${PROJECTS_PAGE}/${found.project.ref}?rotated`, 302);
     return renderDetail(c, found, "connect", { kind: "error", message: result.problem }, 502);
@@ -283,6 +299,10 @@ export function projectRoutes(
   app.post(`${PROJECTS_PAGE}/:ref/delete`, async (c) => {
     const found = accessible(c);
     if (!found) return c.notFound();
+    if (isAttached(found.project)) {
+      const message = attachedProblem(found.project.ref);
+      return renderDetail(c, found, "general", { kind: "error", message }, 409);
+    }
     if (text(await c.req.parseBody(), "confirm") !== found.project.ref) {
       const message = `Type the ref ${found.project.ref} to confirm deleting the project.`;
       return renderDetail(c, found, "general", { kind: "error", message }, 400);
@@ -301,7 +321,7 @@ export function projectRoutes(
       found.project,
       found.box,
       text(form, "login"),
-      text(form, "password"),
+      secret(form, "password"),
     );
     if (result.ok) return c.redirect(`${PROJECTS_PAGE}/${found.project.ref}?login-updated`, 302);
     return renderDetail(c, found, "general", { kind: "error", message: result.problem }, 400);
@@ -316,7 +336,7 @@ export function projectRoutes(
     }
     const result = await detachProject(deps, found.project);
     if (result.ok) return c.redirect(PROJECTS_PAGE, 302);
-    return renderDetail(c, found, "general", { kind: "error", message: result.problem }, 400);
+    return renderDetail(c, found, "general", { kind: "error", message: result.problem }, 409);
   });
 
   return app;
