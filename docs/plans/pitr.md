@@ -17,7 +17,7 @@
 - Archive settings: `archive_mode = on`, `archive_command = '/usr/local/bin/wal-g … wal-push %p'`, `archive_timeout = '60s'`, all through `ALTER SYSTEM`.
 - Restore must set `recovery_target_action = 'promote'`. The image's `wal-g.conf` sets `hot_standby = off`, which turns `pause` into `shutdown`.
 - Never start a box on an emptied data dir: the entrypoint would initdb a new cluster.
-- WAL-G config keys: `WALG_S3_PREFIX`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`, `AWS_ENDPOINT` (S3-compatible only), `AWS_S3_FORCE_PATH_STYLE`, `WALG_COMPRESSION_METHOD=zstd`, `WALG_LIBSODIUM_KEY` (`openssl rand -hex 32`), `WALG_LIBSODIUM_KEY_TRANSFORM=hex`, `PGHOST=/var/run/postgresql`, `PGUSER=supabase_admin`, `PGDATA=/var/lib/postgresql/data`.
+- WAL-G config keys: `WALG_S3_PREFIX`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`, `AWS_ENDPOINT` (S3-compatible only), `AWS_S3_FORCE_PATH_STYLE`, `WALG_COMPRESSION_METHOD=zstd`, `WALG_LIBSODIUM_KEY` (`openssl rand -hex 32`), `WALG_LIBSODIUM_KEY_TRANSFORM=hex`, `PGHOST=/var/run/postgresql`, `PGUSER=supabase_admin`, `PGDATABASE=postgres`, `PGDATA=/var/lib/postgresql/data`.
 - S3 layout: same bucket as hattisar, prefix `pitr/<box name>-<YYYYMMDD of enabling>/`, never under hattisar's own prefix, a new prefix per cluster and per PG major.
 - Base backups: daily `docker exec -u postgres <container> wal-g [--config …] backup-push /var/lib/postgresql/data`, then `wal-g … delete retain FULL 7 --confirm`.
 - Tests run only in Docker objects of compose project `hattisar-pitr-test` (or containers and volumes named `hattisar-pitr-test-*`), torn down on exit. Never touch the `hattisar` compose project, its containers or its volumes. Never read or print `docker/.env`.
@@ -28,7 +28,7 @@
 
 - A secret (S3 key, libsodium key) ending up in argv, `docker inspect` env of a long-lived container, or script output. Keys go in files with mode 600 inside containers; the test never echoes them.
 - The script leaking or touching non-test Docker objects when a step fails midway: the EXIT trap must remove everything named for the test, and only that.
-- Archiving silently failing (binary missing after a container recreation) while the docs claim protection: the test must show `pg_stat_archiver.failed_count` rising, and the docs must give the check.
+- Archiving silently failing (binary missing after a container recreation) while the docs claim protection: a missing binary exits 127, which kills the archiver before `failed_count` moves, so the docs' check combines the `.ready` backlog (`pg_ls_archive_statusdir()`), `failed_count`/`last_failed_time` and the age of `last_archived_time`.
 - The restore landing on the wrong point: the assertion must prove rows from before T are present and rows after T are absent, and that the server is out of recovery (`pg_is_in_recovery() = false`).
 - arm64 hosts: the Dockerfile must build for the host architecture with no amd64 assumption.
 
@@ -96,7 +96,7 @@
   1. What this is: whole box, not one project; the RPO of about 60 s; tested against S3-compatible RustFS.
   2. Build WAL-G.
   3. S3 prefix and keys (D5), and encryption with the key-loss warning (D7).
-  4. Managed boxes, as the main case: `docker cp`, `ALTER SYSTEM`, restart, first backup, the cron line, the check `select failed_count, last_failed_time from pg_stat_archiver`, and the disk-fill trap if the container is recreated by hand.
+  4. Managed boxes, as the main case: `docker cp`, `ALTER SYSTEM`, restart, first backup, the cron line, the combined archiving check proven in `scripts/pitr-test.sh` (`.ready` backlog, `failed_count`, `last_archived_time`), and the disk-fill trap if the container is recreated by hand.
   5. The shared box, framed as dev-only: `compose.walg.yml`, plus `compose.override.yml` in a release dir.
   6. Restore walkthrough: stop hattisar, stop the box, safety copy, empty, `backup-fetch`, recovery settings with `promote` and why, `recovery.signal`, start, clean up, new base backup, start hattisar.
   7. After a restore: the reconciliation table from research §5.
