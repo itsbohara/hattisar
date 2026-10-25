@@ -1,0 +1,11 @@
+# WAL-G for the shared box: the static binary and its settings for continuous WAL archiving.
+# Build walg/wal-g first, as wal-g/Dockerfile says.
+# Checkout: docker compose -f docker/compose.yml -f docker/compose.walg.yml up -d db
+# Release:  cp compose.walg.yml compose.override.yml, then docker compose up -d db
+# walg.env holds the WAL-G keys and the S3 secret: keep it chmod 600 and back it up with .env.
+services:
+  db:
+    volumes:
+      - ./walg/wal-g:/usr/local/bin/wal-g:ro
+    env_file:
+      - ./walg.env
