@@ -193,9 +193,12 @@ describe("creating a managed box", () => {
   });
 
   it("removes what it created and registers nothing when E1 fails", async () => {
-    e1Problems = ["Missing role: anon"];
+    e1Problems = ["Extension not available: pg_stat_statements"];
     const result = await managed.create("prod-eu");
-    expect(result).toEqual({ ok: false, problems: ["Missing role: anon"] });
+    expect(result).toEqual({
+      ok: false,
+      problems: ["Extension not available: pg_stat_statements"],
+    });
     expect(getBoxByName(db, "prod-eu")).toBeUndefined();
     expect(docker.containers.size).toBe(0);
     expect(docker.volumes.size).toBe(0);
