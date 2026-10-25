@@ -336,10 +336,10 @@ acceptable.
 - **Superuser-only Studio actions** fail, because Studio connects as the project's owner.
 - **Studio features hattisar does not serve** are hidden or answered with 404: Authentication,
   Storage, Edge Functions, Realtime, AI assistance, migrations, MCP. Advisors always show no lints.
-- **Backups are not PITR** (for that, see [`docs/pitr.md`](docs/pitr.md)). A restore needs free disk in `HATTISAR_DATA_DIR` about the size of the
-  dump. Objects you added yourself to a project's `extensions` schema are not restored. A backup
-  to S3 is uploaded in 5 MiB parts, at most 10,000 of them, so a dump larger than about 48 GB
-  fails; use the download instead.
+- **Backups are not PITR** (for that, see [`docs/pitr.md`](docs/pitr.md)). A restore needs free
+  disk in `HATTISAR_DATA_DIR` about the size of the dump. Objects you added yourself to a
+  project's `extensions` schema are not restored. A backup to S3 is uploaded in 5 MiB parts, at
+  most 10,000 of them, so a dump larger than about 48 GB fails; use the download instead.
 - **Managed boxes:** the box admin password is in the container's environment (visible to anyone
   with Docker access). Postgres's encryption root key lives in the container, not the volume, so
   recreating a managed box's container by hand (for example to upgrade its image) loses

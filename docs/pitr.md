@@ -32,7 +32,6 @@ do not run in it. Build a static binary (WAL-G 3.0.9, with libsodium) into `walg
 docker build -f wal-g/Dockerfile -o walg wal-g
 ```
 
-From the root of a checkout: `docker build -f docker/wal-g/Dockerfile -o docker/walg docker/wal-g`.
 The build takes a minute or two and runs for the host's architecture. Building WAL-G 3.0.9 by hand
 needs `GOEXPERIMENT=jsonv2`; the Dockerfile sets it.
 
@@ -50,7 +49,7 @@ s3://<bucket>/pitr/<box name>-<YYYYMMDD of enabling>
   name is a different cluster; the date keeps them apart. A clone, and a new Postgres major
   version, also get a new prefix.
 - Prefer a separate access key, limited to `pitr/` where your provider allows it. hattisar never
-  shows its stored S3 secret anyway.
+  shows the S3 secret it stores, so the key has to come from your own records either way.
 
 The settings, with the same meaning as hattisar's S3 settings:
 
@@ -230,7 +229,7 @@ EOF
 )
 ```
 
-For the dev stack's RustFS: bucket `hattisar-test`, the `S3_TEST_*` keys from `docker/.env`, region
+For the dev stack's RustFS: bucket `hattisar-test`, the `S3_TEST_*` keys from `.env`, region
 `us-east-1`, endpoint `http://s3:9000`.
 
 The secrets reach `db` as environment, so `docker inspect hattisar-db-1` shows them. Anyone with
@@ -245,11 +244,11 @@ cp compose.walg.yml compose.override.yml
 docker compose up -d db
 ```
 
-In a checkout, every `docker compose` command in this file takes the dev stack's files plus the
-override, from the checkout root:
+In a checkout, in `docker/`, every `docker compose` command in this file takes the dev stack's
+files plus the override:
 
 ```sh
-docker compose -f docker/compose.yml -f docker/compose.dev.yml -f docker/compose.walg.yml \
+docker compose -f compose.yml -f compose.dev.yml -f compose.walg.yml \
   --profile s3-test --profile managed-boxes up -d db
 ```
 
@@ -420,7 +419,7 @@ roll it back. Anything that changed on the box after T is now out of step with t
 | Owner password rotated | The role has the old password; apps have the new one | Rotate it again in hattisar |
 | hattisar restore of a dump into a project | Rolled back with everything else | Run it again if you want it |
 | Pooler tenant created or re-created (managed box restore) | The `hattisar_pooler_*` role has its old password; Supavisor keeps the new one, so pooler logins fail | Delete the tenant in Supavisor; hattisar re-creates it within 10 minutes |
-| Pooler tenant created (shared box restore) | Supavisor's own metadata rolled back too; the tenant is gone | Nothing: hattisar re-creates it within 10 minutes |
+| Pooler tenant created (shared box restore) | Supavisor's own metadata rolled back too; the tenant is gone | Nothing: hattisar re-creates it within 10 minutes, unless the tenant survived and its role on another box was re-passworded after T; then delete the tenant as above |
 | Managed box created (shared box restore) | Unaffected: it has its own volume | — |
 | hattisar backups in S3 | Unaffected | — |
 
