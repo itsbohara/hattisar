@@ -1,6 +1,10 @@
 import type Docker from "dockerode";
 import { beforeEach, describe, expect, it } from "vitest";
-import { ManagedDocker, UnmanagedObjectError } from "../../src/managed/docker.js";
+import {
+  type ContainerSpec,
+  ManagedDocker,
+  UnmanagedObjectError,
+} from "../../src/managed/docker.js";
 
 const BOX = "alpha";
 const NAME = "hattisar-box-alpha";
@@ -8,9 +12,11 @@ const NAME = "hattisar-box-alpha";
 let labels: Record<string, string> | undefined;
 let running: boolean;
 let changes: string[];
+let created: unknown[];
 
 function stubDocker(): Docker {
   return {
+    createContainer: async (body: unknown) => created.push(body),
     getContainer: (id: string) => ({
       inspect: async () => ({
         Id: `id-of-${id}`,
@@ -37,6 +43,7 @@ const operations: [string, (docker: ManagedDocker) => Promise<void>][] = [
 
 beforeEach(() => {
   changes = [];
+  created = [];
 });
 
 describe("ManagedDocker refuses objects hattisar does not own", () => {
@@ -77,5 +84,68 @@ describe("ManagedDocker acts on its own objects", () => {
     await docker.removeContainer(NAME, BOX);
     await docker.removeVolume(NAME, BOX);
     expect(changes).toEqual([`remove container id-of-${NAME}`, `remove volume ${NAME}`]);
+  });
+});
+
+describe("ManagedDocker.createContainer", () => {
+  const spec: ContainerSpec = {
+    name: NAME,
+    box: BOX,
+    image: "supabase/postgres:17.6.1.136",
+    volume: "hattisar_box_alpha",
+    network: "hattisar_default",
+    hostPort: 55000,
+    env: { POSTGRES_PASSWORD: "pw" },
+    mounts: [],
+  };
+  const dataVolume = {
+    Type: "volume",
+    Source: "hattisar_box_alpha",
+    Target: "/var/lib/postgresql/data",
+  };
+
+  it("creates a labelled container with only the data volume when no mounts are set", async () => {
+    await new ManagedDocker(stubDocker()).createContainer(spec);
+    expect(created).toEqual([
+      {
+        name: NAME,
+        Image: "supabase/postgres:17.6.1.136",
+        Env: ["POSTGRES_PASSWORD=pw"],
+        Labels: { "hattisar.managed": "true", "hattisar.box": BOX },
+        ExposedPorts: { "5432/tcp": {} },
+        HostConfig: {
+          PortBindings: { "5432/tcp": [{ HostPort: "55000" }] },
+          Mounts: [dataVolume],
+          RestartPolicy: { Name: "unless-stopped" },
+        },
+        NetworkingConfig: { EndpointsConfig: { hattisar_default: {} } },
+      },
+    ]);
+  });
+
+  it("adds the operator's mounts read-only after the data volume", async () => {
+    await new ManagedDocker(stubDocker()).createContainer({
+      ...spec,
+      mounts: [
+        { source: "/opt/wal-g", target: "/usr/local/bin/wal-g" },
+        { source: "/opt/w/alpha.yaml", target: "/etc/wal-g/walg.yaml" },
+      ],
+    });
+    expect(created).toMatchObject([
+      {
+        HostConfig: {
+          Mounts: [
+            dataVolume,
+            { Type: "bind", Source: "/opt/wal-g", Target: "/usr/local/bin/wal-g", ReadOnly: true },
+            {
+              Type: "bind",
+              Source: "/opt/w/alpha.yaml",
+              Target: "/etc/wal-g/walg.yaml",
+              ReadOnly: true,
+            },
+          ],
+        },
+      },
+    ]);
   });
 });

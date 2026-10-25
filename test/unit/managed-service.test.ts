@@ -8,7 +8,11 @@ import { seedSharedBox } from "../../src/boxes/shared.js";
 import { loadConfig } from "../../src/config.js";
 import type { ContainerSpec, DockerApi } from "../../src/managed/docker.js";
 import { managedLifecycle } from "../../src/managed/lifecycle.js";
-import { createManagedBoxes, ManagedBoxes } from "../../src/managed/service.js";
+import {
+  createManagedBoxes,
+  type ManagedBoxDeps,
+  ManagedBoxes,
+} from "../../src/managed/service.js";
 import { type Box, getBoxByName, listBoxes } from "../../src/registry/boxes.js";
 import { openRegistry, type Registry } from "../../src/registry/db.js";
 import {
@@ -88,6 +92,7 @@ let docker: FakeDocker;
 let checked: BoxConnection[];
 let e1Problems: string[];
 let pooler: RecordingPooler;
+let deps: ManagedBoxDeps;
 let managed: ManagedBoxes;
 
 beforeEach(() => {
@@ -98,7 +103,7 @@ beforeEach(() => {
   checked = [];
   e1Problems = [];
   pooler = new RecordingPooler(db);
-  managed = new ManagedBoxes({
+  deps = {
     db,
     secretKey,
     pooler,
@@ -110,7 +115,9 @@ beforeEach(() => {
       return { ok: e1Problems.length === 0, problems: e1Problems };
     },
     waitReady: async () => {},
-  });
+    mounts: [],
+  };
+  managed = new ManagedBoxes(deps);
 });
 
 afterEach(() => {
@@ -154,6 +161,7 @@ describe("creating a managed box", () => {
       image: "supabase/postgres:17.6.1.136",
       volume: "hattisar_box_prod-eu",
       network: "hattisar_default",
+      mounts: [],
     });
     const password = decryptSecret(box.adminPasswordEnc, secretKey);
     expect(password).toMatch(/^[0-9a-f]{48}$/);
@@ -168,6 +176,29 @@ describe("creating a managed box", () => {
       },
     ]);
   });
+
+  it("mounts the operator's files with {box} replaced by the box name", async () => {
+    const withMounts = new ManagedBoxes({
+      ...deps,
+      mounts: [
+        { source: "/opt/wal-g", target: "/usr/local/bin/wal-g" },
+        { source: "/opt/w/{box}/{box}.yaml", target: "/etc/wal-g/walg.yaml" },
+      ],
+    });
+    expect((await withMounts.create("billing")).ok).toBe(true);
+    expect(docker.containers.get("hattisar-box-billing")?.spec.mounts).toEqual([
+      { source: "/opt/wal-g", target: "/usr/local/bin/wal-g" },
+      { source: "/opt/w/billing/billing.yaml", target: "/etc/wal-g/walg.yaml" },
+    ]);
+  });
+
+  it.each(["..", "../etc", "a/b", "abc/..", "a.b"])(
+    "refuses the name %s, so {box} cannot leave the operator's directory",
+    async (name) => {
+      expect(await managed.create(name)).toMatchObject({ ok: false });
+      expect(docker.calls).toEqual([]);
+    },
+  );
 
   it("skips ports registered boxes already use", async () => {
     await managed.create("first-box");
