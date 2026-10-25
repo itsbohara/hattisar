@@ -445,7 +445,8 @@ records whether that login was a superuser when last checked.
 holds only hattisar's and Supabase's own) — form fields box, database, ref, name, login, password:
 - the database list is read live as the box admin: `pg_database` without templates, databases
   any project row (active or in Trash) already names on that box, `<db>__deleted_<date>` names,
-  and `_supabase`;
+  and `_supabase`; names containing `/`, `?`, `#` or `%` are not offered either, since they
+  cannot be used in a connection URL;
 - the ref follows the usual rules and must be unused in the registry; it need not match the
   database name;
 - the login must connect to that database with that password on the box's host, port and
@@ -471,8 +472,8 @@ database on the server. Isolation (I1) does not hold for attached projects.
   the database). Restore into a new project works as for any backup and makes a created project.
 - Restore into a new project uses the same `pg_restore` filter as any restore. A dump of an app's
   database often holds extensions, schemas or objects of other roles that a non-superuser owner
-  cannot restore; such a restore fails with the `pg_restore` error and the new project is rolled
-  back. Known limitation, not worked around.
+  cannot restore; such a restore fails with the `pg_restore` error, and the new project is kept
+  holding part of the backup or none of it (§8). Known limitation, not worked around.
 - Sizes (§9): an attached database is sized on its own connection as the attached login, not in
   the box admin's batch query (the admin may lack `CONNECT` on it, and one failure there would mark
   the whole box unreachable). If that fails, only that project's size shows as unknown.
