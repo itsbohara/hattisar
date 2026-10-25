@@ -24,6 +24,7 @@ import { insertBox } from "../../src/registry/boxes.js";
 import { openRegistry, type Registry } from "../../src/registry/db.js";
 import { getProjectByRef } from "../../src/registry/projects.js";
 import { deriveSecretKey, encryptSecret } from "../../src/registry/secrets.js";
+import { RecordingPooler } from "../helpers/pooler.js";
 import { signInToRegistry } from "../helpers/session.js";
 
 vi.mock("../../src/boxes/admin-client.js", async (importOriginal) => {
@@ -69,6 +70,7 @@ let db: Registry;
 let app: ReturnType<typeof createApp>;
 let token: string;
 let directBoxId: number;
+let pooler: RecordingPooler;
 
 function box(name: string, kind: "shared" | "registered", pooler: boolean) {
   return insertBox(db, {
@@ -100,6 +102,7 @@ beforeEach(() => {
   token = created.token;
   box("shared", "shared", true);
   directBoxId = box("direct", "registered", false).id;
+  pooler = new RecordingPooler(db);
   app = createApp(
     loadConfig({
       HATTISAR_SECRET_KEY: SECRET,
@@ -112,6 +115,8 @@ beforeEach(() => {
       STUDIO_URL: "http://127.0.0.1:9",
     }),
     db,
+    undefined,
+    pooler,
   );
 });
 
@@ -539,6 +544,71 @@ describe("boxes", () => {
   });
 });
 
+describe("boxes resync-pooler", () => {
+  it("re-syncs a box's pooler tenant", async () => {
+    await login();
+    pooler.resyncResult = { ok: true, tenant: "hattisar-direct" };
+    expect(await cli(["boxes", "resync-pooler", String(directBoxId)])).toEqual({
+      code: 0,
+      stdout: "Re-synced pooler tenant hattisar-direct\n",
+      stderr: "",
+    });
+    expect(pooler.calls.map(({ action, box }) => [action, box.id])).toEqual([
+      ["resync", directBoxId],
+    ]);
+  });
+
+  it("prints the API's JSON with --json", async () => {
+    await login();
+    pooler.resyncResult = { ok: true, tenant: "hattisar-direct" };
+    const result = await cli(["boxes", "resync-pooler", String(directBoxId), "--json"]);
+    expect(JSON.parse(result.stdout)).toEqual({ tenant: "hattisar-direct" });
+  });
+
+  it("exits 1 with the API's problem", async () => {
+    await login();
+    pooler.resyncResult = {
+      ok: false,
+      reason: "refused",
+      problem: "This box has no pooler: it requires TLS.",
+    };
+    expect(await cli(["boxes", "resync-pooler", String(directBoxId)])).toEqual({
+      code: 1,
+      stdout: "",
+      stderr: "hattisar: Invalid request\n  - This box has no pooler: it requires TLS.\n",
+    });
+  });
+
+  it("exits 1 when the re-sync fails", async () => {
+    await login();
+    pooler.resyncResult = {
+      ok: false,
+      reason: "failed",
+      problem: "Pooler tenant not re-synced: unreachable",
+    };
+    expect(await cli(["boxes", "resync-pooler", String(directBoxId)])).toEqual({
+      code: 1,
+      stdout: "",
+      stderr: "hattisar: Pooler tenant not re-synced: unreachable\n",
+    });
+  });
+
+  it("exits 1 for the shared box and an unknown box", async () => {
+    await login();
+    expect(await cli(["boxes", "resync-pooler", "1"])).toMatchObject({
+      code: 1,
+      stderr:
+        "hattisar: Invalid request\n  - The shared box's pooler is configured by pooler.exs.\n",
+    });
+    expect(await cli(["boxes", "resync-pooler", "999"])).toEqual({
+      code: 1,
+      stdout: "",
+      stderr: "hattisar: Not found\n",
+    });
+    expect(pooler.calls).toEqual([]);
+  });
+});
+
 describe("usage", () => {
   const CREDENTIALS = { HATTISAR_URL: ORIGIN, HATTISAR_TOKEN: "hs_unused" };
 
@@ -560,6 +630,8 @@ describe("usage", () => {
     [["projects", "list", "--deleted=x"], "hattisar: --deleted takes no value"],
     [["projects", "create", "a", "--box", "1", "--new-box"], "hattisar: give either --box"],
     [["backups", "restore", "a", "b", "--confirm", "a"], "hattisar: b is not a backup id"],
+    [["boxes", "resync-pooler"], "hattisar: missing <id>"],
+    [["boxes", "resync-pooler", "abc"], "hattisar: abc is not a box id"],
   ])("exits 2 for %j without a request", async (argv, message) => {
     const result = await cli(argv, { env: CREDENTIALS, fetch: noRequests });
     expect(result.code).toBe(2);

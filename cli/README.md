@@ -33,6 +33,7 @@ hattisar backups list <ref>
 hattisar backups run <ref>
 hattisar backups restore <ref> <backup-id> --confirm <ref>
 hattisar boxes list
+hattisar boxes resync-pooler <id>
 ```
 
 Every command takes `--help` and `--json`. `--json` prints the API's JSON as returned, except
@@ -45,6 +46,10 @@ connection instead. Migrations stay with the official `supabase` CLI:
 
 `projects restore` takes a project back out of the trash. `backups restore` replaces a project's
 data with one of its backups.
+
+`boxes resync-pooler` gives a box's pooler tenant a new role password and re-registers it with
+Supavisor, for when the two drifted apart (for example after a point-in-time restore). It drops
+the box's open pooled connections. The shared box's pooler is configured by `pooler.exs` instead.
 
 ## Configuration
 
