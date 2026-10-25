@@ -13,7 +13,12 @@ const LABELS: Record<ConnectionKind, string> = {
 
 export type ProjectEndpoint = Pick<
   Box,
-  "publicHost" | "publicPort" | "poolerTenant" | "poolerSessionPort" | "poolerTransactionPort"
+  | "publicHost"
+  | "publicPort"
+  | "sslmode"
+  | "poolerTenant"
+  | "poolerSessionPort"
+  | "poolerTransactionPort"
 >;
 
 export interface ConnectionString {
@@ -34,12 +39,15 @@ export function ownerConnectionStrings(
     user: string,
     host: string,
     port: number,
+    query = "",
   ): ConnectionString => {
     const url = (secret: string) =>
-      `postgresql://${user}:${secret}@${host}:${port}/${project.dbName}`;
+      `postgresql://${user}:${secret}@${host}:${port}/${project.dbName}${query}`;
     return { kind, label: LABELS[kind], url: url(encodeURIComponent(password)), masked: url(MASK) };
   };
-  const direct = build("direct", project.ownerRole, box.publicHost, box.publicPort);
+  // A box hattisar reaches over TLS (a cloud provider) usually refuses clients without it.
+  const tls = box.sslmode === "disable" ? "" : `?sslmode=${box.sslmode}`;
+  const direct = build("direct", project.ownerRole, box.publicHost, box.publicPort, tls);
   const { poolerTenant, poolerSessionPort, poolerTransactionPort } = box;
   if (poolerTenant === null || poolerSessionPort === null || poolerTransactionPort === null) {
     return [direct];
