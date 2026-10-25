@@ -165,7 +165,6 @@ reset_recovery_target() {
   psql_in "$1" 'select pg_reload_conf()' >/dev/null
 }
 
-# Prints the base_ backup names in <backup-list output>, one per line.
 backup_names() {
   printf '%s\n' "$1" | awk '$1 ~ /^base_/ { print $1 }'
 }
@@ -375,11 +374,13 @@ pitr_managed() {
 retention() {
   log "retention: second base backup, then delete retain FULL 1"
   box_walg backup-push "$pgdata"
-  [ "$(backup_names "$(box_walg backup-list)" | grep -c .)" -eq 2 ] || fail "expected two backups before retention"
+  names=$(backup_names "$(box_walg backup-list)")
+  [ "$(printf '%s\n' "$names" | grep -c .)" -eq 2 ] || fail "expected two backups before retention, got: $names"
+  newest=$(printf '%s\n' "$names" | tail -n 1)
   box_walg delete retain FULL 1 --confirm
   backups=$(box_walg backup-list)
   printf '%s\n' "$backups"
-  [ "$(backup_names "$backups" | grep -c .)" -eq 1 ] || fail "expected one backup after retention, got: $backups"
+  [ "$(backup_names "$backups")" = "$newest" ] || fail "expected only $newest after retention, got: $backups"
 }
 
 archive_pending() {
@@ -398,7 +399,7 @@ archive_failure() {
   before=$(failed_count)
   docker exec -u root "$box" rm /usr/local/bin/wal-g
   psql_in "$box" 'insert into pitr_t select generate_series(10, 1000)' >/dev/null
-  psql_in "$box" 'select pg_switch_wal()' >/dev/null
+  seg=$(psql_in "$box" 'select pg_walfile_name(pg_switch_wal())')
   i=0
   until docker logs "$box" 2>&1 | grep -q 'archive command failed with exit code 127'; do
     i=$((i + 1))
@@ -407,8 +408,11 @@ archive_failure() {
   done
   pending=$(archive_pending)
   [ "$pending" -gt 0 ] || fail "expected WAL segments waiting to be archived, got: $pending"
+  last=$(psql_in "$box" 'select last_archived_wal from pg_stat_archiver')
+  [ "$(psql_in "$box" "select coalesce(last_archived_wal < '$seg', true) from pg_stat_archiver")" = t ] ||
+    fail "$seg archived with wal-g missing (last archived $last)"
   [ "$(failed_count)" = "$before" ] || fail "failed_count moved with wal-g missing; the docs' check needs revisiting"
-  log "wal-g missing: $pending segment(s) pending, failed_count still $before"
+  log "wal-g missing: $pending segment(s) pending, last archived $last before $seg, failed_count still $before"
 
   log "archive failure: wal-g back, walg.yaml moved away"
   docker exec -u root "$box" mv "$walg_conf" "$walg_conf.off"
