@@ -7,6 +7,13 @@ import {
   findAccessibleProject,
   type ProjectAndBox,
 } from "../projects/access.js";
+import {
+  attachedProblem,
+  attachProject,
+  detachProject,
+  isAttached,
+  updateProjectLogin,
+} from "../projects/attach.js";
 import { restoreProject, softDeleteProject } from "../projects/lifecycle.js";
 import { slugify } from "../projects/naming.js";
 import {
@@ -22,11 +29,16 @@ import { apiError, badRequest, notFound, serviceFailure } from "./errors.js";
 export type ProjectApiDeps = ProjectServiceDeps & { managed?: ManagedBoxes };
 
 const UNREADABLE_PASSWORD = "The project's password could not be decrypted. Rotate it to repair.";
+const UNREADABLE_LOGIN_PASSWORD =
+  "The project's password could not be decrypted. Update its login to repair.";
+
+const createdProblem = (ref: string) => `${ref} was created by hattisar, not attached.`;
 
 function projectJson({ project, box }: ProjectAndBox) {
   return {
     ref: project.ref,
     name: project.name,
+    kind: project.kind,
     status: project.status,
     box: { id: box.id, name: box.name, kind: box.kind },
     createdAt: project.createdAt,
@@ -65,6 +77,37 @@ function createFields(body: Record<string, unknown>): CreateFields | string[] {
     ref: (ref as string | undefined)?.trim() || undefined,
     boxId: boxId as number | undefined,
     newBox: newBox as boolean,
+  };
+}
+
+interface AttachFields {
+  name: string;
+  ref?: string;
+  boxId: number;
+  database: string;
+  login: string;
+  password: string;
+}
+
+function stringProblems(body: Record<string, unknown>, names: string[]): string[] {
+  return names.flatMap((name) =>
+    typeof body[name] === "string" ? [] : [`${name} must be a string.`],
+  );
+}
+
+function attachFields(body: Record<string, unknown>): AttachFields | string[] {
+  const { name, ref, boxId, database, login, password } = body;
+  const problems = stringProblems(body, ["name", "database", "login", "password"]);
+  if (ref !== undefined && typeof ref !== "string") problems.push("ref must be a string.");
+  if (!Number.isInteger(boxId)) problems.push("boxId must be an integer.");
+  if (problems.length > 0) return problems;
+  return {
+    name: (name as string).trim(),
+    ref: (ref as string | undefined)?.trim() || undefined,
+    boxId: boxId as number,
+    database: database as string,
+    login: login as string,
+    password: password as string,
   };
 }
 
@@ -116,6 +159,19 @@ export function projectApiRoutes(deps: ProjectApiDeps): Hono<ApiEnv> {
     return c.json(projectJson(reread(c, result.project.ref)), 201);
   });
 
+  app.post("/attach", async (c) => {
+    const body = await jsonObject(c);
+    if (body === undefined) return badRequest(c, ["Body must be a JSON object."]);
+    const fields = attachFields(body);
+    if (Array.isArray(fields)) return badRequest(c, fields);
+    const result = await attachProject(deps, {
+      ...fields,
+      ref: fields.ref ?? slugify(fields.name),
+    });
+    if (!result.ok) return badRequest(c, result.problems);
+    return c.json(projectJson(reread(c, result.project.ref)), 201);
+  });
+
   app.get("/:ref", (c) => {
     const found = accessible(c);
     if (!found) return notFound(c);
@@ -129,13 +185,20 @@ export function projectApiRoutes(deps: ProjectApiDeps): Hono<ApiEnv> {
     const found = accessible(c);
     if (!found) return notFound(c);
     const strings = connectionStrings(found, secretKey, poolerHost);
-    if (strings === undefined) return apiError(c, 502, UNREADABLE_PASSWORD);
+    if (strings === undefined) {
+      return apiError(
+        c,
+        502,
+        isAttached(found.project) ? UNREADABLE_LOGIN_PASSWORD : UNREADABLE_PASSWORD,
+      );
+    }
     return c.json(strings.map(({ label, kind, url }) => ({ label, kind, url })));
   });
 
   app.post("/:ref/rotate", async (c) => {
     const found = accessible(c);
     if (!found) return notFound(c);
+    if (isAttached(found.project)) return apiError(c, 409, attachedProblem(found.project.ref));
     const result = await rotateOwnerPassword(deps, found.project, found.box);
     if (!result.ok) return serviceFailure(c, db, found.project, result.problem);
     return c.json({ ok: true });
@@ -144,6 +207,7 @@ export function projectApiRoutes(deps: ProjectApiDeps): Hono<ApiEnv> {
   app.delete("/:ref", async (c) => {
     const found = accessible(c);
     if (!found) return notFound(c);
+    if (isAttached(found.project)) return apiError(c, 409, attachedProblem(found.project.ref));
     const body = await jsonObject(c);
     if (body === undefined) return badRequest(c, ["Body must be a JSON object."]);
     if (body.confirm !== found.project.ref) {
@@ -157,9 +221,43 @@ export function projectApiRoutes(deps: ProjectApiDeps): Hono<ApiEnv> {
   app.post("/:ref/undelete", async (c) => {
     const found = accessible(c, "deleted");
     if (!found) return notFound(c);
+    if (isAttached(found.project)) return apiError(c, 409, attachedProblem(found.project.ref));
     const result = await restoreProject(deps, found.project, found.box);
     if (!result.ok) return serviceFailure(c, db, found.project, result.problem);
     return c.json(projectJson(reread(c, found.project.ref)));
+  });
+
+  app.put("/:ref/login", async (c) => {
+    const found = accessible(c);
+    if (!found) return notFound(c);
+    if (!isAttached(found.project)) return apiError(c, 409, createdProblem(found.project.ref));
+    const body = await jsonObject(c);
+    if (body === undefined) return badRequest(c, ["Body must be a JSON object."]);
+    const problems = stringProblems(body, ["login", "password"]);
+    if (problems.length > 0) return badRequest(c, problems);
+    const result = await updateProjectLogin(
+      deps,
+      found.project,
+      found.box,
+      body.login as string,
+      body.password as string,
+    );
+    if (!result.ok) return serviceFailure(c, db, found.project, result.problem);
+    return c.json({ ok: true });
+  });
+
+  app.post("/:ref/detach", async (c) => {
+    const found = accessible(c);
+    if (!found) return notFound(c);
+    if (!isAttached(found.project)) return apiError(c, 409, createdProblem(found.project.ref));
+    const body = await jsonObject(c);
+    if (body === undefined) return badRequest(c, ["Body must be a JSON object."]);
+    if (body.confirm !== found.project.ref) {
+      return badRequest(c, [`Type the ref ${found.project.ref} to confirm detaching the project.`]);
+    }
+    const result = await detachProject(deps, found.project);
+    if (!result.ok) return serviceFailure(c, db, found.project, result.problem);
+    return c.json({ ok: true });
   });
 
   return app;
