@@ -429,6 +429,62 @@ project and retries next hour. A dump download holds the project too, from befor
 starts until it exits (finished, failed, or killed because the client went away); a download
 refused this way answers 409 on the Backups tab.
 
+### 7.1 Attached projects
+
+An **attached** project is a database hattisar did not create: one already on a registered box,
+opened in Studio with a login the user gives. It exists so a database an app already uses can be
+browsed and queried in Studio without moving it. Hattisar never changes an attached database or
+its login: no role is created or altered, no grant, rename, drop, baseline or extension.
+
+**Registry:** `projects.kind` is `created` (default, every existing row) or `attached`. For an
+attached project `db_name` is the database as it exists (not derived from the ref), `owner_role` is
+the login and `owner_password_enc` its password, encrypted like every secret. `login_superuser`
+records whether that login was a superuser when last checked.
+
+**Attach** (registered boxes only: every database on a managed box is hattisar's, and the shared box
+holds only hattisar's and Supabase's own) — form fields box, database, ref, name, login, password:
+- the database list is read live as the box admin: `pg_database` without templates, databases
+  any project row (active or in Trash) already names on that box, `<db>__deleted_<date>` names,
+  and `_supabase`;
+- the ref follows the usual rules and must be unused in the registry; it need not match the
+  database name;
+- the login must connect to that database with that password on the box's host, port and
+  sslmode, as the login itself; the failure is shown with the password scrubbed, as for box checks;
+- `rolsuper` of the login is read on that connection and stored; nothing is written to the box.
+A superuser login gets a warning on the project page: Studio, running as it, can reach every
+database on the server. Isolation (I1) does not hold for attached projects.
+
+**Behaviour that differs from a created project:**
+- Studio and pg-meta log in as the stored login verbatim (`ownerLogin` is not applied: on a
+  Supabase pooler the user types `postgres.<ref>` themselves); Studio's `db_user` is that login.
+- Connection strings: direct only, with the login. No pooler strings and no `refreshPooler`.
+- Rotate, soft delete, restore from Trash and purge are refused for an attached project in the
+  service layer (UI, API and CLI alike), with "<ref> is attached; detach it instead". An attached
+  project never reaches Trash, so the hourly purge never sees one.
+- **Update login** replaces login and password (and re-reads `rolsuper`) after the same connect
+  check; it never runs `ALTER ROLE`. A password that will not decrypt points here, not to rotate.
+- **Detach**, confirmed by typing the ref, removes the registry row (schedules, backup rows and
+  snippets cascade; backup objects in S3 are kept, as on purge). It holds the project lock, so it
+  is refused while a backup or other operation holds the project. The database is untouched.
+- Backups: `pg_dump` (manual, scheduled, download) connects as the attached login, not the box
+  admin, which may not be able to read tables the login owns. Restore in place is refused (it drops
+  the database). Restore into a new project works as for any backup and makes a created project.
+- Restore into a new project uses the same `pg_restore` filter as any restore. A dump of an app's
+  database often holds extensions, schemas or objects of other roles that a non-superuser owner
+  cannot restore; such a restore fails with the `pg_restore` error and the new project is rolled
+  back. Known limitation, not worked around.
+- Sizes (§9): an attached database is sized on its own connection as the attached login, not in
+  the box admin's batch query (the admin may lack `CONNECT` on it, and one failure there would mark
+  the whole box unreachable). If that fails, only that project's size shows as unknown.
+- Update login and Detach hold the project lock like every lifecycle operation (§7). Refusing an
+  operation because the project is attached answers 409 whether or not the project is also busy;
+  a wrong `confirm` on detach answers 400, as on delete.
+- UI: the form is its own page, `/_hs/projects/attach`, linked from the New project page and from
+  each registered box's row. Its database picker lists what `GET /boxes/:id/databases` returns.
+- The list and project page show an `attached` badge; the General tab shows "Login" instead of
+  "Owner role", and Detach in place of Delete; the Connect tab shows Update login in place of
+  Rotate.
+
 ## 8. Backups
 
 `pg_dump`/`pg_restore` from `HATTISAR_PG_BIN_DIR` (image ships PostgreSQL 18 client). Passwords
@@ -683,11 +739,15 @@ shared.
 | `GET /me` | – | `{ username }` |
 | `GET /boxes` | – | `[{ id, name, kind, devOnly, publicHost, publicPort }]`; never host, admin user or secrets |
 | `POST /boxes/:id/pooler/resync` | – | `{ tenant }` (§5.1 re-sync). 400 for the shared box or one that requires TLS, 404 for an unknown box, 502 when the box or Supavisor fails |
-| `GET /projects?status=active\|deleted` | – | `[project]`, active by default. A project is `{ ref, name, status, box: { id, name, kind }, createdAt, deletedAt }` |
+| `GET /projects?status=active\|deleted` | – | `[project]`, active by default. A project is `{ ref, name, kind, status, box: { id, name, kind }, createdAt, deletedAt }`, `kind` `created` or `attached` |
 | `POST /projects` | `{ name, ref?, boxId?, newBox? }` | 201 `project`. `ref` defaults to the slug of `name`, `boxId` to the shared box; `newBox: true` creates a managed box named after the ref (400 if managed boxes are off, or with `boxId`) |
 | `GET /projects/:ref` | – | `project` + `connections: [{ label, kind, masked }]`, `kind` `direct`, `session` or `transaction`; empty when the password will not decrypt |
 | `GET /projects/:ref/connections` | – | `[{ label, kind, url }]` with the real password, in the project page's order |
 | `POST /projects/:ref/rotate` | – | `{ ok: true }` |
+| `GET /boxes/:id/databases` | – | `[name]`, the databases attachable on that registered box (§7.1); 400 for a managed or shared box, 502 when the box fails |
+| `POST /projects/attach` | `{ name, ref?, boxId, database, login, password }` | 201 `project` (§7.1); `ref` defaults to the slug of `name`, as on create; 400 with problems when the box is not registered, the database is not attachable or the login cannot connect |
+| `PUT /projects/:ref/login` | `{ login, password }` | `{ ok: true }`; attached projects only, else 409 |
+| `POST /projects/:ref/detach` | `{ confirm }` | `{ ok: true }`; attached projects only, else 409 |
 | `DELETE /projects/:ref` | `{ confirm }` | `{ ok: true }` (soft delete) |
 | `POST /projects/:ref/undelete` | – | `project`; looks up deleted projects only, 404 if not in Trash |
 | `GET /projects/:ref/backups` | – | `[{ id, kind, status, sizeBytes, error, createdAt, finishedAt }]`; no bucket or S3 key |
@@ -717,6 +777,9 @@ hattisar projects create <name> [--ref <ref>] [--box <id> | --new-box]
 hattisar projects show <ref>
 hattisar projects url <ref> [--transaction | --direct]
 hattisar projects rotate <ref>
+hattisar projects attach <name> --box <id> --database <db> --login <role> [--ref <ref>]
+hattisar projects set-login <ref> --login <role>
+hattisar projects detach <ref> --confirm <ref>
 hattisar projects delete <ref> --confirm <ref>
 hattisar projects restore <ref>
 hattisar backups list <ref>
@@ -724,11 +787,15 @@ hattisar backups run <ref>
 hattisar backups restore <ref> <backup-id> --confirm <ref>
 hattisar boxes list
 hattisar boxes resync-pooler <id>
+hattisar boxes databases <id>
 Global: --json, --help, --version
 ```
 
 - `projects restore` takes a project out of Trash; `backups restore` replaces a project's data
   with one of its backups. `--confirm` must equal the ref, else exit 2 before any request.
+- `projects attach` and `projects set-login` read the login's password like `login` reads the
+  token: hidden prompt on a TTY, stdin otherwise, never a flag. Rotate, delete and restore of an
+  attached project exit 1 with the API's 409 message.
 - `projects url <ref>` prints exactly one URL with the real password: the first connection (the
   session pooler on a box with a tenant, direct otherwise), so `$(hattisar projects url x)` works.
   `--transaction` picks the transaction pooler and exits 1 if the box has none; `--direct` picks
