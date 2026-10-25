@@ -242,6 +242,16 @@ describe("creating a project on a box whose admin is not a superuser", () => {
     ]);
   });
 
+  it("drops only the owner role when the grant fails", async () => {
+    failOn = /^GRANT "hs_my_app_owner" TO/;
+    const response = await createOnPlainBox();
+    expect(response.status).toBe(400);
+    expect(statements.map((s) => s.sql).filter((sql) => sql.startsWith("DROP"))).toEqual([
+      'DROP ROLE IF EXISTS "hs_my_app_owner"',
+    ]);
+    expect(getProjectByRef(db, "my-app")).toBeUndefined();
+  });
+
   it("still creates the project when pg_stat_statements is refused with 42501", async () => {
     failOn = /^CREATE EXTENSION IF NOT EXISTS pg_stat_statements/;
     failCode = "42501";
