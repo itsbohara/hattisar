@@ -40,13 +40,13 @@ describe("e1Problems", () => {
     expect(e1Problems({ ...compatible, serverVersionNum: 150000 })).toEqual([]);
   });
 
-  it("accepts the last Postgres 17", () => {
-    expect(e1Problems({ ...compatible, serverVersionNum: 179999 })).toEqual([]);
+  it("accepts Postgres 18", () => {
+    expect(e1Problems({ ...compatible, serverVersionNum: 180000 })).toEqual([]);
   });
 
-  it("refuses Postgres 18, which the bundled pg_dump 17 cannot back up", () => {
-    expect(e1Problems({ ...compatible, serverVersionNum: 180000 })).toEqual([
-      "Postgres 17 or older is required; this server is version 18",
+  it("refuses Postgres 19, which the bundled pg_dump 18 cannot back up", () => {
+    expect(e1Problems({ ...compatible, serverVersionNum: 190000 })).toEqual([
+      "Postgres 18 or older is required; this server is version 19",
     ]);
   });
 });

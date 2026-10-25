@@ -2,8 +2,8 @@ import { type BoxConnection, safeErrorMessage, withAdminClient } from "./admin-c
 
 export const REQUIRED_EXTENSIONS = ["pgcrypto", "uuid-ossp", "pg_stat_statements"];
 const MIN_SERVER_VERSION_NUM = 150000;
-// Exclusive: the bundled pg_dump 17 refuses to dump a newer server.
-const MAX_SERVER_VERSION_NUM = 180000;
+// Exclusive: the bundled pg_dump 18 refuses to dump a newer server.
+const MAX_SERVER_VERSION_NUM = 190000;
 
 export interface E1Result {
   ok: boolean;
@@ -24,7 +24,7 @@ export function e1Problems(facts: E1Facts): string[] {
     problems.push(`Postgres 15 or newer is required; this server is version ${major}`);
   }
   if (facts.serverVersionNum >= MAX_SERVER_VERSION_NUM) {
-    problems.push(`Postgres 17 or older is required; this server is version ${major}`);
+    problems.push(`Postgres 18 or older is required; this server is version ${major}`);
   }
   for (const extension of REQUIRED_EXTENSIONS) {
     if (!facts.availableExtensions.includes(extension)) {
