@@ -52,6 +52,8 @@ services:
       PG_META_DB_USER: postgres
       PG_META_DB_PASSWORD: ${POSTGRES_PASSWORD}
       CRYPTO_KEY: ${PG_META_CRYPTO_KEY:?PG_META_CRYPTO_KEY is required}
+      # Same as hattisar's main.ts: Node's 250 ms per address is shorter than a cross-region round trip.
+      NODE_OPTIONS: --network-family-autoselection-attempt-timeout=2000
 
   studio:
     image: supabase/studio:2026.10.12-sha-3699278
