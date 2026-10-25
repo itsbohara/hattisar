@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { connectionStrings, createProject } from "../helpers/projects.js";
+import { connectionStrings, createProject, fetchWith } from "../helpers/projects.js";
 import { postForm, signIn } from "../helpers/session.js";
 import { compose, registrySql, stackEnv } from "../stack.js";
 
@@ -13,7 +13,9 @@ const PLAIN_PG_PASSWORD = randomUUID();
 const plainBox = `it-plain-${randomUUID().slice(0, 8)}`;
 const plainRef = `it-plain-${randomUUID().slice(0, 8)}`;
 const pg18Box = `it-plain-pg18-${randomUUID().slice(0, 8)}`;
+const pg18Ref = `it-pg18-${randomUUID().slice(0, 8)}`;
 let plainPgPort: string;
+let pg18Port: string;
 let cookie: string;
 
 function docker(args: string[]): string {
@@ -108,8 +110,12 @@ async function ownerSelectOne(url: string): Promise<unknown[]> {
   }
 }
 
-function deletePlainProject(): Promise<Response> {
-  return postForm(baseUrl, `/_hs/projects/${plainRef}/delete`, { confirm: plainRef }, cookie);
+function deleteProject(ref: string): Promise<Response> {
+  return postForm(baseUrl, `/_hs/projects/${ref}/delete`, { confirm: ref }, cookie);
+}
+
+function purgeProject(ref: string): Promise<Response> {
+  return postForm(baseUrl, `/_hs/trash/${ref}/purge`, { confirm: ref }, cookie);
 }
 
 function registerSharedDbAgain(name: string): Promise<Response> {
@@ -125,6 +131,7 @@ beforeAll(async () => {
   startPlainPg(PLAIN_PG, "postgres:17-alpine");
   startPlainPg(PLAIN_PG_18, "postgres:18-alpine");
   plainPgPort = docker(["port", PLAIN_PG, "5432/tcp"]).split(":").at(-1) ?? "";
+  pg18Port = docker(["port", PLAIN_PG_18, "5432/tcp"]).split(":").at(-1) ?? "";
   cookie = await signIn(baseUrl);
   await waitForTcpReady(PLAIN_PG);
   await waitForTcpReady(PLAIN_PG_18);
@@ -135,6 +142,7 @@ beforeAll(async () => {
 afterAll(async () => {
   try {
     registrySql("DELETE FROM projects WHERE ref = ?", plainRef);
+    registrySql("DELETE FROM projects WHERE ref = ?", pg18Ref);
     const html = await boxesPage();
     for (const name of [plainBox, pg18Box]) {
       if (html.includes(`data-box="${name}"`)) await remove(boxIdFrom(html, name));
@@ -184,31 +192,33 @@ describe("boxes", () => {
     const owner = [{ current_user: `hs_${plainRef.replaceAll("-", "_")}_owner`, ok: 1 }];
     expect(await ownerSelectOne(direct)).toEqual(owner);
 
-    expect((await deletePlainProject()).status).toBe(302);
+    expect((await deleteProject(plainRef)).status).toBe(302);
     const restored = await postForm(baseUrl, `/_hs/trash/${plainRef}/restore`, {}, cookie);
     expect(restored.status).toBe(302);
     expect(await ownerSelectOne(direct)).toEqual(owner);
 
-    expect((await deletePlainProject()).status).toBe(302);
-    const purged = await postForm(
-      baseUrl,
-      `/_hs/trash/${plainRef}/purge`,
-      { confirm: plainRef },
-      cookie,
-    );
-    expect(purged.status).toBe(302);
+    expect((await deleteProject(plainRef)).status).toBe(302);
+    expect((await purgeProject(plainRef)).status).toBe(302);
     expect((await remove(boxId)).status).toBe(302);
     expect(await boxesPage()).not.toContain(`data-box="${plainBox}"`);
   }, 60_000);
 
-  it("refuses a Postgres 18 server", async () => {
-    const response = await registerPlainPg(pg18Box, PLAIN_PG_18);
-    expect(response.status).toBe(400);
-    const html = await response.text();
-    expect(html).toContain("<li>Postgres 17 or older is required; this server is version 18</li>");
-    expect(html).not.toContain(PLAIN_PG_PASSWORD);
+  it("registers a plain Postgres 18 and dumps a project on it", async () => {
+    expect((await registerPlainPg(pg18Box, PLAIN_PG_18, pg18Port)).status).toBe(302);
+    const boxId = boxIdFrom(await boxesPage(), pg18Box);
+    const created = await createProject(baseUrl, cookie, { ref: pg18Ref, name: "PG18", boxId });
+    expect(created.status, await created.clone().text()).toBe(302);
+
+    const dump = await fetchWith(baseUrl, cookie, `/_hs/projects/${pg18Ref}/dump`);
+    expect(dump.status).toBe(200);
+    const archive = Buffer.from(await dump.arrayBuffer());
+    expect(archive.subarray(0, 5).toString()).toBe("PGDMP");
+
+    expect((await deleteProject(pg18Ref)).status).toBe(302);
+    expect((await purgeProject(pg18Ref)).status).toBe(302);
+    expect((await remove(boxId)).status).toBe(302);
     expect(await boxesPage()).not.toContain(`data-box="${pg18Box}"`);
-  });
+  }, 60_000);
 
   it("explains a connection failure as one problem", async () => {
     const response = await register({
