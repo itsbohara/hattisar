@@ -412,8 +412,10 @@ go in `PGPASSWORD` env, never argv. Dumps are custom format (`-Fc`), connecting 
 - **Restore:** from a backup into (a) the same project — confirm by typing the ref; terminate
   backends, drop and recreate the database with the §7 steps 2–4 (same owner, same password), then
   `pg_restore --no-owner --no-privileges --role=<owner> -d <db>`; or (b) a new project — the full
-  §7 create flow, then the same restore. A failed restore leaves the error on the page. pg_restore errors that are only `unrecognized configuration parameter` on a `SET` (a newer client's setting an older server lacks, such as `transaction_timeout` on 15) do not fail the restore; they are logged as a warning. Leftover `restore-*` work directories are
-  removed at boot.
+  §7 create flow, then the same restore. A failed restore leaves the error on the page. A
+  restore whose only pg_restore errors are `unrecognized configuration parameter` on a `SET` (a
+  newer client's setting an older server lacks, such as `transaction_timeout` on 15) succeeds
+  and logs a warning. Leftover `restore-*` work directories are removed at boot.
 - Docs state plainly: dumps restore to the last dump, not a point in time. [`docs/pitr.md`](pitr.md)
   is a tested WAL-G recipe for point-in-time recovery of managed boxes and the shared box. It is
   box-level, restoring every project on the box at once, and lives outside hattisar: the operator
