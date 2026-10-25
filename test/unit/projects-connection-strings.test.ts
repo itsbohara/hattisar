@@ -46,7 +46,8 @@ const unpooled: Endpoint = {
   poolerTransactionPort: null,
 };
 
-const project = { dbName: "x", ownerRole: "hs_x_owner" };
+const project = { dbName: "x", ownerRole: "hs_x_owner", kind: "created" as const };
+const attached = { dbName: "x", ownerRole: "shop_app", kind: "attached" as const };
 
 describe("ownerConnectionStrings", () => {
   it("offers session, transaction and direct strings for a box with a tenant", () => {
@@ -125,5 +126,32 @@ describe("ownerConnectionStrings", () => {
   it("URL-encodes the password", () => {
     const [string] = ownerConnectionStrings(unpooled, project, "a/b+c=d", POOLER_HOST);
     expect(string?.url).toBe("postgresql://hs_x_owner:a%2Fb%2Bc%3Dd@pg.example.test:5433/x");
+  });
+
+  it("offers one direct string with the login verbatim for an attached project", () => {
+    expect(ownerConnectionStrings(registered, attached, "pw", POOLER_HOST)).toEqual([
+      {
+        kind: "direct",
+        label: "Direct",
+        url: "postgresql://shop_app:pw@db.example.com:5433/x",
+        masked: `postgresql://shop_app:${MASK}@db.example.com:5433/x`,
+      },
+    ]);
+  });
+
+  it("keeps the sslmode rule and adds no pooler suffix for an attached project", () => {
+    const supabase: Endpoint = {
+      ...unpooled,
+      host: "aws-0.pooler.supabase.com",
+      adminUser: "postgres.abc",
+      sslmode: "require",
+    };
+    const login = { ...attached, ownerRole: "postgres.abc" };
+    expect(ownerConnectionStrings(supabase, login, "pw", POOLER_HOST)).toMatchObject([
+      {
+        kind: "direct",
+        url: "postgresql://postgres.abc:pw@pg.example.test:5433/x?sslmode=require",
+      },
+    ]);
   });
 });

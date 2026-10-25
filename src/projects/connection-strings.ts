@@ -1,6 +1,7 @@
 import { ownerLogin } from "../boxes/owner-login.js";
 import type { Box } from "../registry/boxes.js";
 import type { Project } from "../registry/projects.js";
+import { isAttached } from "./attach.js";
 
 export const MASK = "••••••••";
 
@@ -33,7 +34,7 @@ export interface ConnectionString {
 
 export function ownerConnectionStrings(
   box: ProjectEndpoint & Pick<Box, "kind">,
-  project: Pick<Project, "dbName" | "ownerRole">,
+  project: Pick<Project, "dbName" | "ownerRole" | "kind">,
   password: string,
   poolerHost: string,
 ): ConnectionString[] {
@@ -50,13 +51,16 @@ export function ownerConnectionStrings(
   };
   // A box hattisar reaches over TLS (a cloud provider) usually refuses clients without it.
   const tls = box.sslmode === "disable" ? "" : `?sslmode=${box.sslmode}`;
+  const attached = isAttached(project);
   const direct = build(
     "direct",
-    ownerLogin(box, project.ownerRole),
+    attached ? project.ownerRole : ownerLogin(box, project.ownerRole),
     box.publicHost,
     box.publicPort,
     tls,
   );
+  // An attached login has no tenant of its own on hattisar's pooler.
+  if (attached) return [direct];
   const { poolerTenant, poolerSessionPort, poolerTransactionPort } = box;
   if (poolerTenant === null || poolerSessionPort === null || poolerTransactionPort === null) {
     return [direct];
