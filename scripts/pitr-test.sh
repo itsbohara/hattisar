@@ -27,9 +27,19 @@ fail() {
   exit 1
 }
 
+# Cleanup removes the containers, so a failed run's logs have to be printed before that.
+dump_logs() {
+  for c in $(docker ps -aq --filter "label=$label") $(docker ps -aq --filter "label=com.docker.compose.project=$label"); do
+    echo "::group::logs of $(docker inspect -f '{{.Name}}' "$c")"
+    docker logs --timestamps "$c" 2>&1 | tail -n 200
+    echo "::endgroup::"
+  done
+}
+
 cleanup() {
   status=$?
   set +e
+  [ "$status" -eq 0 ] || dump_logs
   # Labelled containers go first: the managed box sits on the compose network, and compose down
   # cannot remove a network that still has a container attached.
   containers=$(docker ps -aq --filter "label=$label") || true
