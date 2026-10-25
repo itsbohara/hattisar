@@ -256,3 +256,79 @@ describe("editing and removing", () => {
     expect(row("secure")).toContain("Direct only");
   });
 });
+
+describe("re-syncing a box's pooler tenant", () => {
+  const RESYNC_HINT = "Drops open pooled connections.";
+
+  async function tenanted() {
+    await post("/_hs/boxes", { ...form, name: "tenanted", sslmode: "disable" });
+    db.prepare(
+      "UPDATE boxes SET pooler_tenant = 'hattisar-tenanted' WHERE name = 'tenanted'",
+    ).run();
+    const box = getBoxByName(db, "tenanted");
+    if (!box) throw new Error("box not registered");
+    pooler.calls = [];
+    return box;
+  }
+
+  function rowOf(html: string, name: string): string {
+    return html.split("<tr").find((chunk) => chunk.includes(`data-box="${name}"`)) ?? "";
+  }
+
+  it("offers Re-sync on boxes with a tenant or a pending one, never on shared or TLS boxes", async () => {
+    seedSharedBox(db, config(), secretKey);
+    const box = await tenanted();
+    await post("/_hs/boxes", { ...form, name: "pending", sslmode: "disable" });
+    await post("/_hs/boxes", { ...form, name: "secure" });
+    const html = await (await app.request("/_hs/boxes")).text();
+    const pending = getBoxByName(db, "pending");
+    expect(rowOf(html, "tenanted")).toContain(`action="/_hs/boxes/${box.id}/pooler/resync"`);
+    expect(rowOf(html, "tenanted")).toContain(RESYNC_HINT);
+    expect(rowOf(html, "pending")).toContain(`action="/_hs/boxes/${pending?.id}/pooler/resync"`);
+    expect(rowOf(html, "shared")).not.toContain("pooler/resync");
+    expect(rowOf(html, "secure")).not.toContain("pooler/resync");
+  });
+
+  it("re-syncs and redirects to the Boxes page, which reports the tenant", async () => {
+    const box = await tenanted();
+    pooler.resyncResult = { ok: true, tenant: "hattisar-tenanted" };
+    const response = await post(`/_hs/boxes/${box.id}/pooler/resync`, {});
+    expect(response.status).toBe(302);
+    const location = response.headers.get("location") ?? "";
+    expect(location).toBe("/_hs/boxes?resynced=hattisar-tenanted");
+    expect(pooler.calls).toEqual([{ action: "resync", box, rowExists: true }]);
+    const html = await (await app.request(location)).text();
+    expect(html).toContain("Re-synced pooler tenant hattisar-tenanted.");
+  });
+
+  it("does not report a tenant no box has", async () => {
+    const html = await (await app.request("/_hs/boxes?resynced=call-this-number")).text();
+    expect(html).not.toContain("Re-synced pooler tenant");
+  });
+
+  it.each([
+    ["refused", "This box has no pooler: it requires TLS.", 400],
+    ["failed", "Pooler tenant not re-synced: unreachable", 502],
+  ] as const)("shows a %s re-sync's problem on the Boxes page", async (reason, problem, status) => {
+    const box = await tenanted();
+    pooler.resyncResult = { ok: false, reason, problem };
+    const response = await post(`/_hs/boxes/${box.id}/pooler/resync`, {});
+    expect(response.status).toBe(status);
+    expect(await response.text()).toContain(problem);
+  });
+
+  it("answers 404 for an unknown box or one gone while queued", async () => {
+    expect((await post("/_hs/boxes/999/pooler/resync", {})).status).toBe(404);
+    expect(pooler.calls).toEqual([]);
+    const box = await tenanted();
+    pooler.resyncResult = { ok: false, reason: "not-found", problem: "Box not found." };
+    expect((await post(`/_hs/boxes/${box.id}/pooler/resync`, {})).status).toBe(404);
+  });
+
+  it("does not let the UI re-sync the shared box", async () => {
+    seedSharedBox(db, config(), secretKey);
+    const shared = getSharedBox(db);
+    expect((await post(`/_hs/boxes/${shared?.id}/pooler/resync`, {})).status).toBe(404);
+    expect(pooler.calls).toEqual([]);
+  });
+});

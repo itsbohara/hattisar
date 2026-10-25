@@ -11,7 +11,14 @@ export interface PoolerTenants {
   ensure(box: Box): Promise<void>;
   drop(box: Box): Promise<void>;
   reconcile(): Promise<void>;
+  resync(box: Box): Promise<ResyncResult>;
 }
+
+export type ResyncResult =
+  | { ok: true; tenant: string }
+  | { ok: false; reason: "refused" | "failed" | "not-found"; problem: string };
+
+export const SHARED_BOX_POOLER = "The shared box's pooler is configured by pooler.exs.";
 
 export interface PoolerTenantsDeps {
   db: Registry;
@@ -34,16 +41,18 @@ function scrubbed(error: unknown, secrets: string[]): string {
 
 export function createPoolerTenants(deps: PoolerTenantsDeps): PoolerTenants {
   const { db, api } = deps;
-  const queues = new Map<number, Promise<void>>();
+  const queues = new Map<number, Promise<unknown>>();
 
   // Every step re-reads the box inside its turn: a queued ensure must see the tenant the one
   // before it stored, or it would PUT again and drop the pools that PUT just created.
-  function serialized(id: number, step: () => Promise<void>): Promise<void> {
-    const next = (queues.get(id) ?? Promise.resolve()).then(step);
+  function serialized<T>(id: number, step: () => Promise<T>): Promise<T> {
+    const next = (queues.get(id) ?? Promise.resolve()).then(step, step);
     queues.set(id, next);
-    void next.finally(() => {
+    const forget = () => {
       if (queues.get(id) === next) queues.delete(id);
-    });
+    };
+    // Not finally(): its copy of a rejection would go unhandled and end the process.
+    void next.then(forget, forget);
     return next;
   }
 
@@ -53,7 +62,8 @@ export function createPoolerTenants(deps: PoolerTenantsDeps): PoolerTenants {
     );
   }
 
-  async function create(box: Box, id: string): Promise<void> {
+  // Returns the failure already scrubbed: only this function knows the generated password.
+  async function create(box: Box, id: string): Promise<string | undefined> {
     const conn = boxConnection(box, deps.secretKey);
     const role = poolerRoleFor(deps.secretKey, id);
     const password = randomBytes(32).toString("base64url");
@@ -62,8 +72,7 @@ export function createPoolerTenants(deps: PoolerTenantsDeps): PoolerTenants {
       await deps.admin(conn, (client) => installPoolerRole(client, role, password), "postgres");
       await api.put(id, tenantBody(box, { role, password }), password);
     } catch (error) {
-      warn(box, "created", error, password, conn.password);
-      return;
+      return scrubbed(error, [password, conn.password]);
     }
     updateBox(db, box.id, {
       poolerTenant: id,
@@ -82,7 +91,12 @@ export function createPoolerTenants(deps: PoolerTenantsDeps): PoolerTenants {
     }
     if (tenant?.dbHost === box.host && tenant.dbPort === box.port) return;
     // A moved box may be on another server, which has no role for this tenant yet.
-    await create(box, id);
+    await createOrWarn(box, id);
+  }
+
+  async function createOrWarn(box: Box, id: string): Promise<void> {
+    const problem = await create(box, id);
+    if (problem !== undefined) warn(box, "created", problem);
   }
 
   // A managed box's role goes with its container and volume.
@@ -117,10 +131,14 @@ export function createPoolerTenants(deps: PoolerTenantsDeps): PoolerTenants {
     if (box.kind === "shared") return;
     if (!isPoolerEligible(box)) return dropNow(box);
     if (box.poolerTenant !== null) return ensureStored(box, box.poolerTenant);
+    await createOrWarn(box, newTenantId(box));
+  }
+
+  function newTenantId(box: Box): string {
     const taken = listBoxes(db).flatMap((other) =>
       other.id !== box.id && other.poolerTenant !== null ? [other.poolerTenant] : [],
     );
-    await create(box, tenantIdFor(deps.tenantPrefix, box, taken));
+    return tenantIdFor(deps.tenantPrefix, box, taken);
   }
 
   function rewritePorts(box: Box): void {
@@ -174,5 +192,38 @@ export function createPoolerTenants(deps: PoolerTenantsDeps): PoolerTenants {
     }
   }
 
-  return { ensure, drop, reconcile };
+  async function resyncNow(box: Box): Promise<ResyncResult> {
+    if (box.kind === "shared") {
+      return { ok: false, reason: "refused", problem: SHARED_BOX_POOLER };
+    }
+    if (!isPoolerEligible(box)) {
+      return { ok: false, reason: "refused", problem: "This box has no pooler: it requires TLS." };
+    }
+    const tenant = box.poolerTenant ?? newTenantId(box);
+    const problem = await create(box, tenant);
+    if (problem !== undefined) {
+      return { ok: false, reason: "failed", problem: `Pooler tenant not re-synced: ${problem}` };
+    }
+    return { ok: true, tenant };
+  }
+
+  // Same no-fallback rule as ensureQueued.
+  function resync(box: Box): Promise<ResyncResult> {
+    return serialized(box.id, async () => {
+      const current = getBoxById(db, box.id);
+      if (current === undefined)
+        return { ok: false, reason: "not-found", problem: "Box not found." };
+      try {
+        return await resyncNow(current);
+      } catch (error) {
+        return {
+          ok: false,
+          reason: "failed",
+          problem: `Pooler tenant not re-synced: ${scrubbed(error, [])}`,
+        };
+      }
+    });
+  }
+
+  return { ensure, drop, reconcile, resync };
 }

@@ -16,11 +16,12 @@ import { loadConfig } from "../../src/config.js";
 import { holdingProject } from "../../src/projects/locks.js";
 import { getApiTokenByHash } from "../../src/registry/api-tokens.js";
 import { insertBackup, markBackupDone } from "../../src/registry/backups.js";
-import { insertBox } from "../../src/registry/boxes.js";
+import { getBoxByName, getSharedBox, insertBox } from "../../src/registry/boxes.js";
 import { openRegistry, type Registry } from "../../src/registry/db.js";
 import { getProjectByRef, setProjectOwnerPassword } from "../../src/registry/projects.js";
 import { decryptSecret, deriveSecretKey, encryptSecret } from "../../src/registry/secrets.js";
 import { API_PREFIX } from "../../src/studio/routes.js";
+import { RecordingPooler } from "../helpers/pooler.js";
 import { signInToRegistry } from "../helpers/session.js";
 
 vi.mock("../../src/backups/s3.js", async (importOriginal) => ({
@@ -44,6 +45,16 @@ const ORIGIN = "http://hattisar.test";
 const NO_TOKEN = { error: { message: "Missing or invalid API token" } };
 const secretKey = deriveSecretKey("s".repeat(32));
 const BOX_ADMIN_PASSWORD = "box-admin-secret";
+
+const appConfig = () =>
+  loadConfig({
+    HATTISAR_SECRET_KEY: "s".repeat(32),
+    PG_META_CRYPTO_KEY: "unit-test-crypto-key",
+    POSTGRES_PASSWORD: "unused",
+    POOLER_TENANT_ID: "hattisar",
+    POOLER_JWT_SECRET: "pooler-jwt-secret",
+    STUDIO_URL: "http://127.0.0.1:9",
+  });
 
 let dataDir: string;
 let db: Registry;
@@ -79,17 +90,7 @@ beforeEach(() => {
     poolerTransactionPort: 6543,
     containerName: "hs-db",
   });
-  app = createApp(
-    loadConfig({
-      HATTISAR_SECRET_KEY: "s".repeat(32),
-      PG_META_CRYPTO_KEY: "unit-test-crypto-key",
-      POSTGRES_PASSWORD: "unused",
-      POOLER_TENANT_ID: "hattisar",
-      POOLER_JWT_SECRET: "pooler-jwt-secret",
-      STUDIO_URL: "http://127.0.0.1:9",
-    }),
-    db,
-  );
+  app = createApp(appConfig(), db);
 });
 
 afterEach(() => {
@@ -243,6 +244,92 @@ describe("GET /boxes", () => {
   });
 });
 
+describe("POST /boxes/:id/pooler/resync", () => {
+  let pooler: RecordingPooler;
+  let boxId: number;
+
+  beforeEach(() => {
+    pooler = new RecordingPooler(db);
+    app = createApp(appConfig(), db, undefined, pooler);
+    boxId = insertBox(db, {
+      name: "edge",
+      kind: "managed",
+      devOnly: false,
+      host: "hs-box-edge",
+      port: 5432,
+      adminUser: "supabase_admin",
+      adminPasswordEnc: encryptSecret(BOX_ADMIN_PASSWORD, secretKey),
+      sslmode: "disable",
+      publicHost: "localhost",
+      publicPort: 55000,
+      poolerTenant: "hattisar-edge",
+      poolerSessionPort: 54322,
+      poolerTransactionPort: 6543,
+      containerName: "hs-box-edge",
+    }).id;
+  });
+
+  const resync = (id: number | string, headers: Record<string, string> = bearer()) =>
+    request(`/_hs/api/v1/boxes/${id}/pooler/resync`, headers, "POST");
+
+  it("re-syncs the box and answers its tenant", async () => {
+    pooler.resyncResult = { ok: true, tenant: "hattisar-edge" };
+    const response = await resync(boxId);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ tenant: "hattisar-edge" });
+    expect(pooler.calls).toEqual([
+      { action: "resync", box: getBoxByName(db, "edge"), rowExists: true },
+    ]);
+  });
+
+  it.each([
+    "The shared box's pooler is configured by pooler.exs.",
+    "This box has no pooler: it requires TLS.",
+  ])("answers 400 with the refusal %j", async (problem) => {
+    pooler.resyncResult = { ok: false, reason: "refused", problem };
+    const response = await resync(boxId);
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: { message: "Invalid request", problems: [problem] },
+    });
+  });
+
+  it("answers 502 when the re-sync itself fails", async () => {
+    const problem = "Pooler tenant not re-synced: unreachable";
+    pooler.resyncResult = { ok: false, reason: "failed", problem };
+    const response = await resync(boxId);
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({ error: { message: problem } });
+  });
+
+  it("refuses the shared box without asking the pooler", async () => {
+    const response = await resync(getSharedBox(db)?.id ?? 0);
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: {
+        message: "Invalid request",
+        problems: ["The shared box's pooler is configured by pooler.exs."],
+      },
+    });
+    expect(pooler.calls).toEqual([]);
+  });
+
+  it("answers 404 for an unknown id or a box gone while queued", async () => {
+    expect((await resync(999)).status).toBe(404);
+    expect((await resync("abc")).status).toBe(404);
+    expect(pooler.calls).toEqual([]);
+    pooler.resyncResult = { ok: false, reason: "not-found", problem: "Box not found." };
+    const response = await resync(boxId);
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: { message: "Not found" } });
+  });
+
+  it("needs a token", async () => {
+    expect((await resync(boxId, {})).status).toBe(401);
+    expect(pooler.calls).toEqual([]);
+  });
+});
+
 describe("unexpected errors", () => {
   it("answers an API path with a JSON 500", async () => {
     const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -287,6 +374,7 @@ describe("projects", () => {
           admin: fakeAdmin,
           refreshPooler: async () => {},
           poolerHost: "pool.example.com",
+          pooler: new RecordingPooler(db),
         },
         { db, secretKey, pgBinDir: "/unused", dataDir, backupHourUtc: 2 },
       ),

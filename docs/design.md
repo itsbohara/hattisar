@@ -288,6 +288,14 @@ the same id overwrites the leftover (step 3). On a registered box hattisar then 
 role as the box admin, also best effort; the `hattisar_pooler` schema and function stay, since
 other tenants on that server may use them.
 
+**Re-sync** (Re-sync pooler on the Boxes page, `POST /boxes/:id/pooler/resync`, `hattisar boxes
+resync-pooler <id>`) runs steps 2–4 for one box on demand, with the stored tenant id (a new one,
+as ensure picks it, if the box has none), queued with ensure and drop for that box. It fixes a
+tenant whose role password no longer matches Supavisor's, as after a box restore
+([`docs/pitr.md`](pitr.md)), which ensure does not notice. The PUT terminates the tenant's pools,
+so open pooled connections drop. Refused for the shared box and for a box that requires TLS; on failure the stored pooler
+fields stay as they were and the scrubbed reason is shown.
+
 **Supavisor down or refusing:** the box is saved without pooler fields, its projects get the
 direct string only, the Boxes page shows "Pooler pending" for it, and the next ensure
 retries. Messages shown or logged have the generated and box admin passwords scrubbed.
@@ -627,6 +635,7 @@ shared.
 |---|---|---|
 | `GET /me` | – | `{ username }` |
 | `GET /boxes` | – | `[{ id, name, kind, devOnly, publicHost, publicPort }]`; never host, admin user or secrets |
+| `POST /boxes/:id/pooler/resync` | – | `{ tenant }` (§5.1 re-sync). 400 for the shared box or one that requires TLS, 404 for an unknown box, 502 when the box or Supavisor fails |
 | `GET /projects?status=active\|deleted` | – | `[project]`, active by default. A project is `{ ref, name, status, box: { id, name, kind }, createdAt, deletedAt }` |
 | `POST /projects` | `{ name, ref?, boxId?, newBox? }` | 201 `project`. `ref` defaults to the slug of `name`, `boxId` to the shared box; `newBox: true` creates a managed box named after the ref (400 if managed boxes are off, or with `boxId`) |
 | `GET /projects/:ref` | – | `project` + `connections: [{ label, kind, masked }]`, `kind` `direct`, `session` or `transaction`; empty when the password will not decrypt |
@@ -667,6 +676,7 @@ hattisar backups list <ref>
 hattisar backups run <ref>
 hattisar backups restore <ref> <backup-id> --confirm <ref>
 hattisar boxes list
+hattisar boxes resync-pooler <id>
 Global: --json, --help, --version
 ```
 

@@ -423,8 +423,8 @@ roll it back. Anything that changed on the box after T is now out of step with t
 | Project restored from Trash | Registry active; the box has `<db>__deleted_<date>` | `alter database … rename` back and grant CONNECT again, by hand |
 | Owner password rotated | The role has the old password; apps have the new one | Rotate it again in hattisar |
 | hattisar restore of a dump into a project | Rolled back with everything else | Run it again if you want it |
-| Pooler tenant created or re-created (managed box restore) | The `hattisar_pooler_*` role has its old password; Supavisor keeps the new one, so pooler logins fail | Delete the tenant in Supavisor; hattisar re-creates it within 10 minutes |
-| Pooler tenant created (shared box restore) | Supavisor's own metadata rolled back too; the tenant is gone | Nothing: hattisar re-creates it within 10 minutes, unless the tenant survived and its role on another box was re-passworded after T; then delete the tenant as above |
+| Pooler tenant created or re-created (managed box restore) | The `hattisar_pooler_*` role has its old password; Supavisor keeps the new one, so pooler logins fail | Re-sync pooler on the Boxes page, or `hattisar boxes resync-pooler <id>` |
+| Pooler tenant created (shared box restore) | Supavisor's own metadata rolled back too; the tenant is gone | Nothing: hattisar re-creates it within 10 minutes, unless the tenant survived and its role on another box was re-passworded after T; then re-sync that box's pooler as above |
 | Managed box created (shared box restore) | Unaffected: it has its own volume | — |
 | hattisar backups in S3 | Unaffected | — |
 

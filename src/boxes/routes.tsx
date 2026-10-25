@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { type Context, Hono } from "hono";
 import type { AuthEnv } from "../auth/middleware.js";
 import type { ManagedBoxes } from "../managed/service.js";
 import { getBoxById, listBoxes } from "../registry/boxes.js";
@@ -53,13 +53,25 @@ function boxId(param: string): number {
   return /^\d+$/.test(param) ? Number(param) : Number.NaN;
 }
 
+// Only a tenant some box holds is echoed, so a crafted link cannot put its own text in the notice.
+function resyncNotice(c: Context<AuthEnv>, db: Registry): string | undefined {
+  const tenant = c.req.query("resynced");
+  if (tenant === undefined || !listBoxes(db).some((box) => box.poolerTenant === tenant)) {
+    return undefined;
+  }
+  return `Re-synced pooler tenant ${tenant}.`;
+}
+
 export function boxRoutes(deps: BoxServiceDeps & { managed?: ManagedBoxes }): Hono<AuthEnv> {
-  const { db, managed } = deps;
+  const { db, managed, pooler } = deps;
   const app = new Hono<AuthEnv>();
   const managedEnabled = managed !== undefined;
 
   app.get(BOXES_PAGE, (c) =>
-    renderPage(c, <BoxesPage rows={boxRows(db)} managedEnabled={managedEnabled} />),
+    renderPage(
+      c,
+      <BoxesPage rows={boxRows(db)} managedEnabled={managedEnabled} notice={resyncNotice(c, db)} />,
+    ),
   );
 
   app.get("/_hs/boxes/new", (c) => renderPage(c, <BoxFormPage />));
@@ -105,6 +117,21 @@ export function boxRoutes(deps: BoxServiceDeps & { managed?: ManagedBoxes }): Ho
       c,
       <BoxesPage rows={boxRows(db)} managedEnabled={managedEnabled} error={result.problem} />,
       409,
+    );
+  });
+
+  app.post("/_hs/boxes/:id/pooler/resync", async (c) => {
+    const box = getBoxById(db, boxId(c.req.param("id")));
+    if (!box || box.kind === "shared") return c.notFound();
+    const result = await pooler.resync(box);
+    if (result.ok) {
+      return c.redirect(`${BOXES_PAGE}?resynced=${encodeURIComponent(result.tenant)}`, 302);
+    }
+    if (result.reason === "not-found") return c.notFound();
+    return renderPage(
+      c,
+      <BoxesPage rows={boxRows(db)} managedEnabled={managedEnabled} error={result.problem} />,
+      result.reason === "refused" ? 400 : 502,
     );
   });
 

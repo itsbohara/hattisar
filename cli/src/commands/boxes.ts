@@ -1,5 +1,6 @@
+import { UsageError } from "../errors.js";
 import { printJson, printLines, table } from "../output.js";
-import type { Command } from "./command.js";
+import { type Command, usageLine } from "./command.js";
 
 interface Box {
   id: number;
@@ -35,4 +36,18 @@ const list: Command = {
   },
 };
 
-export const boxCommands = [list];
+const resyncPooler: Command = {
+  name: "boxes resync-pooler",
+  args: ["id"],
+  options: [],
+  usage: "boxes resync-pooler <id>",
+  summary: "Rebuild a box's pooler tenant; drops open pooled connections",
+  async run({ io, json, api }, [id = ""]) {
+    if (!/^\d+$/.test(id)) throw new UsageError(`${id} is not a box id`, usageLine(resyncPooler));
+    const result = await api()<{ tenant: string }>("POST", `/boxes/${id}/pooler/resync`);
+    if (json) printJson(io.stdout, result);
+    else printLines(io.stdout, `Re-synced pooler tenant ${result.tenant}`);
+  },
+};
+
+export const boxCommands = [list, resyncPooler];

@@ -105,7 +105,7 @@ export function createApp(
 
   const projectDeps = projectServiceDeps(config, registry, managed);
   const backups = backupDeps(config, registry);
-  app.route(API_PREFIX, apiRoutes({ ...projectDeps, managed }, backups));
+  app.route(API_PREFIX, apiRoutes({ ...projectDeps, managed, pooler }, backups));
 
   app.route(
     "/",
