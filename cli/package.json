@@ -1,6 +1,6 @@
 {
   "name": "hattisar",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Command line client for hattisar's JSON API",
   "license": "Apache-2.0",
   "repository": {
