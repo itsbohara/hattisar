@@ -10,11 +10,13 @@ import {
 import {
   attachedProblem,
   attachProject,
+  credentialProblems,
   detachProject,
   isAttached,
   updateProjectLogin,
 } from "../projects/attach.js";
 import { restoreProject, softDeleteProject } from "../projects/lifecycle.js";
+import { busyReason } from "../projects/locks.js";
 import { slugify } from "../projects/naming.js";
 import {
   createProject,
@@ -235,14 +237,16 @@ export function projectApiRoutes(deps: ProjectApiDeps): Hono<ApiEnv> {
     if (body === undefined) return badRequest(c, ["Body must be a JSON object."]);
     const problems = stringProblems(body, ["login", "password"]);
     if (problems.length > 0) return badRequest(c, problems);
-    const result = await updateProjectLogin(
-      deps,
-      found.project,
-      found.box,
-      body.login as string,
-      body.password as string,
-    );
-    if (!result.ok) return serviceFailure(c, db, found.project, result.problem);
+    const login = body.login as string;
+    const password = body.password as string;
+    const blank = credentialProblems(login, password);
+    if (blank.length > 0) return badRequest(c, blank);
+    const result = await updateProjectLogin(deps, found.project, found.box, login, password);
+    if (!result.ok) {
+      return busyReason(db, found.project) === undefined
+        ? badRequest(c, [result.problem])
+        : apiError(c, 409, result.problem);
+    }
     return c.json({ ok: true });
   });
 

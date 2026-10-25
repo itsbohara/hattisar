@@ -18,7 +18,11 @@ import { getApiTokenByHash } from "../../src/registry/api-tokens.js";
 import { insertBackup, markBackupDone } from "../../src/registry/backups.js";
 import { getBoxByName, getSharedBox, insertBox } from "../../src/registry/boxes.js";
 import { openRegistry, type Registry } from "../../src/registry/db.js";
-import { getProjectByRef, setProjectOwnerPassword } from "../../src/registry/projects.js";
+import {
+  getProjectByRef,
+  insertProject,
+  setProjectOwnerPassword,
+} from "../../src/registry/projects.js";
 import { decryptSecret, deriveSecretKey, encryptSecret } from "../../src/registry/secrets.js";
 import { API_PREFIX } from "../../src/studio/routes.js";
 import { RecordingPooler } from "../helpers/pooler.js";
@@ -833,6 +837,46 @@ describe("projects", () => {
       ]);
     });
 
+    it.each([
+      ["login", { login: "", password: "x" }, ["Login is required"]],
+      ["password", { login: "app2", password: "" }, ["Password is required"]],
+      ["both", { login: "", password: "" }, ["Login is required", "Password is required"]],
+    ])("answers a login update with a blank %s with 400", async (_, body, expected) => {
+      await attach();
+      expect(await problems(await call("PUT", "/projects/shop/login", body))).toEqual(expected);
+      expect(getProjectByRef(db, "shop")?.ownerRole).toBe("app");
+    });
+
+    it("answers a login update that cannot connect with 400, without the password", async () => {
+      await attach();
+      failOn = /rolsuper/;
+      const response = await call("PUT", "/projects/shop/login", {
+        login: "app2",
+        password: "second",
+      });
+      const [problem] = (await problems(response)) ?? [];
+      expect(problem).toContain("Could not log in to a as app2");
+      expect(problem).not.toContain("second");
+      expect(getProjectByRef(db, "shop")?.ownerRole).toBe("app");
+    });
+
+    it("answers a login update while a backup is running with 409", async () => {
+      await attach();
+      const project = getProjectByRef(db, "shop");
+      insertBackup(db, {
+        projectId: project?.id ?? 0,
+        kind: "manual",
+        bucket: "b",
+        s3Key: "k",
+      });
+      const response = await call("PUT", "/projects/shop/login", {
+        login: "app2",
+        password: "second",
+      });
+      expect(response.status).toBe(409);
+      expect(getProjectByRef(db, "shop")?.ownerRole).toBe("app");
+    });
+
     it("answers 409 for the attach-only endpoints on a created project", async () => {
       await create();
       const login = await call("PUT", "/projects/my-app/login", { login: "x", password: "y" });
@@ -973,6 +1017,31 @@ describe("projects", () => {
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({ ok: true });
       expect(statements).toContain('DROP DATABASE IF EXISTS "my_app" WITH (FORCE)');
+    });
+
+    it.each([
+      ["idle", false, { confirm: "shop" }],
+      ["busy", true, { confirm: "shop" }],
+      ["unconfirmed", false, {}],
+    ])("answers a restore into an attached project with 409 when %s", async (_, busy, body) => {
+      insertProject(db, {
+        ref: "shop",
+        name: "Shop",
+        boxId: getSharedBox(db)?.id ?? 0,
+        dbName: "shop",
+        ownerRole: "app",
+        ownerPasswordEnc: encryptSecret("app-secret", secretKey),
+        kind: "attached",
+      });
+      configureS3();
+      const backup = backupOf("shop");
+      if (busy) backupOf("shop", false);
+      const response = await call("POST", `/projects/shop/backups/${backup.id}/restore`, body);
+      expect(response.status).toBe(409);
+      expect(await response.json()).toEqual({
+        error: { message: "shop is attached; detach it instead." },
+      });
+      expect(statements).not.toContainEqual(expect.stringMatching(/^DROP DATABASE/));
     });
 
     it("answers a restore without S3 settings with 400", async () => {
