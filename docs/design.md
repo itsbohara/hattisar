@@ -502,6 +502,16 @@ every Docker call filters on it. A managed box whose only project is soft-delete
 restore starts it; purge removes container and volume. Removing a managed box with no projects
 drops its pooler tenant (§5.1) and removes container and volume.
 
+Operator mounts: `HATTISAR_MANAGED_BOX_MOUNTS` lists comma-separated `<host source>:<container
+target>` entries, which hattisar adds as read-only binds to every managed container it creates.
+`{box}` in a source becomes the box name (box names cannot hold `/` or `..`). Config load refuses a
+relative path, a `..` segment, `{box}` in a target, a target that is the data dir, inside it or one
+of its ancestors, a target used twice, and an empty entry. Existing containers are never changed. A
+missing source makes Docker refuse the create; box creation fails with Docker's message and rolls
+back. Environment variables are not offered: WAL-G reads `--config`, and env would put secrets in
+`docker inspect`. The PITR recipe ([`docs/pitr.md`](pitr.md)) mounts WAL-G and a per-box config
+this way.
+
 ## 11. Configuration
 
 | Env | Default | Notes |
@@ -518,6 +528,7 @@ drops its pooler tenant (§5.1) and removes container and volume.
 | `HATTISAR_PG_BIN_DIR` | `/usr/bin` | |
 | `HATTISAR_MANAGED_BOXES` | `false` | |
 | `HATTISAR_MANAGED_PORT_RANGE` | `55000-55999` | |
+| `HATTISAR_MANAGED_BOX_MOUNTS` | — | read-only bind mounts for new managed boxes (§10) |
 | `DOCKER_HOST` | `tcp://docker-proxy:2375` | managed boxes only |
 | `STUDIO_URL` | `http://studio:3000` | |
 | `PG_META_URL` | `http://meta:8080` | |
