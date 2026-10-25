@@ -718,8 +718,9 @@ A server release is a `v<version>` tag (first `v0.1.0`), separate from the CLI's
    notes, marked prerelease for a prerelease version.
 
 The bundle unpacks to `hattisar/`: `compose.yml`, `env.example`, `generate-env.sh`, `volumes/` (the
-db init SQL, `pooler.exs` and the `Caddyfile`) and `NOTICE`, the same layout as `docker/` plus the
-env generator.
+db init SQL, `pooler.exs` and the `Caddyfile`), `NOTICE`, and `compose.walg.yml` and
+`wal-g/Dockerfile` (the PITR recipe, [`docs/pitr.md`](pitr.md)): the same layout as `docker/` plus
+the env generator.
 Its `compose.yml` is `docker/compose.yml` with the hattisar image's default tag replaced by the
 exact version, so an install never drifts: `sh generate-env.sh env.example .env` (fresh secrets,
 never overwriting an existing `.env`), review `.env`, `docker compose up -d`. Nothing is built.

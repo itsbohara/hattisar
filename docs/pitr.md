@@ -16,12 +16,13 @@ is your own Postgres; set up PITR there with its own tools.
   once a minute while there are writes. Lose the box's disk and you lose about the last minute.
 - **Tested** by [`scripts/pitr-test.sh`](../scripts/pitr-test.sh), which the `PITR recipe`
   [workflow](../.github/workflows/pitr.yml) runs weekly and on changes to the recipe files and the
-  pinned images, against the S3-compatible RustFS that the dev stack runs. Real AWS S3 and R2 are not tested; see
-  [What is not tested](#what-is-not-tested).
+  pinned images, against the S3-compatible RustFS that the dev stack runs. Real AWS S3 and R2 are
+  not tested; see [What is not tested](#what-is-not-tested).
 
 Run the commands in the release directory (`/opt/hattisar` with the installer), or in `docker/` in a
-checkout. `<name>` is the managed box's name: its container is `hattisar-box-<name>` and its volume
-`hattisar_box_<name>`. The shared box is container `hattisar-db-1`, service `db`, volume
+checkout. With the installer, `/opt/hattisar` and its `.env` belong to root, so run them as root
+(`sudo -s`). `<name>` is the managed box's name: its container is `hattisar-box-<name>` and its
+volume `hattisar_box_<name>`. The shared box is container `hattisar-db-1`, service `db`, volume
 `hattisar_db-data`.
 
 ## Build WAL-G
@@ -245,6 +246,8 @@ cp compose.walg.yml compose.override.yml
 docker compose up -d db
 ```
 
+`compose.override.yml` is a copy: after an upgrade, compare it with the new `compose.walg.yml`.
+
 In a checkout, in `docker/`, every `docker compose` command in this file takes the dev stack's
 files plus the override:
 
@@ -301,8 +304,8 @@ For the shared box, drop `--config /etc/wal-g/walg.yaml` from both WAL-G lines.
 
 > **`recovery_target_action = 'promote'` is required.** The image sets `hot_standby = off`, which
 > turns Postgres's default `pause` into `shutdown`. Without the line, the box replays to T and shuts
-> down, `restart: unless-stopped` starts it again, and it replays and shuts down again: a restart
-> loop, refusing connections throughout. To fix it, stop the box, add the line with the helper
+> down. In testing, `restart: unless-stopped` then restarted it in a loop: replay, shut down, start
+> again, refusing connections throughout. To fix it, stop the box, add the line with the helper
 > below (a `restore.sh` holding only
 > `echo "recovery_target_action = 'promote'" >>/var/lib/postgresql/data/postgresql.auto.conf`),
 > and start it again.
@@ -379,7 +382,8 @@ The commands name a managed box. For the shared box, use `hattisar-db-1` in `doc
    docker exec -u postgres hattisar-box-<name> psql -U supabase_admin -d postgres -c "select pg_is_in_recovery()"
    ```
 
-   The log names the commit it stopped before and its time; `pg_is_in_recovery()` is `f`.
+   `pg_isready` fails while the box replays; repeat it until it reports `accepting connections`.
+   Then the log names the commit it stopped before and its time, and `pg_is_in_recovery()` is `f`.
 
 6. **Clean up** the recovery target, so a later restart does not try it again:
 
