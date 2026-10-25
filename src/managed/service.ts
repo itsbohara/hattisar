@@ -7,7 +7,7 @@ import {
   boxInUseProblem,
   type RemoveResult,
 } from "../boxes/service.js";
-import type { Config, PortRange } from "../config.js";
+import type { BindMount, Config, PortRange } from "../config.js";
 import type { PoolerTenants } from "../pooler/tenants.js";
 import { type Box, deleteBox, getBoxByName, insertBox, listBoxes } from "../registry/boxes.js";
 import type { Registry } from "../registry/db.js";
@@ -49,6 +49,7 @@ export interface ManagedBoxDeps {
   check: (conn: BoxConnection) => Promise<E1Result>;
   waitReady: (conn: BoxConnection) => Promise<void>;
   pooler: PoolerTenants;
+  mounts: BindMount[];
 }
 
 class ProblemsError extends Error {
@@ -188,6 +189,10 @@ export class ManagedBoxes {
         network,
         hostPort,
         env: { POSTGRES_PASSWORD: password },
+        mounts: this.deps.mounts.map((mount) => ({
+          source: mount.source.replaceAll("{box}", name),
+          target: mount.target,
+        })),
       });
       created.container = true;
       try {
@@ -231,5 +236,6 @@ export function createManagedBoxes(
     check: checkBox,
     waitReady: (conn) => waitUntilReady(conn),
     pooler,
+    mounts: config.managedBoxMounts,
   });
 }

@@ -1,13 +1,12 @@
 import { networkInterfaces } from "node:os";
 import Docker from "dockerode";
-import { ConfigError } from "../config.js";
+import { type BindMount, ConfigError, MANAGED_DATA_DIR } from "../config.js";
 import { type NetworkSummary, networkFor } from "./network.js";
 
 export const MANAGED_LABEL = "hattisar.managed";
 export const BOX_LABEL = "hattisar.box";
 const MANAGED_FILTER = `${MANAGED_LABEL}=true`;
 const POSTGRES_PORT = "5432/tcp";
-const DATA_DIR = "/var/lib/postgresql/data";
 
 export class UnmanagedObjectError extends Error {
   override name = "UnmanagedObjectError";
@@ -21,6 +20,7 @@ export interface ContainerSpec {
   network: string;
   hostPort: number;
   env: Record<string, string>;
+  mounts: BindMount[];
 }
 
 // What the service needs from Docker; ManagedDocker is the real one, tests may substitute.
@@ -136,7 +136,15 @@ export class ManagedDocker implements DockerApi {
       ExposedPorts: { [POSTGRES_PORT]: {} },
       HostConfig: {
         PortBindings: { [POSTGRES_PORT]: [{ HostPort: String(spec.hostPort) }] },
-        Mounts: [{ Type: "volume", Source: spec.volume, Target: DATA_DIR }],
+        Mounts: [
+          { Type: "volume", Source: spec.volume, Target: MANAGED_DATA_DIR },
+          ...spec.mounts.map((mount) => ({
+            Type: "bind" as const,
+            Source: mount.source,
+            Target: mount.target,
+            ReadOnly: true,
+          })),
+        ],
         RestartPolicy: { Name: "unless-stopped" },
       },
       NetworkingConfig: { EndpointsConfig: { [spec.network]: {} } },

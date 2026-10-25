@@ -75,10 +75,17 @@ WAL-G encrypts everything with the libsodium key before it leaves the box.
 
 ## Managed boxes
 
-A managed box takes no extra mounts or environment, so WAL-G and its config go into the container
-with `docker cp`. They live in the container's own layer: they survive `docker restart`, stop and
-start, and hattisar's own stop and start, but not a recreated container (see
-[the disk-fill trap](#the-disk-fill-trap)). Repeat this section for each box.
+WAL-G and its config get into a box in one of two ways:
+
+- **Mounts, for new boxes.** hattisar bind-mounts them, read-only, into every managed box it
+  creates. The mounts are part of the container's spec, so the files survive anything that
+  recreates the container with the same spec. A hand recreation must repeat them.
+- **`docker cp`, for boxes that exist already.** hattisar never changes an existing container, so
+  the mounts do not reach it. The files live in the container's own layer: they survive
+  `docker restart`, stop and start, and hattisar's own stop and start, but not a recreated
+  container.
+
+Either way, see [the disk-fill trap](#the-disk-fill-trap). Repeat this section for each box.
 
 ### Enable archiving
 
@@ -104,20 +111,63 @@ EOF
 ```
 
 `PGDATABASE` is required: without it `backup-push` tries the database `supabase_admin`, which does
-not exist. Copy the binary and the config in, then turn archiving on:
+not exist.
+
+#### New box: mount the files
+
+Once, [build WAL-G](#build-wal-g), add the mounts to `.env` and recreate hattisar so it reads
+them. The paths are the installer's `/opt/hattisar`; in a checkout, use absolute paths under
+`docker/`.
+
+```
+HATTISAR_MANAGED_BOX_MOUNTS=/opt/hattisar/walg/wal-g:/usr/local/bin/wal-g,/opt/hattisar/walg/boxes/{box}.yaml:/etc/wal-g/walg.yaml
+```
+
+```sh
+docker compose up -d
+```
+
+Each entry is `<host source>:<container target>`, comma-separated, both absolute. `{box}` in a
+source becomes the box's name; a target cannot use it. hattisar refuses to start on a bad value:
+a relative path, a `..` segment, an empty entry, a target used twice, or a target that is the data
+dir (`/var/lib/postgresql/data`), inside it or above it. On Docker Desktop (macOS), the sources must
+be under a path shared with Docker (Settings → Resources → File sharing).
+
+Then, for each box, put its config in place **before** creating the box. Every box needs its own
+file, with its own `WALG_S3_PREFIX`. The box's `postgres` user must be able to read it: that is
+`uid=100(postgres) gid=101(postgres)` in the pinned image, which
+`docker run --rm --entrypoint id supabase/postgres:17.6.1.136 postgres` prints.
+
+```sh
+mkdir -p -m 700 walg/boxes
+install -o 100 -g 101 -m 600 walg.yaml walg/boxes/<name>.yaml && rm walg.yaml
+```
+
+Create the box in hattisar. If a source is missing, creation fails with Docker's message, for
+example `Could not start box <name>: invalid mount config for type "bind": bind source path does not
+exist: …`, and leaves nothing behind. To change the config later, edit the host file; a box reads a
+replaced file (a new inode) only after its next restart.
+
+#### Existing box: copy the files in
 
 ```sh
 docker cp walg/wal-g hattisar-box-<name>:/usr/local/bin/wal-g
 docker exec -u root hattisar-box-<name> mkdir -p /etc/wal-g
 docker cp walg.yaml hattisar-box-<name>:/etc/wal-g/walg.yaml
 docker exec -u root hattisar-box-<name> sh -c "chown postgres:postgres /etc/wal-g/walg.yaml && chmod 600 /etc/wal-g/walg.yaml"
+```
+
+`/etc/wal-g` does not exist in the image, so `docker cp` of the config fails without the `mkdir`.
+
+#### Turn archiving on
+
+```sh
 docker exec -u postgres hattisar-box-<name> psql -U supabase_admin -d postgres -c "alter system set archive_mode = on"
 docker exec -u postgres hattisar-box-<name> psql -U supabase_admin -d postgres -c "alter system set archive_command = '/usr/local/bin/wal-g --config /etc/wal-g/walg.yaml wal-push %p'"
 docker exec -u postgres hattisar-box-<name> psql -U supabase_admin -d postgres -c "alter system set archive_timeout = '60s'"
 docker restart hattisar-box-<name>
 ```
 
-`/etc/wal-g` does not exist in the image, so `docker cp` of the config fails without the `mkdir`.
 `psql` needs `-d postgres` for the same reason as `PGDATABASE`. The settings go into
 `postgresql.auto.conf` on the data volume, so they travel with the box's data.
 
@@ -184,9 +234,10 @@ docker logs hattisar-box-<name> 2>&1 | grep 'archive command failed'
 
 ### The disk-fill trap
 
-> **Recreating a managed box's container by hand loses WAL-G and fills the disk.** hattisar never
-> recreates a managed container, but a hand recreation (for example to change its image) starts
-> from the image again. The box's data still says `archive_mode = on`, so every archive attempt
+> **Recreating a managed box's container without WAL-G fills the disk.** hattisar never recreates
+> a managed container, but a hand recreation (for example to change its image) starts from the
+> image again. Files copied in with `docker cp` are gone, and mounted files are there only if the
+> new container repeats the mounts. The box's data still says `archive_mode = on`, so every archive attempt
 > fails, and Postgres keeps every WAL segment until it succeeds. `pg_wal` grows until the disk is
 > full.
 
@@ -195,8 +246,8 @@ the archiver process dies before it counts the failure and restarts about every 
 **`failed_count` stays at 0.** Only `pending`, a stale `last_archived_time` and the log line
 `archive command failed with exit code 127` show it. That is why the check above looks at all three.
 
-Fix it by copying WAL-G and the config back in (the first four commands of
-[Enable archiving](#enable-archiving)). The backlog drains within seconds. To stop archiving
+Fix it by recreating the container with the mounts, or by copying WAL-G and the config back in
+([Existing box: copy the files in](#existing-box-copy-the-files-in)). The backlog drains within seconds. To stop archiving
 instead (**untested**): `alter system reset archive_mode`, `alter system reset archive_command`,
 then restart the box.
 
@@ -284,7 +335,7 @@ commit after T.
 its name, for example `base_000000010000000000000002`. `LATEST` is right only while no backup newer
 than T exists; after a restore and a new backup, it never is.
 
-**Write `restore.sh`** next to `walg.yaml` with the backup name and T filled in. It runs in a
+**Write `restore.sh`** in the release directory with the backup name and T filled in. It runs in a
 helper container: it empties the data dir, fetches the base backup and sets up recovery. For a
 managed box:
 
@@ -340,8 +391,9 @@ The commands name a managed box. For the shared box, use `hattisar-db-1` in `doc
    For the shared box, copy `hattisar_db-data` into, say, `db-data-before-pitr`.
 
 4. **Empty, fetch and configure** with `restore.sh`. For a managed box the helper runs on the box's
-   network and volume. It starts as root, copies `walg.yaml` into its own layer owned by postgres
-   (the mounted file is yours, mode 600, and postgres cannot read it), then drops to postgres:
+   network and volume. It mounts WAL-G and the config itself, so it works the same whether the box
+   has mounts or not. It starts as root, copies the config into its own layer owned by postgres
+   (whoever owns the file on the host), then drops to postgres:
 
    ```sh
    docker run --rm --network hattisar_default \
@@ -352,6 +404,7 @@ The commands name a managed box. For the shared box, use `hattisar-db-1` in `doc
      sh "$(cat restore.sh)"
    ```
 
+   For a box with mounts, mount `$PWD/walg/boxes/<name>.yaml` in place of `$PWD/walg.yaml`.
    `hattisar_default` is the network the box runs on; in doubt,
    `docker inspect -f '{{range $name, $_ := .NetworkSettings.Networks}}{{$name}}{{end}}' hattisar-box-<name>`
    prints it. For the shared box the helper is a one-off `db` with the override's mount and

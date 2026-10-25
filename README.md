@@ -168,6 +168,7 @@ Set in `.env` next to `compose.yml` (`docker/.env` in a checkout; template:
 | `HATTISAR_PG_BIN_DIR` | `/usr/bin` | Where `pg_dump`/`pg_restore` live (the image ships PostgreSQL 18 client). |
 | `HATTISAR_MANAGED_BOXES` | `false` | Turns managed boxes on; also start the `managed-boxes` profile. |
 | `HATTISAR_MANAGED_PORT_RANGE` | `55000-55999` | Host ports for managed boxes. |
+| `HATTISAR_MANAGED_BOX_MOUNTS` | — | Read-only bind mounts added to every new managed box: comma-separated `<host source>:<container target>`, both absolute; `{box}` in a source becomes the box name. Existing boxes are unchanged. Used by [`docs/pitr.md`](docs/pitr.md). |
 | `DOCKER_HOST` | `tcp://docker-proxy:2375` | Managed boxes only. Compose sets it to the proxy; the host's value is never used. |
 | `STUDIO_URL` | `http://studio:3000` | |
 | `PG_META_URL` | `http://meta:8080` | |

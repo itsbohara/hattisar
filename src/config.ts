@@ -1,6 +1,15 @@
+import { posix } from "node:path";
+
+export const MANAGED_DATA_DIR = "/var/lib/postgresql/data";
+
 export interface PortRange {
   start: number;
   end: number;
+}
+
+export interface BindMount {
+  source: string;
+  target: string;
 }
 
 export interface Config {
@@ -16,6 +25,7 @@ export interface Config {
   pgBinDir: string;
   managedBoxes: boolean;
   managedPortRange: PortRange;
+  managedBoxMounts: BindMount[];
   dockerHost: string;
   studioUrl: string;
   pgMetaUrl: string;
@@ -108,6 +118,22 @@ class EnvReader {
     return { start, end };
   }
 
+  bindMounts(name: string): BindMount[] {
+    const value = this.raw(name);
+    if (value === undefined) return [];
+    const mounts: BindMount[] = [];
+    for (const entry of value.split(",").map((part) => part.trim())) {
+      const [source = "", target = "", ...rest] = entry.split(":");
+      const problem =
+        rest.length > 0 || !source || !target
+          ? "must be <source>:<target>"
+          : bindMountProblem(source, target, mounts);
+      if (problem !== undefined) throw new ConfigError(`${name}: ${entry}: ${problem}`);
+      mounts.push({ source, target: normalizedPath(target) });
+    }
+    return mounts;
+  }
+
   url(name: string, fallback: string): string {
     const value = this.string(name, fallback);
     if (!URL.canParse(value) || !/^https?:$/.test(new URL(value).protocol)) {
@@ -119,6 +145,37 @@ class EnvReader {
 
 function parseInteger(value: string): number | undefined {
   return /^\d+$/.test(value) ? Number(value) : undefined;
+}
+
+function bindMountProblem(
+  source: string,
+  target: string,
+  earlier: BindMount[],
+): string | undefined {
+  const pathProblem = (role: string, path: string) => {
+    if (!path.startsWith("/")) return `${role} must be an absolute path`;
+    if (path.split("/").includes("..")) return `${role} must not contain .. segments`;
+    return undefined;
+  };
+  const problem = pathProblem("source", source) ?? pathProblem("target", target);
+  if (problem !== undefined) return problem;
+  if (target.includes("{box}")) return "target must not contain {box}";
+  const normalized = normalizedPath(target);
+  if (normalized === MANAGED_DATA_DIR || normalized.startsWith(`${MANAGED_DATA_DIR}/`)) {
+    return `target must not be ${MANAGED_DATA_DIR} or inside it`;
+  }
+  if (normalized === "/" || MANAGED_DATA_DIR.startsWith(`${normalized}/`)) {
+    return `target must not contain ${MANAGED_DATA_DIR}`;
+  }
+  if (earlier.some((mount) => mount.target === normalized)) {
+    return "target is already mounted by an earlier entry";
+  }
+  return undefined;
+}
+
+function normalizedPath(path: string): string {
+  const normalized = posix.normalize(path);
+  return normalized.length > 1 ? normalized.replace(/\/$/, "") : normalized;
 }
 
 function isPort(value: number): boolean {
@@ -140,6 +197,7 @@ export function loadConfig(env: Env = process.env): Config {
     pgBinDir: read.string("HATTISAR_PG_BIN_DIR", "/usr/bin"),
     managedBoxes: read.boolean("HATTISAR_MANAGED_BOXES", false),
     managedPortRange: read.portRange("HATTISAR_MANAGED_PORT_RANGE", { start: 55000, end: 55999 }),
+    managedBoxMounts: read.bindMounts("HATTISAR_MANAGED_BOX_MOUNTS"),
     dockerHost: read.string("DOCKER_HOST", "tcp://docker-proxy:2375"),
     studioUrl: read.url("STUDIO_URL", "http://studio:3000"),
     pgMetaUrl: read.url("PG_META_URL", "http://meta:8080"),
