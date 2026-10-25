@@ -377,6 +377,7 @@ describe("boxes", () => {
       cookie,
     );
     expect(restored.status, await restored.clone().text()).toBe(302);
+    expect(restored.headers.get("location")).toBe(`/_hs/projects/${nsuRef}/backups?restored`);
     expect(await ownerQuery(direct, "select id from public.widgets order by id")).toEqual([
       { id: 1 },
     ]);
