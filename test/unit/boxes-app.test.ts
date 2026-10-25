@@ -39,7 +39,7 @@ beforeEach(() => {
   dataDir = mkdtempSync(join(tmpdir(), "hattisar-boxes-"));
   db = openRegistry(dataDir);
   checked = [];
-  nextResult = { ok: true, problems: [] };
+  nextResult = { ok: true, problems: [], superuser: true };
   pooler = new RecordingPooler(db);
   app = boxRoutes({
     db,
@@ -96,6 +96,7 @@ describe("seedSharedBox", () => {
       poolerTenant: "hattisar",
       poolerSessionPort: 15432,
       poolerTransactionPort: 6543,
+      adminSuperuser: true,
     });
     expect(decryptSecret(shared?.adminPasswordEnc ?? "", secretKey)).toBe("rotated");
   });
@@ -115,9 +116,20 @@ describe("registering a box", () => {
       },
     ]);
     const box = getBoxByName(db, "prod-eu");
-    expect(box).toMatchObject({ kind: "registered", devOnly: true, publicPort: 6543 });
+    expect(box).toMatchObject({
+      kind: "registered",
+      devOnly: true,
+      publicPort: 6543,
+      adminSuperuser: true,
+    });
     expect(box?.adminPasswordEnc).not.toContain(PASSWORD);
     expect(decryptSecret(box?.adminPasswordEnc ?? "", secretKey)).toBe(PASSWORD);
+  });
+
+  it("records a non-superuser admin that E1 accepted", async () => {
+    nextResult = { ok: true, problems: [], superuser: false };
+    expect((await post("/_hs/boxes", form)).status).toBe(302);
+    expect(getBoxByName(db, "prod-eu")?.adminSuperuser).toBe(false);
   });
 
   it("ensures the new box's pooler tenant", async () => {
@@ -132,14 +144,17 @@ describe("registering a box", () => {
       ok: false,
       problems: [
         "Extension not available: uuid-ossp",
-        "Admin user supabase_admin is not a superuser",
+        "Admin user supabase_admin needs to be a superuser, or have CREATEDB and CREATEROLE",
       ],
+      superuser: false,
     };
     const response = await post("/_hs/boxes", form);
     expect(response.status).toBe(400);
     const html = await response.text();
     expect(html).toContain("<li>Extension not available: uuid-ossp</li>");
-    expect(html).toContain("<li>Admin user supabase_admin is not a superuser</li>");
+    expect(html).toContain(
+      "<li>Admin user supabase_admin needs to be a superuser, or have CREATEDB and CREATEROLE</li>",
+    );
     expect(html).toContain('value="pg.internal"');
     expect(html).not.toContain(PASSWORD);
     expect(listBoxes(db)).toEqual([]);
@@ -182,6 +197,15 @@ describe("editing and removing", () => {
     const updated = getBoxByName(db, "prod-eu");
     expect(updated?.publicHost).toBe("new.example.test");
     expect(updated?.adminPasswordEnc).toBe(box.adminPasswordEnc);
+  });
+
+  it("stores the edited admin's kind before ensuring the pooler", async () => {
+    const box = await registered();
+    pooler.calls = [];
+    nextResult = { ok: true, problems: [], superuser: false };
+    await post(`/_hs/boxes/${box.id}`, { ...form, adminUser: "app_admin" });
+    expect(getBoxByName(db, "prod-eu")?.adminSuperuser).toBe(false);
+    expect(pooler.calls[0]?.box).toMatchObject({ adminSuperuser: false });
   });
 
   it("ensures the pooler tenant against the updated row", async () => {

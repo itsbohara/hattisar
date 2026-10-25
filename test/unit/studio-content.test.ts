@@ -68,6 +68,7 @@ beforeAll(async () => {
     poolerSessionPort: 54322,
     poolerTransactionPort: 6543,
     containerName: null,
+    adminSuperuser: true,
   });
   for (const ref of ["alpha", "bravo", "gone"]) {
     ids[ref] = insertProject(registry, {

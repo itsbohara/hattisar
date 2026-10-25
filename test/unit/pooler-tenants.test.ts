@@ -99,6 +99,7 @@ function addBox(overrides: Partial<NewBox> = {}): Box {
     poolerSessionPort: null,
     poolerTransactionPort: null,
     containerName: null,
+    adminSuperuser: true,
     ...overrides,
   });
 }

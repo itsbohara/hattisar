@@ -147,6 +147,7 @@ export class ManagedBoxes {
         poolerSessionPort: null,
         poolerTransactionPort: null,
         containerName,
+        adminSuperuser: true,
       });
       await this.deps.pooler.ensure(box);
       return { ok: true, box };

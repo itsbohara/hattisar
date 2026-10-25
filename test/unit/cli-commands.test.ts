@@ -88,6 +88,7 @@ function box(name: string, kind: "shared" | "registered", pooler: boolean) {
     poolerSessionPort: pooler ? 54322 : null,
     poolerTransactionPort: pooler ? 6543 : null,
     containerName: null,
+    adminSuperuser: true,
   });
 }
 

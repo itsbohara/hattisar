@@ -114,7 +114,7 @@ async function validateAndCheck(
   form: BoxForm,
   password: string,
   existingId?: number,
-): Promise<ValidBox | string[]> {
+): Promise<(ValidBox & { adminSuperuser: boolean }) | string[]> {
   const valid = validate(form, existingId === undefined);
   if (Array.isArray(valid)) return valid;
   const sameName = getBoxByName(db, valid.name);
@@ -128,7 +128,7 @@ async function validateAndCheck(
     password,
     sslmode: valid.sslmode,
   });
-  return result.ok ? valid : result.problems;
+  return result.ok ? { ...valid, adminSuperuser: result.superuser } : result.problems;
 }
 
 export async function registerBox(deps: BoxServiceDeps, form: BoxForm): Promise<BoxResult> {

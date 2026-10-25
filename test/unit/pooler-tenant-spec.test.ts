@@ -25,6 +25,7 @@ function box(overrides: Partial<Box>): Box {
     poolerSessionPort: null,
     poolerTransactionPort: null,
     containerName: null,
+    adminSuperuser: true,
     createdAt: "2026-01-01T00:00:00.000Z",
     ...overrides,
   };

@@ -216,6 +216,7 @@ describe("the new-project form", () => {
       poolerSessionPort: null,
       poolerTransactionPort: null,
       containerName: null,
+      adminSuperuser: true,
     });
     const html = await (await app.request("/_hs/projects/new")).text();
     expect(html).toContain(

@@ -89,6 +89,7 @@ beforeEach(() => {
     poolerSessionPort: 54322,
     poolerTransactionPort: 6543,
     containerName: "hs-db",
+    adminSuperuser: true,
   });
   app = createApp(appConfig(), db);
 });
@@ -266,6 +267,7 @@ describe("POST /boxes/:id/pooler/resync", () => {
       poolerSessionPort: 54322,
       poolerTransactionPort: 6543,
       containerName: "hs-box-edge",
+      adminSuperuser: true,
     }).id;
   });
 
@@ -510,6 +512,7 @@ describe("projects", () => {
       poolerSessionPort: 54322,
       poolerTransactionPort: 6543,
       containerName: null,
+      adminSuperuser: true,
     });
     await create({ name: "XYZ", ref: "xyz", boxId: box.id });
     const response = await call("GET", "/projects/xyz/connections");

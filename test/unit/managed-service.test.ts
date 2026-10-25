@@ -112,7 +112,7 @@ beforeEach(() => {
     portRange: { start: 55000, end: 55009 },
     check: async (conn) => {
       checked.push(conn);
-      return { ok: e1Problems.length === 0, problems: e1Problems };
+      return { ok: e1Problems.length === 0, problems: e1Problems, superuser: true };
     },
     waitReady: async () => {},
     mounts: [],
@@ -153,6 +153,7 @@ describe("creating a managed box", () => {
       publicHost: "db.example.test",
       publicPort: 55001,
       containerName: "hattisar-box-prod-eu",
+      adminSuperuser: true,
     });
     expect(pooler.calls).toEqual([{ action: "ensure", box, rowExists: true }]);
     const container = docker.containers.get("hattisar-box-prod-eu");

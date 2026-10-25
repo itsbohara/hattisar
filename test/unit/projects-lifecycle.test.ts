@@ -425,6 +425,7 @@ describe("a box whose admin password cannot be decrypted", () => {
       poolerSessionPort: null,
       poolerTransactionPort: null,
       containerName: null,
+      adminSuperuser: true,
     });
   }
 

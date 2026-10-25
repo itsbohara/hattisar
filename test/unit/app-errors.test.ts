@@ -37,6 +37,7 @@ beforeAll(() => {
     poolerSessionPort: 54322,
     poolerTransactionPort: 6543,
     containerName: null,
+    adminSuperuser: true,
   });
   insertProject(registry, {
     ref: "my-app",
