@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { BackupDeps } from "../backups/service.js";
 import { type PoolerTenants, SHARED_BOX_POOLER } from "../pooler/tenants.js";
+import { attachableDatabases } from "../projects/attach.js";
 import { getBoxById, listBoxes } from "../registry/boxes.js";
 import { type ApiEnv, requireApiToken } from "./auth.js";
 import { backupApiRoutes } from "./backups.js";
@@ -31,6 +32,19 @@ export function apiRoutes(deps: ApiDeps, backupDeps: BackupDeps): Hono<ApiEnv> {
       })),
     ),
   );
+
+  v1.get("/boxes/:id/databases", async (c) => {
+    const id = c.req.param("id");
+    const box = /^\d+$/.test(id) ? getBoxById(db, Number(id)) : undefined;
+    if (!box) return notFound(c);
+    const result = await attachableDatabases(deps, box);
+    if (!result.ok) {
+      return box.kind === "registered"
+        ? apiError(c, 502, result.problem)
+        : badRequest(c, [result.problem]);
+    }
+    return c.json(result.databases);
+  });
 
   v1.post("/boxes/:id/pooler/resync", async (c) => {
     const id = c.req.param("id");

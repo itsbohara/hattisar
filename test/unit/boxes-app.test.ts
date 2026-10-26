@@ -244,6 +244,12 @@ describe("editing and removing", () => {
     expect(pooler.calls).toEqual([{ action: "drop", box, rowExists: true }]);
   });
 
+  it("links a registered box to attaching one of its databases", async () => {
+    const box = await registered();
+    const html = await (await app.request("/_hs/boxes")).text();
+    expect(html).toContain(`href="/_hs/projects/attach?box=${box.id}"`);
+  });
+
   it("does not let the UI edit or remove the shared box", async () => {
     seedSharedBox(db, config(), secretKey);
     const shared = getSharedBox(db);

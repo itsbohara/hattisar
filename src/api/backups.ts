@@ -2,6 +2,7 @@ import { type Context, Hono } from "hono";
 import { restoreIntoProject } from "../backups/restore.js";
 import { type BackupDeps, NOT_CONFIGURED, runBackup } from "../backups/service.js";
 import { findAccessibleProject, type ProjectAndBox } from "../projects/access.js";
+import { attachedProblem, isAttached } from "../projects/attach.js";
 import type { ProjectServiceDeps } from "../projects/service.js";
 import { type Backup, getBackup, listBackups } from "../registry/backups.js";
 import type { Project } from "../registry/projects.js";
@@ -55,6 +56,7 @@ export function backupApiRoutes(deps: BackupDeps, projectDeps: ProjectServiceDep
     const target = restorableBackup(c);
     if (!target) return notFound(c);
     const { found, backup } = target;
+    if (isAttached(found.project)) return apiError(c, 409, attachedProblem(found.project.ref));
     const body = await jsonObject(c);
     if (body === undefined) return badRequest(c, ["Body must be a JSON object."]);
     if (body.confirm !== found.project.ref) {

@@ -18,7 +18,11 @@ import { getApiTokenByHash } from "../../src/registry/api-tokens.js";
 import { insertBackup, markBackupDone } from "../../src/registry/backups.js";
 import { getBoxByName, getSharedBox, insertBox } from "../../src/registry/boxes.js";
 import { openRegistry, type Registry } from "../../src/registry/db.js";
-import { getProjectByRef, setProjectOwnerPassword } from "../../src/registry/projects.js";
+import {
+  getProjectByRef,
+  insertProject,
+  setProjectOwnerPassword,
+} from "../../src/registry/projects.js";
 import { decryptSecret, deriveSecretKey, encryptSecret } from "../../src/registry/secrets.js";
 import { API_PREFIX } from "../../src/studio/routes.js";
 import { RecordingPooler } from "../helpers/pooler.js";
@@ -350,6 +354,7 @@ describe("unexpected errors", () => {
 describe("projects", () => {
   let statements: string[];
   let failOn: RegExp | undefined;
+  let rowsFor: (sql: string) => unknown[];
   let api: Hono;
 
   const fakeAdmin: AdminClientRunner = async (_conn, run) => {
@@ -357,7 +362,8 @@ describe("projects", () => {
       query: async (sql: string) => {
         statements.push(sql);
         if (failOn?.test(sql)) throw new Error("boom");
-        return { rowCount: 0, rows: [] };
+        const rows = rowsFor(sql);
+        return { rowCount: rows.length, rows };
       },
     };
     return run(client as unknown as pg.Client);
@@ -366,6 +372,12 @@ describe("projects", () => {
   beforeEach(() => {
     statements = [];
     failOn = undefined;
+    rowsFor = (sql) =>
+      /datistemplate/.test(sql)
+        ? [{ datname: "a" }, { datname: "b" }]
+        : /rolsuper/.test(sql)
+          ? [{ rolsuper: false }]
+          : [];
     api = new Hono();
     api.route(
       API_PREFIX,
@@ -410,6 +422,7 @@ describe("projects", () => {
     expect(body).toEqual({
       ref: "my-app",
       name: "My App",
+      kind: "created",
       status: "active",
       box: { id: expect.any(Number), name: "shared", kind: "shared" },
       createdAt: expect.any(String),
@@ -658,6 +671,255 @@ describe("projects", () => {
     });
   });
 
+  describe("attached projects", () => {
+    let registeredId: number;
+
+    beforeEach(() => {
+      registeredId = insertBox(db, {
+        name: "rds",
+        kind: "registered",
+        devOnly: false,
+        host: "rds.internal",
+        port: 5432,
+        adminUser: "postgres",
+        adminPasswordEnc: encryptSecret(BOX_ADMIN_PASSWORD, secretKey),
+        sslmode: "disable",
+        publicHost: "rds.example.test",
+        publicPort: 5432,
+        poolerTenant: null,
+        poolerSessionPort: null,
+        poolerTransactionPort: null,
+        containerName: null,
+        adminSuperuser: true,
+      }).id;
+    });
+
+    const attachBody = (overrides: Record<string, unknown> = {}) => ({
+      name: "Shop",
+      boxId: registeredId,
+      database: "a",
+      login: "app",
+      password: "app-secret",
+      ...overrides,
+    });
+
+    async function attach(overrides: Record<string, unknown> = {}) {
+      const response = await call("POST", "/projects/attach", attachBody(overrides));
+      expect(response.status).toBe(201);
+      return response;
+    }
+
+    it("lists the attachable databases of a registered box", async () => {
+      const response = await call("GET", `/boxes/${registeredId}/databases`);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual(["a", "b"]);
+    });
+
+    it("refuses the databases of the shared box with 400", async () => {
+      const response = await call("GET", `/boxes/${getSharedBox(db)?.id}/databases`);
+      expect(await problems(response)).toEqual([
+        expect.stringContaining("Only registered boxes can attach databases"),
+      ]);
+    });
+
+    it("answers 404 for an unknown or non-numeric box id", async () => {
+      expect((await call("GET", "/boxes/999/databases")).status).toBe(404);
+      expect((await call("GET", "/boxes/abc/databases")).status).toBe(404);
+    });
+
+    it("answers 502 when the box cannot be queried, without its password", async () => {
+      failOn = /datistemplate/;
+      const response = await call("GET", `/boxes/${registeredId}/databases`);
+      expect(response.status).toBe(502);
+      const text = await response.text();
+      expect(text).toContain("Could not list the databases of box rds");
+      expect(text).not.toContain(BOX_ADMIN_PASSWORD);
+    });
+
+    it("attaches a database and defaults the ref to the slugified name", async () => {
+      const response = await attach();
+      expect(await response.json()).toEqual({
+        ref: "shop",
+        name: "Shop",
+        kind: "attached",
+        status: "active",
+        box: { id: registeredId, name: "rds", kind: "registered" },
+        createdAt: expect.any(String),
+        deletedAt: null,
+      });
+      expect(getProjectByRef(db, "shop")).toMatchObject({ dbName: "a", ownerRole: "app" });
+    });
+
+    it("answers 400 with problems when the login cannot connect, without the password", async () => {
+      failOn = /rolsuper/;
+      const response = await call("POST", "/projects/attach", attachBody());
+      const body = await response.text();
+      expect(response.status).toBe(400);
+      expect(body).toContain("Could not log in to a as app");
+      expect(body).not.toContain("app-secret");
+    });
+
+    it.each([
+      ["no body", undefined, ["Body must be a JSON object."]],
+      [
+        "wrong field types",
+        { name: 1, ref: 2, boxId: "3", database: 4, login: 5, password: 6 },
+        [
+          "name must be a string.",
+          "database must be a string.",
+          "login must be a string.",
+          "password must be a string.",
+          "ref must be a string.",
+          "boxId must be an integer.",
+        ],
+      ],
+    ])("answers an attach with %s with 400", async (_, body, expected) => {
+      expect(await problems(await call("POST", "/projects/attach", body))).toEqual(expected);
+    });
+
+    it("answers 400 for the shared box", async () => {
+      const response = await call(
+        "POST",
+        "/projects/attach",
+        attachBody({ boxId: getSharedBox(db)?.id }),
+      );
+      expect(await problems(response)).toEqual([
+        expect.stringContaining("Only registered boxes can attach databases"),
+      ]);
+    });
+
+    it("includes kind in the project list and detail", async () => {
+      await create();
+      await attach();
+      const list = (await (await call("GET", "/projects")).json()) as {
+        ref: string;
+        kind: string;
+      }[];
+      expect(list.map(({ ref, kind }) => [ref, kind]).sort()).toEqual([
+        ["my-app", "created"],
+        ["shop", "attached"],
+      ]);
+      expect(await (await call("GET", "/projects/shop")).json()).toMatchObject({
+        kind: "attached",
+        connections: [{ kind: "direct" }],
+      });
+    });
+
+    it("explains an undecryptable password by pointing at the login", async () => {
+      await attach();
+      db.prepare("UPDATE projects SET owner_password_enc = 'garbage' WHERE ref = 'shop'").run();
+      const response = await call("GET", "/projects/shop/connections");
+      expect(response.status).toBe(502);
+      expect(await response.json()).toEqual({
+        error: {
+          message: "The project's password could not be decrypted. Update its login to repair.",
+        },
+      });
+    });
+
+    it("updates the login", async () => {
+      await attach();
+      const response = await call("PUT", "/projects/shop/login", {
+        login: "app2",
+        password: "second",
+      });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ok: true });
+      expect(getProjectByRef(db, "shop")?.ownerRole).toBe("app2");
+    });
+
+    it("answers a login update with the wrong field types with 400", async () => {
+      await attach();
+      const response = await call("PUT", "/projects/shop/login", { login: 1 });
+      expect(await problems(response)).toEqual([
+        "login must be a string.",
+        "password must be a string.",
+      ]);
+    });
+
+    it.each([
+      ["login", { login: "", password: "x" }, ["Login is required"]],
+      ["password", { login: "app2", password: "" }, ["Password is required"]],
+      ["both", { login: "", password: "" }, ["Login is required", "Password is required"]],
+    ])("answers a login update with a blank %s with 400", async (_, body, expected) => {
+      await attach();
+      expect(await problems(await call("PUT", "/projects/shop/login", body))).toEqual(expected);
+      expect(getProjectByRef(db, "shop")?.ownerRole).toBe("app");
+    });
+
+    it("answers a login update that cannot connect with 400, without the password", async () => {
+      await attach();
+      failOn = /rolsuper/;
+      const response = await call("PUT", "/projects/shop/login", {
+        login: "app2",
+        password: "second",
+      });
+      const [problem] = (await problems(response)) ?? [];
+      expect(problem).toContain("Could not log in to a as app2");
+      expect(problem).not.toContain("second");
+      expect(getProjectByRef(db, "shop")?.ownerRole).toBe("app");
+    });
+
+    it("answers a login update while a backup is running with 409", async () => {
+      await attach();
+      const project = getProjectByRef(db, "shop");
+      insertBackup(db, {
+        projectId: project?.id ?? 0,
+        kind: "manual",
+        bucket: "b",
+        s3Key: "k",
+      });
+      const response = await call("PUT", "/projects/shop/login", {
+        login: "app2",
+        password: "second",
+      });
+      expect(response.status).toBe(409);
+      expect(getProjectByRef(db, "shop")?.ownerRole).toBe("app");
+    });
+
+    it("answers 409 for the attach-only endpoints on a created project", async () => {
+      await create();
+      const login = await call("PUT", "/projects/my-app/login", { login: "x", password: "y" });
+      expect(login.status).toBe(409);
+      const detach = await call("POST", "/projects/my-app/detach", { confirm: "my-app" });
+      expect(detach.status).toBe(409);
+      expect(getProjectByRef(db, "my-app")).toBeDefined();
+    });
+
+    it("answers 404 for an unknown project", async () => {
+      expect((await call("PUT", "/projects/nope/login", {})).status).toBe(404);
+      expect((await call("POST", "/projects/nope/detach", {})).status).toBe(404);
+    });
+
+    it("detaches only with the ref as confirmation", async () => {
+      await attach();
+      const wrong = await call("POST", "/projects/shop/detach", { confirm: "other" });
+      expect(await problems(wrong)).toEqual([
+        "Type the ref shop to confirm detaching the project.",
+      ]);
+      expect(getProjectByRef(db, "shop")).toBeDefined();
+      const response = await call("POST", "/projects/shop/detach", { confirm: "shop" });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ok: true });
+      expect(getProjectByRef(db, "shop")).toBeUndefined();
+    });
+
+    it("answers 409 to rotate, delete and undelete of an attached project", async () => {
+      await attach();
+      const message = { error: { message: "shop is attached; detach it instead." } };
+      for (const [method, path, body] of [
+        ["POST", "/projects/shop/rotate", undefined],
+        ["DELETE", "/projects/shop", { confirm: "shop" }],
+        ["DELETE", "/projects/shop", { confirm: "wrong" }],
+      ] as const) {
+        const response = await call(method, path, body);
+        expect(response.status).toBe(409);
+        expect(await response.json()).toEqual(message);
+      }
+      expect(getProjectByRef(db, "shop")?.status).toBe("active");
+    });
+  });
+
   describe("backups", () => {
     const BACKUP_FIELDS = ["createdAt", "error", "finishedAt", "id", "kind", "sizeBytes", "status"];
 
@@ -755,6 +1017,31 @@ describe("projects", () => {
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({ ok: true });
       expect(statements).toContain('DROP DATABASE IF EXISTS "my_app" WITH (FORCE)');
+    });
+
+    it.each([
+      ["idle", false, { confirm: "shop" }],
+      ["busy", true, { confirm: "shop" }],
+      ["unconfirmed", false, {}],
+    ])("answers a restore into an attached project with 409 when %s", async (_, busy, body) => {
+      insertProject(db, {
+        ref: "shop",
+        name: "Shop",
+        boxId: getSharedBox(db)?.id ?? 0,
+        dbName: "shop",
+        ownerRole: "app",
+        ownerPasswordEnc: encryptSecret("app-secret", secretKey),
+        kind: "attached",
+      });
+      configureS3();
+      const backup = backupOf("shop");
+      if (busy) backupOf("shop", false);
+      const response = await call("POST", `/projects/shop/backups/${backup.id}/restore`, body);
+      expect(response.status).toBe(409);
+      expect(await response.json()).toEqual({
+        error: { message: "shop is attached; detach it instead." },
+      });
+      expect(statements).not.toContainEqual(expect.stringMatching(/^DROP DATABASE/));
     });
 
     it("answers a restore without S3 settings with 400", async () => {

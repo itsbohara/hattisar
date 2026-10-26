@@ -9,6 +9,7 @@ import {
   type Project as StudioProject,
   UnreadableSecretError,
 } from "../studio/projects-source.js";
+import { isAttached } from "./attach.js";
 
 // Only active projects exist for Studio: a deleted one answers like an unknown ref.
 export class RegistryProjectSource implements ProjectSource {
@@ -38,7 +39,9 @@ export class RegistryProjectSource implements ProjectSource {
     } catch (error) {
       if (!(error instanceof SecretError)) throw error;
       throw new UnreadableSecretError(
-        `The owner password of project ${project.ref} cannot be decrypted. Rotate it on its hattisar project page.`,
+        isAttached(project)
+          ? `The login password of project ${project.ref} cannot be decrypted. Update its login on its hattisar project page.`
+          : `The owner password of project ${project.ref} cannot be decrypted. Rotate it on its hattisar project page.`,
       );
     }
   }
@@ -51,7 +54,7 @@ function toSummary(project: Project, box: Box): ProjectSummary {
     name: project.name,
     dbName: project.dbName,
     // Studio uses this only to log in and to show as db_user, so it is the login name.
-    ownerRole: ownerLogin(box, project.ownerRole),
+    ownerRole: isAttached(project) ? project.ownerRole : ownerLogin(box, project.ownerRole),
     boxName: box.name,
     box: {
       host: box.host,

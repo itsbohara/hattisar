@@ -1,8 +1,8 @@
 import { Readable } from "node:stream";
 import { type Context, Hono } from "hono";
 import type { AuthEnv } from "../auth/middleware.js";
-import { boxConnection } from "../boxes/service.js";
 import { accessibleProject, type ProjectAndBox } from "../projects/access.js";
+import { attachedProblem, isAttached } from "../projects/attach.js";
 import { holdProject } from "../projects/locks.js";
 import { slugify } from "../projects/naming.js";
 import { renderProjectDetail, text } from "../projects/routes.js";
@@ -30,7 +30,7 @@ import {
   storedS3Form,
   validateS3Form,
 } from "./s3-settings.js";
-import { type BackupDeps, removeBackup, runBackup } from "./service.js";
+import { type BackupDeps, dumpConnection, removeBackup, runBackup } from "./service.js";
 
 const PROJECTS_PAGE = "/_hs/projects";
 const S3_SETTINGS = "/_hs/settings/s3";
@@ -153,7 +153,19 @@ export function backupRoutes(deps: BackupDeps, projectDeps: ProjectServiceDeps):
         409,
       );
     }
-    const dump = startDump(pgBinDir, boxConnection(box, secretKey), project.dbName);
+    const conn = dumpConnection(project, box, secretKey);
+    if (typeof conn === "string") {
+      hold.release();
+      return renderProjectDetail(
+        c,
+        pageDeps,
+        found,
+        "backups",
+        { kind: "error", message: conn },
+        502,
+      );
+    }
+    const dump = startDump(pgBinDir, conn, project.dbName);
     // pg_dump exits on success, on failure and when the client goes away (the stream kills it).
     void dump.exited.then(hold.release);
     dump.stream.on("error", (error) => {
@@ -237,6 +249,10 @@ export function backupRoutes(deps: BackupDeps, projectDeps: ProjectServiceDeps):
     const target = projectBackup(db, c);
     if (target?.backup.status !== "done") return c.notFound();
     const { found, backup } = target;
+    if (isAttached(found.project)) {
+      const message = attachedProblem(found.project.ref);
+      return renderProjectDetail(c, pageDeps, found, "backups", { kind: "error", message }, 409);
+    }
     if (text(await c.req.parseBody(), "confirm") !== found.project.ref) {
       const sameProblem = `Type the ref ${found.project.ref} to confirm restoring into it.`;
       return renderRestore(c, target, { sameProblem }, 400);

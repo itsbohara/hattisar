@@ -1,3 +1,4 @@
+import { isAttached } from "../../projects/attach.js";
 import type { Backup } from "../../registry/backups.js";
 import type { Box } from "../../registry/boxes.js";
 import type { Project } from "../../registry/projects.js";
@@ -53,21 +54,23 @@ export function RestorePage({
           A backup returns the database to when it was taken, not to any point in time.
         </p>
       </section>
-      <section class="card card-wide" id="restore-same">
-        <h2>Into this project</h2>
-        <p class="hint">
-          Drops database <code>{project.dbName}</code> and recreates it from the backup. Everything
-          written since the backup is lost and open connections are cut. The owner role and its
-          password stay the same. Type <code>{project.ref}</code> to confirm.
-        </p>
-        {sameProblem && <Problems problems={[sameProblem]} />}
-        <form method="post" action={`${base}/restore`} class="form-inline">
-          <ConfirmRefInput ref={project.ref} />
-          <button type="submit" class="button-quiet button-danger">
-            Restore into {project.ref}
-          </button>
-        </form>
-      </section>
+      {!isAttached(project) && (
+        <section class="card card-wide" id="restore-same">
+          <h2>Into this project</h2>
+          <p class="hint">
+            Drops database <code>{project.dbName}</code> and recreates it from the backup.
+            Everything written since the backup is lost and open connections are cut. The owner role
+            and its password stay the same. Type <code>{project.ref}</code> to confirm.
+          </p>
+          {sameProblem && <Problems problems={[sameProblem]} />}
+          <form method="post" action={`${base}/restore`} class="form-inline">
+            <ConfirmRefInput ref={project.ref} />
+            <button type="submit" class="button-quiet button-danger">
+              Restore into {project.ref}
+            </button>
+          </form>
+        </section>
+      )}
       <section class="card card-roomy" id="restore-new">
         <h2>Into a new project</h2>
         <p class="hint">

@@ -23,6 +23,9 @@ function BoxActions({ box, managedEnabled }: { box: Box; managedEnabled: boolean
   if (box.kind === "registered") {
     return (
       <>
+        <a class="button-quiet" href={`/_hs/projects/attach?box=${box.id}`}>
+          Attach database
+        </a>
         <a class="button-quiet" href={`/_hs/boxes/${box.id}/edit`}>
           Edit
         </a>

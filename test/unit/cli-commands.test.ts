@@ -23,13 +23,23 @@ import { getBackup } from "../../src/registry/backups.js";
 import { insertBox } from "../../src/registry/boxes.js";
 import { openRegistry, type Registry } from "../../src/registry/db.js";
 import { getProjectByRef } from "../../src/registry/projects.js";
-import { deriveSecretKey, encryptSecret } from "../../src/registry/secrets.js";
+import { decryptSecret, deriveSecretKey, encryptSecret } from "../../src/registry/secrets.js";
 import { RecordingPooler } from "../helpers/pooler.js";
 import { signInToRegistry } from "../helpers/session.js";
 
+const BOX_ROWS: [RegExp, unknown[]][] = [
+  [/datistemplate/, [{ datname: "shop" }, { datname: "blog" }]],
+  [/rolsuper/, [{ rolsuper: false }]],
+];
+
 vi.mock("../../src/boxes/admin-client.js", async (importOriginal) => {
   const fakeAdmin: AdminClientRunner = async (_conn, run) =>
-    run({ query: async () => ({ rowCount: 0, rows: [] }) } as unknown as pg.Client);
+    run({
+      query: async (sql: string) => {
+        const rows = BOX_ROWS.find(([pattern]) => pattern.test(sql))?.[1] ?? [];
+        return { rowCount: rows.length, rows };
+      },
+    } as unknown as pg.Client);
   return {
     ...(await importOriginal<typeof import("../../src/boxes/admin-client.js")>()),
     withAdminClient: fakeAdmin,
@@ -382,7 +392,7 @@ describe("projects", () => {
     const listed = await cli(["projects", "list"]);
     expect(listed.code).toBe(0);
     expect(listed.stdout).toMatch(
-      /^REF {5}NAME {4}BOX {5}CREATED\nmy-app {2}My App {2}shared {2}\d{4}-\d\d-\d\d \d\d:\d\d UTC\n$/,
+      /^REF {5}NAME {4}KIND {5}BOX {5}CREATED\nmy-app {2}My App {2}created {2}shared {2}\d{4}-\d\d-\d\d \d\d:\d\d UTC\n$/,
     );
 
     const shown = await cli(["projects", "show", "my-app"]);
@@ -497,6 +507,133 @@ describe("projects", () => {
   });
 });
 
+describe("attached projects", () => {
+  const attachShop = () =>
+    cli(
+      [
+        "projects",
+        "attach",
+        "Shop",
+        "--box",
+        String(directBoxId),
+        "--database",
+        "shop",
+        "--login",
+        "app",
+      ],
+      {
+        stdin: "app-secret\n",
+      },
+    );
+
+  it("attaches with the password from stdin and shows the kind", async () => {
+    await login();
+    expect(await attachShop()).toEqual({
+      code: 0,
+      stdout: "Attached shop on direct\n",
+      stderr: "",
+    });
+    expect(getProjectByRef(db, "shop")).toMatchObject({ kind: "attached", ownerRole: "app" });
+    expect((await cli(["projects", "show", "shop"])).stdout).toContain("Kind     attached");
+    expect((await cli(["projects", "list"])).stdout).toContain("attached");
+    const json = JSON.parse((await cli(["projects", "show", "shop", "--json"])).stdout) as {
+      kind: string;
+    };
+    expect(json.kind).toBe("attached");
+  });
+
+  it("has no --password option", async () => {
+    await login();
+    const result = await cli(
+      [
+        "projects",
+        "attach",
+        "Shop",
+        "--box",
+        "2",
+        "--database",
+        "shop",
+        "--login",
+        "app",
+        "--password",
+        "x",
+      ],
+      { fetch: noRequests },
+    );
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("unknown option --password for projects attach");
+  });
+
+  it("needs --box, --database and --login", async () => {
+    await login();
+    const result = await cli(["projects", "attach", "Shop", "--box", "2"], { fetch: noRequests });
+    expect(result).toMatchObject({ code: 2, stdout: "" });
+    expect(result.stderr).toContain("projects attach needs --database <database>");
+  });
+
+  it("updates the login with the password from stdin", async () => {
+    await login();
+    await attachShop();
+    expect(
+      await cli(["projects", "set-login", "shop", "--login", "app2"], { stdin: "other\n" }),
+    ).toEqual({ code: 0, stdout: "Login updated for shop\n", stderr: "" });
+    expect(getProjectByRef(db, "shop")?.ownerRole).toBe("app2");
+    const json = await cli(["projects", "set-login", "shop", "--login", "app3", "--json"], {
+      stdin: "other\n",
+    });
+    expect(JSON.parse(json.stdout)).toEqual({ ok: true });
+  });
+
+  it("strips only the line ending from a piped password, for attach and set-login", async () => {
+    await login();
+    const stored = () =>
+      decryptSecret(getProjectByRef(db, "shop")?.ownerPasswordEnc ?? "", secretKey);
+    await cli(
+      [
+        "projects",
+        "attach",
+        "Shop",
+        "--box",
+        String(directBoxId),
+        "--database",
+        "shop",
+        "--login",
+        "app",
+      ],
+      { stdin: "  pass word  \r\n" },
+    );
+    expect(stored()).toBe("  pass word  ");
+    await cli(["projects", "set-login", "shop", "--login", "app2"], { stdin: " other \n" });
+    expect(stored()).toBe(" other ");
+  });
+
+  it("detaches only with --confirm set to the ref", async () => {
+    await login();
+    await attachShop();
+    expect(
+      await cli(["projects", "detach", "shop", "--confirm", "other"], { fetch: noRequests }),
+    ).toEqual({ code: 2, stdout: "", stderr: "hattisar: --confirm must be the ref shop\n" });
+    expect(await cli(["projects", "detach", "shop", "--confirm", "shop"])).toEqual({
+      code: 0,
+      stdout: "Detached shop\n",
+      stderr: "",
+    });
+    expect(getProjectByRef(db, "shop")).toBeUndefined();
+  });
+
+  it("exits 1 with the API's message when rotating or deleting an attached project", async () => {
+    await login();
+    await attachShop();
+    const expected = {
+      code: 1,
+      stdout: "",
+      stderr: "hattisar: shop is attached; detach it instead.\n",
+    };
+    expect(await cli(["projects", "rotate", "shop"])).toEqual(expected);
+    expect(await cli(["projects", "delete", "shop", "--confirm", "shop"])).toEqual(expected);
+  });
+});
+
 describe("backups", () => {
   it("runs, lists and restores a backup", async () => {
     await loggedInWithProject();
@@ -542,6 +679,27 @@ describe("boxes", () => {
         "",
       ].join("\n"),
     );
+  });
+});
+
+describe("boxes databases", () => {
+  it("prints one attachable database per line, or the array with --json", async () => {
+    await login();
+    expect(await cli(["boxes", "databases", String(directBoxId)])).toEqual({
+      code: 0,
+      stdout: "shop\nblog\n",
+      stderr: "",
+    });
+    const json = await cli(["boxes", "databases", String(directBoxId), "--json"]);
+    expect(JSON.parse(json.stdout)).toEqual(["shop", "blog"]);
+  });
+
+  it("rejects a non-numeric id before any request", async () => {
+    await login();
+    expect(await cli(["boxes", "databases", "abc"], { fetch: noRequests })).toMatchObject({
+      code: 2,
+      stderr: expect.stringContaining("abc is not a box id"),
+    });
   });
 });
 

@@ -1,5 +1,6 @@
 import type { BoxConnection } from "../boxes/admin-client.js";
 import { boxConnection } from "../boxes/service.js";
+import { attachedConnection, isAttached } from "../projects/attach.js";
 import { busyProblem } from "../projects/locks.js";
 import {
   type Backup,
@@ -42,6 +43,20 @@ export function boxCredentials(box: Box, secretKey: Buffer): BoxConnection | str
   }
 }
 
+// An attached project is dumped as its own login: hattisar never reaches into it as the box admin.
+export function dumpConnection(
+  project: Project,
+  box: Box,
+  secretKey: Buffer,
+): BoxConnection | string {
+  if (!isAttached(project)) return boxCredentials(box, secretKey);
+  try {
+    return attachedConnection(project, box, secretKey);
+  } catch {
+    return `Could not read the login of project ${project.ref}.`;
+  }
+}
+
 // Nothing survives a restart mid-backup: the pg_dump child and the multipart upload die with it.
 export function failInterruptedBackups(db: Registry): void {
   const count = failRunningBackups(db, "interrupted by restart");
@@ -69,7 +84,7 @@ export async function runBackup(
   if (existing.some((backup) => backup.s3Key === key)) {
     return { ok: false, problem: "A backup was taken this second. Try again in a moment." };
   }
-  const conn = boxCredentials(box, deps.secretKey);
+  const conn = dumpConnection(project, box, deps.secretKey);
   if (typeof conn === "string") return { ok: false, problem: `Backup failed: ${conn}` };
   const backup = insertBackup(
     deps.db,
