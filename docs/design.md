@@ -660,10 +660,10 @@ rule: it never reaches a project database.
 
 ## 14. Out of v1
 
-The post-v1 roadmap is the GitHub milestone "Roadmap": a release pipeline (§16), a one-line
-installer (§17), per-project SQL snippets (§3.3), pooler for non-shared boxes (J3, §5.1), a WAL-G
-point-in-time recovery recipe in the docs (shipped: [`docs/pitr.md`](pitr.md)), and plain-Postgres
-boxes (E3, shipped: §5). Parked, each until its condition holds:
+The post-v1 roadmap is the GitHub milestone "Roadmap". All of it has shipped: a release pipeline
+(§16), a one-line installer (§17), per-project SQL snippets (§3.3), pooler for non-shared boxes
+(J3, §5.1), a WAL-G point-in-time recovery recipe in the docs ([`docs/pitr.md`](pitr.md)), and
+plain-Postgres boxes (E3, §5). Parked, each until its condition holds:
 
 | Parked | Revisit when |
 |---|---|
